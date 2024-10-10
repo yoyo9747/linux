@@ -204,11 +204,10 @@ ifeq ($(feature-clang-bpf-co-re),1)
 
 BUILD_BPF_SKELS := 1
 
-ifeq ($(VMLINUX_H),)
 $(OUTPUT)vmlinux.h: $(VMLINUX_BTF) $(BPFTOOL_BOOTSTRAP)
+ifeq ($(VMLINUX_H),)
 	$(QUIET_GEN)$(BPFTOOL_BOOTSTRAP) btf dump file $< format c > $@
 else
-$(OUTPUT)vmlinux.h: $(VMLINUX_H)
 	$(Q)cp "$(VMLINUX_H)" $@
 endif
 

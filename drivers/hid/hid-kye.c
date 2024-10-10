@@ -8,7 +8,7 @@
  *  Copyright (c) 2023 David Yang
  */
 
-#include <linux/unaligned.h>
+#include <asm-generic/unaligned.h>
 #include <linux/device.h>
 #include <linux/hid.h>
 #include <linux/module.h>
@@ -466,7 +466,7 @@ static __u8 *kye_tablet_fixup(struct hid_device *hdev, __u8 *rdesc, unsigned int
 	return rdesc;
 }
 
-static const __u8 *kye_report_fixup(struct hid_device *hdev, __u8 *rdesc,
+static __u8 *kye_report_fixup(struct hid_device *hdev, __u8 *rdesc,
 		unsigned int *rsize)
 {
 	switch (hdev->product) {
@@ -671,5 +671,4 @@ static struct hid_driver kye_driver = {
 };
 module_hid_driver(kye_driver);
 
-MODULE_DESCRIPTION("HID driver for Kye/Genius devices not fully compliant with HID standard");
 MODULE_LICENSE("GPL");

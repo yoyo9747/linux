@@ -69,7 +69,7 @@ typedef __u32			xfs_nlink_t;
 #include <asm/param.h>
 #include <linux/uaccess.h>
 #include <asm/byteorder.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "xfs_fs.h"
 #include "xfs_stats.h"
@@ -134,6 +134,8 @@ typedef __u32			xfs_nlink_t;
  * return, which throws off the reported address.
  */
 #define __this_address	({ __label__ __here; __here: barrier(); &&__here; })
+
+#define XFS_PROJID_DEFAULT	0
 
 #define howmany(x, y)	(((x)+((y)-1))/(y))
 

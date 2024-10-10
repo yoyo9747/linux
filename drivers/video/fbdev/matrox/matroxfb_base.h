@@ -44,7 +44,7 @@
 #include <linux/kd.h>
 
 #include <asm/io.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #if defined(CONFIG_PPC_PMAC)
 #include "../macmodes.h"

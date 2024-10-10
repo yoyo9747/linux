@@ -143,7 +143,8 @@ void btrfs_put_transaction(struct btrfs_transaction *transaction)
 		BUG_ON(!list_empty(&transaction->list));
 		WARN_ON(!RB_EMPTY_ROOT(
 				&transaction->delayed_refs.href_root.rb_root));
-		WARN_ON(!xa_empty(&transaction->delayed_refs.dirty_extents));
+		WARN_ON(!RB_EMPTY_ROOT(
+				&transaction->delayed_refs.dirty_extent_root));
 		if (transaction->delayed_refs.pending_csums)
 			btrfs_err(transaction->fs_info,
 				  "pending csums is %llu",
@@ -350,7 +351,7 @@ loop:
 	memset(&cur_trans->delayed_refs, 0, sizeof(cur_trans->delayed_refs));
 
 	cur_trans->delayed_refs.href_root = RB_ROOT_CACHED;
-	xa_init(&cur_trans->delayed_refs.dirty_extents);
+	cur_trans->delayed_refs.dirty_extent_root = RB_ROOT;
 	atomic_set(&cur_trans->delayed_refs.num_entries, 0);
 
 	/*
@@ -404,7 +405,7 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
 	int ret = 0;
 
 	if ((test_bit(BTRFS_ROOT_SHAREABLE, &root->state) &&
-	    btrfs_get_root_last_trans(root) < trans->transid) || force) {
+	    root->last_trans < trans->transid) || force) {
 		WARN_ON(!force && root->commit_root != root->node);
 
 		/*
@@ -420,7 +421,7 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
 		smp_wmb();
 
 		spin_lock(&fs_info->fs_roots_radix_lock);
-		if (btrfs_get_root_last_trans(root) == trans->transid && !force) {
+		if (root->last_trans == trans->transid && !force) {
 			spin_unlock(&fs_info->fs_roots_radix_lock);
 			return 0;
 		}
@@ -428,7 +429,7 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
 				   (unsigned long)btrfs_root_id(root),
 				   BTRFS_ROOT_TRANS_TAG);
 		spin_unlock(&fs_info->fs_roots_radix_lock);
-		btrfs_set_root_last_trans(root, trans->transid);
+		root->last_trans = trans->transid;
 
 		/* this is pretty tricky.  We don't want to
 		 * take the relocation lock in btrfs_record_root_in_trans
@@ -490,7 +491,7 @@ int btrfs_record_root_in_trans(struct btrfs_trans_handle *trans,
 	 * and barriers
 	 */
 	smp_rmb();
-	if (btrfs_get_root_last_trans(root) == trans->transid &&
+	if (root->last_trans == trans->transid &&
 	    !test_bit(BTRFS_ROOT_IN_TRANS_SETUP, &root->state))
 		return 0;
 
@@ -1636,7 +1637,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	struct btrfs_root *root = pending->root;
 	struct btrfs_root *parent_root;
 	struct btrfs_block_rsv *rsv;
-	struct inode *parent_inode = &pending->dir->vfs_inode;
+	struct inode *parent_inode = pending->dir;
 	struct btrfs_path *path;
 	struct btrfs_dir_item *dir_item;
 	struct extent_buffer *tmp;
@@ -1988,25 +1989,6 @@ void btrfs_commit_transaction_async(struct btrfs_trans_handle *trans)
 	btrfs_put_transaction(cur_trans);
 }
 
-/*
- * If there is a running transaction commit it or if it's already committing,
- * wait for its commit to complete. Does not start and commit a new transaction
- * if there isn't any running.
- */
-int btrfs_commit_current_transaction(struct btrfs_root *root)
-{
-	struct btrfs_trans_handle *trans;
-
-	trans = btrfs_attach_transaction_barrier(root);
-	if (IS_ERR(trans)) {
-		int ret = PTR_ERR(trans);
-
-		return (ret == -ENOENT) ? 0 : ret;
-	}
-
-	return btrfs_commit_transaction(trans);
-}
-
 static void cleanup_transaction(struct btrfs_trans_handle *trans, int err)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
@@ -2128,7 +2110,7 @@ static inline int btrfs_start_delalloc_flush(struct btrfs_fs_info *fs_info)
 static inline void btrfs_wait_delalloc_flush(struct btrfs_fs_info *fs_info)
 {
 	if (btrfs_test_opt(fs_info, FLUSHONCOMMIT))
-		btrfs_wait_ordered_roots(fs_info, U64_MAX, NULL);
+		btrfs_wait_ordered_roots(fs_info, U64_MAX, 0, (u64)-1);
 }
 
 /*

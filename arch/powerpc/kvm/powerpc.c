@@ -1852,7 +1852,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 
 	kvm_sigset_activate(vcpu);
 
-	if (!vcpu->wants_to_run)
+	if (run->immediate_exit)
 		r = -EINTR;
 	else
 		r = kvmppc_vcpu_run(vcpu);
@@ -1938,11 +1938,11 @@ static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
 
 		r = -EBADF;
 		f = fdget(cap->args[0]);
-		if (!fd_file(f))
+		if (!f.file)
 			break;
 
 		r = -EPERM;
-		dev = kvm_device_from_filp(fd_file(f));
+		dev = kvm_device_from_filp(f.file);
 		if (dev)
 			r = kvmppc_mpic_connect_vcpu(dev, vcpu, cap->args[1]);
 
@@ -1957,11 +1957,11 @@ static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
 
 		r = -EBADF;
 		f = fdget(cap->args[0]);
-		if (!fd_file(f))
+		if (!f.file)
 			break;
 
 		r = -EPERM;
-		dev = kvm_device_from_filp(fd_file(f));
+		dev = kvm_device_from_filp(f.file);
 		if (dev) {
 			if (xics_on_xive())
 				r = kvmppc_xive_connect_vcpu(dev, vcpu, cap->args[1]);
@@ -1980,17 +1980,15 @@ static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
 
 		r = -EBADF;
 		f = fdget(cap->args[0]);
-		if (!fd_file(f))
+		if (!f.file)
 			break;
 
 		r = -ENXIO;
-		if (!xive_enabled()) {
-			fdput(f);
+		if (!xive_enabled())
 			break;
-		}
 
 		r = -EPERM;
-		dev = kvm_device_from_filp(fd_file(f));
+		dev = kvm_device_from_filp(f.file);
 		if (dev)
 			r = kvmppc_xive_native_connect_vcpu(dev, vcpu,
 							    cap->args[1]);

@@ -56,7 +56,7 @@ xrep_setup_rtsummary(
 	 * transaction (which we cannot drop because we cannot drop the
 	 * rtsummary ILOCK) and cannot ask for more reservation.
 	 */
-	blocks = mp->m_rsumblocks;
+	blocks = XFS_B_TO_FSB(mp, mp->m_rsumsize);
 	blocks += xfs_bmbt_calc_size(mp, blocks) * 2;
 	if (blocks > UINT_MAX)
 		return -EOPNOTSUPP;
@@ -100,6 +100,7 @@ xrep_rtsummary(
 {
 	struct xchk_rtsummary	*rts = sc->buf;
 	struct xfs_mount	*mp = sc->mp;
+	xfs_filblks_t		rsumblocks;
 	int			error;
 
 	/* We require the rmapbt to rebuild anything. */
@@ -130,9 +131,10 @@ xrep_rtsummary(
 	}
 
 	/* Make sure we have space allocated for the entire summary file. */
+	rsumblocks = XFS_B_TO_FSB(mp, rts->rsumsize);
 	xfs_trans_ijoin(sc->tp, sc->ip, 0);
 	xfs_trans_ijoin(sc->tp, sc->tempip, 0);
-	error = xrep_tempfile_prealloc(sc, 0, rts->rsumblocks);
+	error = xrep_tempfile_prealloc(sc, 0, rsumblocks);
 	if (error)
 		return error;
 
@@ -141,11 +143,11 @@ xrep_rtsummary(
 		return error;
 
 	/* Copy the rtsummary file that we generated. */
-	error = xrep_tempfile_copyin(sc, 0, rts->rsumblocks,
+	error = xrep_tempfile_copyin(sc, 0, rsumblocks,
 			xrep_rtsummary_prep_buf, rts);
 	if (error)
 		return error;
-	error = xrep_tempfile_set_isize(sc, XFS_FSB_TO_B(mp, rts->rsumblocks));
+	error = xrep_tempfile_set_isize(sc, rts->rsumsize);
 	if (error)
 		return error;
 
@@ -166,7 +168,7 @@ xrep_rtsummary(
 		memset(mp->m_rsum_cache, 0xFF, mp->m_sb.sb_rbmblocks);
 
 	mp->m_rsumlevels = rts->rsumlevels;
-	mp->m_rsumblocks = rts->rsumblocks;
+	mp->m_rsumsize = rts->rsumsize;
 
 	/* Free the old rtsummary blocks if they're not in use. */
 	return xrep_reap_ifork(sc, sc->tempip, XFS_DATA_FORK);

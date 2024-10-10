@@ -1677,6 +1677,7 @@ static const struct file_operations intel_th_msc_fops = {
 	.release	= intel_th_msc_release,
 	.read		= intel_th_msc_read,
 	.mmap		= intel_th_msc_mmap,
+	.llseek		= no_llseek,
 	.owner		= THIS_MODULE,
 };
 

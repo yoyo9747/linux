@@ -6,7 +6,6 @@
 #include <linux/sched/sysctl.h>
 #include <linux/sched/rt.h>
 #include <linux/sched/task.h>
-#include <linux/sched/ext.h>
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
@@ -30,7 +29,7 @@ static struct signal_struct init_signals = {
 	.cred_guard_mutex = __MUTEX_INITIALIZER(init_signals.cred_guard_mutex),
 	.exec_update_lock = __RWSEM_INITIALIZER(init_signals.exec_update_lock),
 #ifdef CONFIG_POSIX_TIMERS
-	.posix_timers	= HLIST_HEAD_INIT,
+	.posix_timers = LIST_HEAD_INIT(init_signals.posix_timers),
 	.cputimer	= {
 		.cputime_atomic	= INIT_CPUTIME_ATOMIC,
 	},
@@ -99,17 +98,6 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 #endif
 #ifdef CONFIG_CGROUP_SCHED
 	.sched_task_group = &root_task_group,
-#endif
-#ifdef CONFIG_SCHED_CLASS_EXT
-	.scx		= {
-		.dsq_list.node	= LIST_HEAD_INIT(init_task.scx.dsq_list.node),
-		.sticky_cpu	= -1,
-		.holding_cpu	= -1,
-		.runnable_node	= LIST_HEAD_INIT(init_task.scx.runnable_node),
-		.runnable_at	= INITIAL_JIFFIES,
-		.ddsp_dsq_id	= SCX_DSQ_INVALID,
-		.slice		= SCX_SLICE_DFL,
-	},
 #endif
 	.ptraced	= LIST_HEAD_INIT(init_task.ptraced),
 	.ptrace_entry	= LIST_HEAD_INIT(init_task.ptrace_entry),

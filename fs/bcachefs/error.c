@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
-#include "btree_iter.h"
 #include "error.h"
 #include "journal.h"
 #include "recovery_passes.h"
@@ -99,7 +98,7 @@ static enum ask_yn parse_yn_response(char *buf)
 }
 
 #ifdef __KERNEL__
-static enum ask_yn bch2_fsck_ask_yn(struct bch_fs *c, struct btree_trans *trans)
+static enum ask_yn bch2_fsck_ask_yn(struct bch_fs *c)
 {
 	struct stdio_redirect *stdio = c->stdio;
 
@@ -109,44 +108,25 @@ static enum ask_yn bch2_fsck_ask_yn(struct bch_fs *c, struct btree_trans *trans)
 	if (!stdio)
 		return YN_NO;
 
-	if (trans)
-		bch2_trans_unlock(trans);
-
-	unsigned long unlock_long_at = trans ? jiffies + HZ * 2 : 0;
-	darray_char line = {};
+	char buf[100];
 	int ret;
 
 	do {
-		unsigned long t;
 		bch2_print(c, " (y,n, or Y,N for all errors of this type) ");
-rewait:
-		t = unlock_long_at
-			? max_t(long, unlock_long_at - jiffies, 0)
-			: MAX_SCHEDULE_TIMEOUT;
 
-		int r = bch2_stdio_redirect_readline_timeout(stdio, &line, t);
-		if (r == -ETIME) {
-			bch2_trans_unlock_long(trans);
-			unlock_long_at = 0;
-			goto rewait;
-		}
+		int r = bch2_stdio_redirect_readline(stdio, buf, sizeof(buf) - 1);
+		if (r < 0)
+			return YN_NO;
+		buf[r] = '\0';
+	} while ((ret = parse_yn_response(buf)) < 0);
 
-		if (r < 0) {
-			ret = YN_NO;
-			break;
-		}
-
-		darray_last(line) = '\0';
-	} while ((ret = parse_yn_response(line.data)) < 0);
-
-	darray_exit(&line);
 	return ret;
 }
 #else
 
 #include "tools-util.h"
 
-static enum ask_yn bch2_fsck_ask_yn(struct bch_fs *c, struct btree_trans *trans)
+static enum ask_yn bch2_fsck_ask_yn(struct bch_fs *c)
 {
 	char *buf = NULL;
 	size_t buflen = 0;
@@ -218,8 +198,7 @@ static const u8 fsck_flags_extra[] = {
 #undef x
 };
 
-int __bch2_fsck_err(struct bch_fs *c,
-		  struct btree_trans *trans,
+int bch2_fsck_err(struct bch_fs *c,
 		  enum bch_fsck_flags flags,
 		  enum bch_sb_error_id err,
 		  const char *fmt, ...)
@@ -231,27 +210,8 @@ int __bch2_fsck_err(struct bch_fs *c,
 	int ret = -BCH_ERR_fsck_ignore;
 	const char *action_orig = "fix?", *action = action_orig;
 
-	might_sleep();
-
 	if (!WARN_ON(err >= ARRAY_SIZE(fsck_flags_extra)))
 		flags |= fsck_flags_extra[err];
-
-	if (!c)
-		c = trans->c;
-
-	/*
-	 * Ugly: if there's a transaction in the current task it has to be
-	 * passed in to unlock if we prompt for user input.
-	 *
-	 * But, plumbing a transaction and transaction restarts into
-	 * bkey_validate() is problematic.
-	 *
-	 * So:
-	 * - make all bkey errors AUTOFIX, they're simple anyways (we just
-	 *   delete the key)
-	 * - and we don't need to warn if we're not prompting
-	 */
-	WARN_ON(!(flags & FSCK_AUTOFIX) && !trans && bch2_current_has_btree_trans(c));
 
 	if ((flags & FSCK_CAN_FIX) &&
 	    test_bit(err, c->sb.errors_silent))
@@ -354,15 +314,7 @@ int __bch2_fsck_err(struct bch_fs *c,
 				bch2_print_string_as_lines(KERN_ERR, out->buf);
 			print = false;
 
-			int ask = bch2_fsck_ask_yn(c, trans);
-
-			if (trans) {
-				ret = bch2_trans_relock(trans);
-				if (ret) {
-					mutex_unlock(&c->fsck_error_msgs_lock);
-					goto err;
-				}
-			}
+			int ask = bch2_fsck_ask_yn(c);
 
 			if (ask >= YN_ALLNO && s)
 				s->fix = ask == YN_ALLNO
@@ -393,14 +345,6 @@ int __bch2_fsck_err(struct bch_fs *c,
 	     !(flags & FSCK_CAN_IGNORE)))
 		ret = -BCH_ERR_fsck_errors_not_fixed;
 
-	bool exiting =
-		test_bit(BCH_FS_fsck_running, &c->flags) &&
-		(ret != -BCH_ERR_fsck_fix &&
-		 ret != -BCH_ERR_fsck_ignore);
-
-	if (exiting)
-		print = true;
-
 	if (print) {
 		if (bch2_fs_stdio_redirect(c))
 			bch2_print(c, "%s\n", out->buf);
@@ -408,7 +352,9 @@ int __bch2_fsck_err(struct bch_fs *c,
 			bch2_print_string_as_lines(KERN_ERR, out->buf);
 	}
 
-	if (exiting)
+	if (test_bit(BCH_FS_fsck_running, &c->flags) &&
+	    (ret != -BCH_ERR_fsck_fix &&
+	     ret != -BCH_ERR_fsck_ignore))
 		bch_err(c, "Unable to continue, halting");
 	else if (suppressing)
 		bch_err(c, "Ratelimiting new instances of previous error");
@@ -430,35 +376,6 @@ int __bch2_fsck_err(struct bch_fs *c,
 err:
 	if (action != action_orig)
 		kfree(action);
-	printbuf_exit(&buf);
-	return ret;
-}
-
-int __bch2_bkey_fsck_err(struct bch_fs *c,
-			 struct bkey_s_c k,
-			 enum bch_validate_flags validate_flags,
-			 enum bch_sb_error_id err,
-			 const char *fmt, ...)
-{
-	if (validate_flags & BCH_VALIDATE_silent)
-		return -BCH_ERR_fsck_delete_bkey;
-
-	unsigned fsck_flags = 0;
-	if (!(validate_flags & (BCH_VALIDATE_write|BCH_VALIDATE_commit)))
-		fsck_flags |= FSCK_AUTOFIX|FSCK_CAN_FIX;
-
-	struct printbuf buf = PRINTBUF;
-	va_list args;
-
-	prt_str(&buf, "invalid bkey ");
-	bch2_bkey_val_to_text(&buf, c, k);
-	prt_str(&buf, "\n  ");
-	va_start(args, fmt);
-	prt_vprintf(&buf, fmt, args);
-	va_end(args);
-	prt_str(&buf, ": delete?");
-
-	int ret = __bch2_fsck_err(c, NULL, fsck_flags, err, "%s", buf.buf);
 	printbuf_exit(&buf);
 	return ret;
 }

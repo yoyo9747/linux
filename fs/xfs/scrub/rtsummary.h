@@ -14,7 +14,7 @@ struct xchk_rtsummary {
 
 	uint64_t		rextents;
 	uint64_t		rbmblocks;
-	xfs_filblks_t		rsumblocks;
+	uint64_t		rsumsize;
 	unsigned int		rsumlevels;
 	unsigned int		resblks;
 

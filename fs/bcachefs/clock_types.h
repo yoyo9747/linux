@@ -17,14 +17,13 @@ typedef void (*io_timer_fn)(struct io_timer *);
 
 struct io_timer {
 	io_timer_fn		fn;
-	void			*fn2;
-	u64			expire;
+	unsigned long		expire;
 };
 
 /* Amount to buffer up on a percpu counter */
 #define IO_CLOCK_PCPU_SECTORS	128
 
-typedef DEFINE_MIN_HEAP(struct io_timer *, io_timer_heap)	io_timer_heap;
+typedef HEAP(struct io_timer *)	io_timer_heap;
 
 struct io_clock {
 	atomic64_t		now;

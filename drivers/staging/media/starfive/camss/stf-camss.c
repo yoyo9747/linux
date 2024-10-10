@@ -358,6 +358,8 @@ err_cleanup_notifier:
 /*
  * stfcamss_remove - Remove STFCAMSS platform device
  * @pdev: Pointer to STFCAMSS platform device
+ *
+ * Always returns 0.
  */
 static void stfcamss_remove(struct platform_device *pdev)
 {

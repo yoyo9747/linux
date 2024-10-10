@@ -37,7 +37,7 @@
 #include <net/cipso_ipv4.h>
 #include <linux/atomic.h>
 #include <linux/bug.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 /* List of available DOI definitions */
 /* XXX - This currently assumes a minimal number of different DOIs in use,
@@ -1976,7 +1976,7 @@ int cipso_v4_req_setattr(struct request_sock *req,
 	buf = NULL;
 
 	req_inet = inet_rsk(req);
-	opt = unrcu_pointer(xchg(&req_inet->ireq_opt, RCU_INITIALIZER(opt)));
+	opt = xchg((__force struct ip_options_rcu **)&req_inet->ireq_opt, opt);
 	if (opt)
 		kfree_rcu(opt, rcu);
 

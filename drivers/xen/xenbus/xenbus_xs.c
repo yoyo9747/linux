@@ -427,12 +427,12 @@ char **xenbus_directory(struct xenbus_transaction t,
 
 	path = join(dir, node);
 	if (IS_ERR(path))
-		return ERR_CAST(path);
+		return (char **)path;
 
 	strings = xs_single(t, XS_DIRECTORY, path, &len);
 	kfree(path);
 	if (IS_ERR(strings))
-		return ERR_CAST(strings);
+		return (char **)strings;
 
 	return split(strings, len, num);
 }
@@ -465,7 +465,7 @@ void *xenbus_read(struct xenbus_transaction t,
 
 	path = join(dir, node);
 	if (IS_ERR(path))
-		return ERR_CAST(path);
+		return (void *)path;
 
 	ret = xs_single(t, XS_READ, path, len);
 	kfree(path);

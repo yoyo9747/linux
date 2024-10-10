@@ -13,6 +13,7 @@
 #include <linux/firewire-constants.h>
 #include <linux/fs.h>
 #include <linux/init.h>
+#include <linux/idr.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -28,12 +29,19 @@
 #include <asm/byteorder.h>
 
 #include "core.h"
-#include "packet-header-definitions.h"
-#include "phy-packet-definitions.h"
 #include <trace/events/firewire.h>
+#include "packet-header-definitions.h"
 
 #define HEADER_DESTINATION_IS_BROADCAST(header) \
 	((async_header_get_destination(header) & 0x3f) == 0x3f)
+
+#define PHY_PACKET_CONFIG	0x0
+#define PHY_PACKET_LINK_ON	0x1
+#define PHY_PACKET_SELF_ID	0x2
+
+#define PHY_CONFIG_GAP_COUNT(gap_count)	(((gap_count) << 16) | (1 << 22))
+#define PHY_CONFIG_ROOT_ID(node_id)	((((node_id) & 0x3f) << 24) | (1 << 23))
+#define PHY_IDENTIFIER(id)		((id) << 30)
 
 /* returns 0 if the split timeout handler is already running */
 static int try_cancel_split_timeout(struct fw_transaction *t)
@@ -48,31 +56,35 @@ static int close_transaction(struct fw_transaction *transaction, struct fw_card 
 			     u32 response_tstamp)
 {
 	struct fw_transaction *t = NULL, *iter;
+	unsigned long flags;
 
-	scoped_guard(spinlock_irqsave, &card->lock) {
-		list_for_each_entry(iter, &card->transaction_list, link) {
-			if (iter == transaction) {
-				if (try_cancel_split_timeout(iter)) {
-					list_del_init(&iter->link);
-					card->tlabel_mask &= ~(1ULL << iter->tlabel);
-					t = iter;
-				}
-				break;
+	spin_lock_irqsave(&card->lock, flags);
+	list_for_each_entry(iter, &card->transaction_list, link) {
+		if (iter == transaction) {
+			if (!try_cancel_split_timeout(iter)) {
+				spin_unlock_irqrestore(&card->lock, flags);
+				goto timed_out;
 			}
+			list_del_init(&iter->link);
+			card->tlabel_mask &= ~(1ULL << iter->tlabel);
+			t = iter;
+			break;
 		}
 	}
+	spin_unlock_irqrestore(&card->lock, flags);
 
-	if (!t)
-		return -ENOENT;
-
-	if (!t->with_tstamp) {
-		t->callback.without_tstamp(card, rcode, NULL, 0, t->callback_data);
-	} else {
-		t->callback.with_tstamp(card, rcode, t->packet.timestamp, response_tstamp, NULL, 0,
-					t->callback_data);
+	if (t) {
+		if (!t->with_tstamp) {
+			t->callback.without_tstamp(card, rcode, NULL, 0, t->callback_data);
+		} else {
+			t->callback.with_tstamp(card, rcode, t->packet.timestamp, response_tstamp,
+						NULL, 0, t->callback_data);
+		}
+		return 0;
 	}
 
-	return 0;
+ timed_out:
+	return -ENOENT;
 }
 
 /*
@@ -116,13 +128,16 @@ static void split_transaction_timeout_callback(struct timer_list *timer)
 {
 	struct fw_transaction *t = from_timer(t, timer, split_timeout_timer);
 	struct fw_card *card = t->card;
+	unsigned long flags;
 
-	scoped_guard(spinlock_irqsave, &card->lock) {
-		if (list_empty(&t->link))
-			return;
-		list_del(&t->link);
-		card->tlabel_mask &= ~(1ULL << t->tlabel);
+	spin_lock_irqsave(&card->lock, flags);
+	if (list_empty(&t->link)) {
+		spin_unlock_irqrestore(&card->lock, flags);
+		return;
 	}
+	list_del(&t->link);
+	card->tlabel_mask &= ~(1ULL << t->tlabel);
+	spin_unlock_irqrestore(&card->lock, flags);
 
 	if (!t->with_tstamp) {
 		t->callback.without_tstamp(card, RCODE_CANCELLED, NULL, 0, t->callback_data);
@@ -135,14 +150,20 @@ static void split_transaction_timeout_callback(struct timer_list *timer)
 static void start_split_transaction_timeout(struct fw_transaction *t,
 					    struct fw_card *card)
 {
-	guard(spinlock_irqsave)(&card->lock);
+	unsigned long flags;
 
-	if (list_empty(&t->link) || WARN_ON(t->is_split_transaction))
+	spin_lock_irqsave(&card->lock, flags);
+
+	if (list_empty(&t->link) || WARN_ON(t->is_split_transaction)) {
+		spin_unlock_irqrestore(&card->lock, flags);
 		return;
+	}
 
 	t->is_split_transaction = true;
 	mod_timer(&t->split_timeout_timer,
 		  jiffies + card->split_timeout_jiffies);
+
+	spin_unlock_irqrestore(&card->lock, flags);
 }
 
 static u32 compute_split_timeout_timestamp(struct fw_card *card, u32 request_timestamp);
@@ -450,6 +471,7 @@ static void transmit_phy_packet_callback(struct fw_packet *packet,
 
 static struct fw_packet phy_config_packet = {
 	.header_length	= 12,
+	.header[0]	= TCODE_LINK_INTERNAL << 4,
 	.payload_length	= 0,
 	.speed		= SCODE_100,
 	.callback	= transmit_phy_packet_callback,
@@ -459,14 +481,10 @@ void fw_send_phy_config(struct fw_card *card,
 			int node_id, int generation, int gap_count)
 {
 	long timeout = DIV_ROUND_UP(HZ, 10);
-	u32 data = 0;
+	u32 data = PHY_IDENTIFIER(PHY_PACKET_CONFIG);
 
-	phy_packet_set_packet_identifier(&data, PHY_PACKET_PACKET_IDENTIFIER_PHY_CONFIG);
-
-	if (node_id != FW_PHY_CONFIG_NO_NODE_ID) {
-		phy_packet_phy_config_set_root_id(&data, node_id);
-		phy_packet_phy_config_set_force_root_node(&data, true);
-	}
+	if (node_id != FW_PHY_CONFIG_NO_NODE_ID)
+		data |= PHY_CONFIG_ROOT_ID(node_id);
 
 	if (gap_count == FW_PHY_CONFIG_CURRENT_GAP_COUNT) {
 		gap_count = card->driver->read_phy_reg(card, 1);
@@ -477,12 +495,10 @@ void fw_send_phy_config(struct fw_card *card,
 		if (gap_count == 63)
 			return;
 	}
-	phy_packet_phy_config_set_gap_count(&data, gap_count);
-	phy_packet_phy_config_set_gap_count_optimization(&data, true);
+	data |= PHY_CONFIG_GAP_COUNT(gap_count);
 
-	guard(mutex)(&phy_config_mutex);
+	mutex_lock(&phy_config_mutex);
 
-	async_header_set_tcode(phy_config_packet.header, TCODE_LINK_INTERNAL);
 	phy_config_packet.header[1] = data;
 	phy_config_packet.header[2] = ~data;
 	phy_config_packet.generation = generation;
@@ -494,6 +510,8 @@ void fw_send_phy_config(struct fw_card *card,
 
 	card->driver->send_request(card, &phy_config_packet);
 	wait_for_completion_timeout(&phy_config_done, timeout);
+
+	mutex_unlock(&phy_config_mutex);
 }
 
 static struct fw_address_handler *lookup_overlapping_address_handler(
@@ -582,7 +600,7 @@ int fw_core_add_address_handler(struct fw_address_handler *handler,
 	    handler->length == 0)
 		return -EINVAL;
 
-	guard(spinlock)(&address_handler_list_lock);
+	spin_lock(&address_handler_list_lock);
 
 	handler->offset = region->start;
 	while (handler->offset + handler->length <= region->end) {
@@ -601,6 +619,8 @@ int fw_core_add_address_handler(struct fw_address_handler *handler,
 		}
 	}
 
+	spin_unlock(&address_handler_list_lock);
+
 	return ret;
 }
 EXPORT_SYMBOL(fw_core_add_address_handler);
@@ -616,9 +636,9 @@ EXPORT_SYMBOL(fw_core_add_address_handler);
  */
 void fw_core_remove_address_handler(struct fw_address_handler *handler)
 {
-	scoped_guard(spinlock, &address_handler_list_lock)
-		list_del_rcu(&handler->link);
-
+	spin_lock(&address_handler_list_lock);
+	list_del_rcu(&handler->link);
+	spin_unlock(&address_handler_list_lock);
 	synchronize_rcu();
 }
 EXPORT_SYMBOL(fw_core_remove_address_handler);
@@ -909,14 +929,16 @@ static void handle_exclusive_region_request(struct fw_card *card,
 	if (tcode == TCODE_LOCK_REQUEST)
 		tcode = 0x10 + async_header_get_extended_tcode(p->header);
 
-	scoped_guard(rcu) {
-		handler = lookup_enclosing_address_handler(&address_handler_list, offset,
-							   request->length);
-		if (handler)
-			handler->address_callback(card, request, tcode, destination, source,
-						  p->generation, offset, request->data,
-						  request->length, handler->callback_data);
-	}
+	rcu_read_lock();
+	handler = lookup_enclosing_address_handler(&address_handler_list,
+						   offset, request->length);
+	if (handler)
+		handler->address_callback(card, request,
+					  tcode, destination, source,
+					  p->generation, offset,
+					  request->data, request->length,
+					  handler->callback_data);
+	rcu_read_unlock();
 
 	if (!handler)
 		fw_send_response(card, request, RCODE_ADDRESS_ERROR);
@@ -949,14 +971,17 @@ static void handle_fcp_region_request(struct fw_card *card,
 		return;
 	}
 
-	scoped_guard(rcu) {
-		list_for_each_entry_rcu(handler, &address_handler_list, link) {
-			if (is_enclosing_handler(handler, offset, request->length))
-				handler->address_callback(card, request, tcode, destination, source,
-							  p->generation, offset, request->data,
-							  request->length, handler->callback_data);
-		}
+	rcu_read_lock();
+	list_for_each_entry_rcu(handler, &address_handler_list, link) {
+		if (is_enclosing_handler(handler, offset, request->length))
+			handler->address_callback(card, request, tcode,
+						  destination, source,
+						  p->generation, offset,
+						  request->data,
+						  request->length,
+						  handler->callback_data);
 	}
+	rcu_read_unlock();
 
 	fw_send_response(card, request, RCODE_COMPLETE);
 }
@@ -1001,6 +1026,7 @@ EXPORT_SYMBOL(fw_core_handle_request);
 void fw_core_handle_response(struct fw_card *card, struct fw_packet *p)
 {
 	struct fw_transaction *t = NULL, *iter;
+	unsigned long flags;
 	u32 *data;
 	size_t data_length;
 	int tcode, tlabel, source, rcode;
@@ -1039,23 +1065,26 @@ void fw_core_handle_response(struct fw_card *card, struct fw_packet *p)
 		break;
 	}
 
-	scoped_guard(spinlock_irqsave, &card->lock) {
-		list_for_each_entry(iter, &card->transaction_list, link) {
-			if (iter->node_id == source && iter->tlabel == tlabel) {
-				if (try_cancel_split_timeout(iter)) {
-					list_del_init(&iter->link);
-					card->tlabel_mask &= ~(1ULL << iter->tlabel);
-					t = iter;
-				}
-				break;
+	spin_lock_irqsave(&card->lock, flags);
+	list_for_each_entry(iter, &card->transaction_list, link) {
+		if (iter->node_id == source && iter->tlabel == tlabel) {
+			if (!try_cancel_split_timeout(iter)) {
+				spin_unlock_irqrestore(&card->lock, flags);
+				goto timed_out;
 			}
+			list_del_init(&iter->link);
+			card->tlabel_mask &= ~(1ULL << iter->tlabel);
+			t = iter;
+			break;
 		}
 	}
+	spin_unlock_irqrestore(&card->lock, flags);
 
 	trace_async_response_inbound((uintptr_t)t, card->index, p->generation, p->speed, p->ack,
 				     p->timestamp, p->header, data, data_length / 4);
 
 	if (!t) {
+ timed_out:
 		fw_notice(card, "unsolicited response (source %x, tlabel %x)\n",
 			  source, tlabel);
 		return;
@@ -1159,6 +1188,7 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 	int reg = offset & ~CSR_REGISTER_BASE;
 	__be32 *data = payload;
 	int rcode = RCODE_COMPLETE;
+	unsigned long flags;
 
 	switch (reg) {
 	case CSR_PRIORITY_BUDGET:
@@ -1200,10 +1230,10 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 		if (tcode == TCODE_READ_QUADLET_REQUEST) {
 			*data = cpu_to_be32(card->split_timeout_hi);
 		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-			guard(spinlock_irqsave)(&card->lock);
-
+			spin_lock_irqsave(&card->lock, flags);
 			card->split_timeout_hi = be32_to_cpu(*data) & 7;
 			update_split_timeout(card);
+			spin_unlock_irqrestore(&card->lock, flags);
 		} else {
 			rcode = RCODE_TYPE_ERROR;
 		}
@@ -1213,10 +1243,11 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 		if (tcode == TCODE_READ_QUADLET_REQUEST) {
 			*data = cpu_to_be32(card->split_timeout_lo);
 		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-			guard(spinlock_irqsave)(&card->lock);
-
-			card->split_timeout_lo = be32_to_cpu(*data) & 0xfff80000;
+			spin_lock_irqsave(&card->lock, flags);
+			card->split_timeout_lo =
+					be32_to_cpu(*data) & 0xfff80000;
 			update_split_timeout(card);
+			spin_unlock_irqrestore(&card->lock, flags);
 		} else {
 			rcode = RCODE_TYPE_ERROR;
 		}
@@ -1358,7 +1389,7 @@ static void __exit fw_core_cleanup(void)
 	unregister_chrdev(fw_cdev_major, "firewire");
 	bus_unregister(&fw_bus_type);
 	destroy_workqueue(fw_workqueue);
-	xa_destroy(&fw_device_xa);
+	idr_destroy(&fw_device_idr);
 }
 
 module_init(fw_core_init);

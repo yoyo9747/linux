@@ -5,7 +5,8 @@
 #include <asm/xen/hypercall.h>
 #include <xen/interface/memory.h>
 
-#include "xen-ops.h"
+#include "multicalls.h"
+#include "mmu.h"
 
 unsigned long arbitrary_virt_to_mfn(void *vaddr)
 {

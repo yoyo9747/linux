@@ -68,7 +68,7 @@
 					reg = <0>;
 
 					pmic_glink_con0_hs: endpoint {
-						remote-endpoint = <&usb_prim_dwc3_hs>;
+						remote-endpoint = <&usb_prim_role_switch>;
 					};
 				};
 
@@ -103,7 +103,7 @@
 					reg = <0>;
 
 					pmic_glink_con1_hs: endpoint {
-						remote-endpoint = <&usb_sec_dwc3_hs>;
+						remote-endpoint = <&usb_sec_role_switch>;
 					};
 				};
 
@@ -484,10 +484,6 @@
 	status = "okay";
 };
 
-&pmc8180_pwrkey {
-	status = "okay";
-};
-
 &pmc8180c_lpg {
 	status = "okay";
 };
@@ -561,40 +557,6 @@
 	status = "okay";
 };
 
-&usb_mp {
-	status = "okay";
-};
-
-&usb_mp_hsphy0 {
-	vdda-pll-supply = <&vreg_l5e_0p88>;
-	vdda18-supply = <&vreg_l12a_1p8>;
-	vdda33-supply = <&vreg_l16e_3p0>;
-
-	status = "okay";
-};
-
-&usb_mp_hsphy1 {
-	vdda-pll-supply = <&vreg_l5e_0p88>;
-	vdda18-supply = <&vreg_l12a_1p8>;
-	vdda33-supply = <&vreg_l16e_3p0>;
-
-	status = "okay";
-};
-
-&usb_mp_qmpphy0 {
-	vdda-phy-supply = <&vreg_l3c_1p2>;
-	vdda-pll-supply = <&vreg_l5e_0p88>;
-
-	status = "okay";
-};
-
-&usb_mp_qmpphy1 {
-	vdda-phy-supply = <&vreg_l3c_1p2>;
-	vdda-pll-supply = <&vreg_l5e_0p88>;
-
-	status = "okay";
-};
-
 &usb_prim_hsphy {
 	vdda-pll-supply = <&vreg_l5e_0p88>;
 	vdda18-supply = <&vreg_l12a_1p8>;
@@ -620,10 +582,6 @@
 	dr_mode = "host";
 };
 
-&usb_prim_dwc3_hs {
-	remote-endpoint = <&pmic_glink_con0_hs>;
-};
-
 &usb_prim_qmpphy_dp_in {
 	remote-endpoint = <&mdss_dp0_out>;
 };
@@ -632,8 +590,8 @@
 	remote-endpoint = <&pmic_glink_con0_ss>;
 };
 
-&usb_sec_dwc3_hs {
-	remote-endpoint = <&pmic_glink_con1_hs>;
+&usb_prim_role_switch {
+	remote-endpoint = <&pmic_glink_con0_hs>;
 };
 
 &usb_sec_hsphy {
@@ -659,6 +617,10 @@
 
 &usb_sec_qmpphy_out {
 	remote-endpoint = <&pmic_glink_con1_ss>;
+};
+
+&usb_sec_role_switch {
+	remote-endpoint = <&pmic_glink_con1_hs>;
 };
 
 &usb_sec {

@@ -321,9 +321,9 @@ int hv_snp_boot_ap(u32 cpu, unsigned long start_ip)
 
 	vmsa->efer = native_read_msr(MSR_EFER);
 
-	vmsa->cr4 = native_read_cr4();
-	vmsa->cr3 = __native_read_cr3();
-	vmsa->cr0 = native_read_cr0();
+	asm volatile("movq %%cr4, %%rax;" : "=a" (vmsa->cr4));
+	asm volatile("movq %%cr3, %%rax;" : "=a" (vmsa->cr3));
+	asm volatile("movq %%cr0, %%rax;" : "=a" (vmsa->cr0));
 
 	vmsa->xcr0 = 1;
 	vmsa->g_pat = HV_AP_INIT_GPAT_DEFAULT;
@@ -523,9 +523,9 @@ static int hv_mark_gpa_visibility(u16 count, const u64 pfn[],
  * transition is complete, hv_vtom_set_host_visibility() marks the pages
  * as "present" again.
  */
-static int hv_vtom_clear_present(unsigned long kbuffer, int pagecount, bool enc)
+static bool hv_vtom_clear_present(unsigned long kbuffer, int pagecount, bool enc)
 {
-	return set_memory_np(kbuffer, pagecount);
+	return !set_memory_np(kbuffer, pagecount);
 }
 
 /*
@@ -536,19 +536,20 @@ static int hv_vtom_clear_present(unsigned long kbuffer, int pagecount, bool enc)
  * with host. This function works as wrap of hv_mark_gpa_visibility()
  * with memory base and size.
  */
-static int hv_vtom_set_host_visibility(unsigned long kbuffer, int pagecount, bool enc)
+static bool hv_vtom_set_host_visibility(unsigned long kbuffer, int pagecount, bool enc)
 {
 	enum hv_mem_host_visibility visibility = enc ?
 			VMBUS_PAGE_NOT_VISIBLE : VMBUS_PAGE_VISIBLE_READ_WRITE;
 	u64 *pfn_array;
 	phys_addr_t paddr;
-	int i, pfn, err;
 	void *vaddr;
 	int ret = 0;
+	bool result = true;
+	int i, pfn;
 
 	pfn_array = kmalloc(HV_HYP_PAGE_SIZE, GFP_KERNEL);
 	if (!pfn_array) {
-		ret = -ENOMEM;
+		result = false;
 		goto err_set_memory_p;
 	}
 
@@ -567,8 +568,10 @@ static int hv_vtom_set_host_visibility(unsigned long kbuffer, int pagecount, boo
 		if (pfn == HV_MAX_MODIFY_GPA_REP_COUNT || i == pagecount - 1) {
 			ret = hv_mark_gpa_visibility(pfn, pfn_array,
 						     visibility);
-			if (ret)
+			if (ret) {
+				result = false;
 				goto err_free_pfn_array;
+			}
 			pfn = 0;
 		}
 	}
@@ -583,11 +586,10 @@ err_set_memory_p:
 	 * order to avoid leaving the memory range in a "broken" state. Setting
 	 * the PRESENT bits shouldn't fail, but return an error if it does.
 	 */
-	err = set_memory_p(kbuffer, pagecount);
-	if (err && !ret)
-		ret = err;
+	if (set_memory_p(kbuffer, pagecount))
+		result = false;
 
-	return ret;
+	return result;
 }
 
 static bool hv_vtom_tlb_flush_required(bool private)

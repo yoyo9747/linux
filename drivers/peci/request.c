@@ -8,7 +8,7 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "internal.h"
 

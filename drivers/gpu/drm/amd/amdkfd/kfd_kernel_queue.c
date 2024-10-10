@@ -32,7 +32,6 @@
 #include "kfd_device_queue_manager.h"
 #include "kfd_pm4_headers.h"
 #include "kfd_pm4_opcodes.h"
-#include "amdgpu_reset.h"
 
 #define PM4_COUNT_ZERO (((1 << 15) - 1) << 16)
 
@@ -69,7 +68,7 @@ static bool kq_initialize(struct kernel_queue *kq, struct kfd_node *dev,
 		kq->mqd_mgr = dev->dqm->mqd_mgrs[KFD_MQD_TYPE_HIQ];
 		break;
 	default:
-		dev_err(dev->adev->dev, "Invalid queue type %d\n", type);
+		pr_err("Invalid queue type %d\n", type);
 		return false;
 	}
 
@@ -79,14 +78,13 @@ static bool kq_initialize(struct kernel_queue *kq, struct kfd_node *dev,
 	prop.doorbell_ptr = kfd_get_kernel_doorbell(dev->kfd, &prop.doorbell_off);
 
 	if (!prop.doorbell_ptr) {
-		dev_err(dev->adev->dev, "Failed to initialize doorbell");
+		pr_err("Failed to initialize doorbell");
 		goto err_get_kernel_doorbell;
 	}
 
 	retval = kfd_gtt_sa_allocate(dev, queue_size, &kq->pq);
 	if (retval != 0) {
-		dev_err(dev->adev->dev, "Failed to init pq queues size %d\n",
-			queue_size);
+		pr_err("Failed to init pq queues size %d\n", queue_size);
 		goto err_pq_allocate_vidmem;
 	}
 
@@ -198,17 +196,15 @@ err_get_kernel_doorbell:
 }
 
 /* Uninitialize a kernel queue and free all its memory usages. */
-static void kq_uninitialize(struct kernel_queue *kq)
+static void kq_uninitialize(struct kernel_queue *kq, bool hanging)
 {
-	if (kq->queue->properties.type == KFD_QUEUE_TYPE_HIQ && down_read_trylock(&kq->dev->adev->reset_domain->sem)) {
+	if (kq->queue->properties.type == KFD_QUEUE_TYPE_HIQ && !hanging)
 		kq->mqd_mgr->destroy_mqd(kq->mqd_mgr,
 					kq->queue->mqd,
 					KFD_PREEMPT_TYPE_WAVEFRONT_RESET,
 					KFD_UNMAP_LATENCY_MS,
 					kq->queue->pipe,
 					kq->queue->queue);
-		up_read(&kq->dev->adev->reset_domain->sem);
-	}
 	else if (kq->queue->properties.type == KFD_QUEUE_TYPE_DIQ)
 		kfd_gtt_sa_free(kq->dev, kq->fence_mem_obj);
 
@@ -342,15 +338,15 @@ struct kernel_queue *kernel_queue_init(struct kfd_node *dev,
 	if (kq_initialize(kq, dev, type, KFD_KERNEL_QUEUE_SIZE))
 		return kq;
 
-	dev_err(dev->adev->dev, "Failed to init kernel queue\n");
+	pr_err("Failed to init kernel queue\n");
 
 	kfree(kq);
 	return NULL;
 }
 
-void kernel_queue_uninit(struct kernel_queue *kq)
+void kernel_queue_uninit(struct kernel_queue *kq, bool hanging)
 {
-	kq_uninitialize(kq);
+	kq_uninitialize(kq, hanging);
 	kfree(kq);
 }
 
@@ -361,26 +357,26 @@ static __attribute__((unused)) void test_kq(struct kfd_node *dev)
 	uint32_t *buffer, i;
 	int retval;
 
-	dev_err(dev->adev->dev, "Starting kernel queue test\n");
+	pr_err("Starting kernel queue test\n");
 
 	kq = kernel_queue_init(dev, KFD_QUEUE_TYPE_HIQ);
 	if (unlikely(!kq)) {
-		dev_err(dev->adev->dev, "  Failed to initialize HIQ\n");
-		dev_err(dev->adev->dev, "Kernel queue test failed\n");
+		pr_err("  Failed to initialize HIQ\n");
+		pr_err("Kernel queue test failed\n");
 		return;
 	}
 
 	retval = kq_acquire_packet_buffer(kq, 5, &buffer);
 	if (unlikely(retval != 0)) {
-		dev_err(dev->adev->dev, "  Failed to acquire packet buffer\n");
-		dev_err(dev->adev->dev, "Kernel queue test failed\n");
+		pr_err("  Failed to acquire packet buffer\n");
+		pr_err("Kernel queue test failed\n");
 		return;
 	}
 	for (i = 0; i < 5; i++)
 		buffer[i] = kq->nop_packet;
 	kq_submit_packet(kq);
 
-	dev_err(dev->adev->dev, "Ending kernel queue test\n");
+	pr_err("Ending kernel queue test\n");
 }
 
 

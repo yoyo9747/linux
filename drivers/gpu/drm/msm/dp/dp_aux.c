@@ -513,10 +513,7 @@ static int dp_wait_hpd_asserted(struct drm_dp_aux *dp_aux,
 
 	aux = container_of(dp_aux, struct dp_aux_private, dp_aux);
 
-	ret = pm_runtime_resume_and_get(aux->dev);
-	if (ret)
-		return ret;
-
+	pm_runtime_get_sync(aux->dev);
 	ret = dp_catalog_aux_wait_for_hpd_connect_state(aux->catalog, wait_us);
 	pm_runtime_put_sync(aux->dev);
 

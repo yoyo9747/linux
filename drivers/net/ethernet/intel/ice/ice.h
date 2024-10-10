@@ -318,7 +318,6 @@ enum ice_vsi_state {
 	ICE_VSI_UMAC_FLTR_CHANGED,
 	ICE_VSI_MMAC_FLTR_CHANGED,
 	ICE_VSI_PROMISC_CHANGED,
-	ICE_VSI_REBUILD_PENDING,
 	ICE_VSI_STATE_NBITS		/* must be last */
 };
 
@@ -412,7 +411,6 @@ struct ice_vsi {
 	struct ice_tx_ring **xdp_rings;	 /* XDP ring array */
 	u16 num_xdp_txq;		 /* Used XDP queues */
 	u8 xdp_mapping_mode;		 /* ICE_MAP_MODE_[CONTIG|SCATTER] */
-	struct mutex xdp_state_lock;
 
 	struct net_device **target_netdevs;
 
@@ -451,12 +449,7 @@ struct ice_vsi {
 	struct_group_tagged(ice_vsi_cfg_params, params,
 		struct ice_port_info *port_info; /* back pointer to port_info */
 		struct ice_channel *ch; /* VSI's channel structure, may be NULL */
-		union {
-			/* VF associated with this VSI, may be NULL */
-			struct ice_vf *vf;
-			/* SF associated with this VSI, may be NULL */
-			struct ice_dynamic_port *sf;
-		};
+		struct ice_vf *vf; /* VF associated with this VSI, may be NULL */
 		u32 flags; /* VSI flags used for rebuild and configuration */
 		enum ice_vsi_type type; /* the type of the VSI */
 	);
@@ -657,9 +650,6 @@ struct ice_pf {
 	struct ice_eswitch eswitch;
 	struct ice_esw_br_port *br_port;
 
-	struct xarray dyn_ports;
-	struct xarray sf_nums;
-
 #define ICE_INVALID_AGG_NODE_ID		0
 #define ICE_PF_AGG_NODE_ID_START	1
 #define ICE_MAX_PF_AGG_NODES		32
@@ -775,17 +765,18 @@ static inline struct xsk_buff_pool *ice_get_xp_from_qid(struct ice_vsi *vsi,
 }
 
 /**
- * ice_rx_xsk_pool - assign XSK buff pool to Rx ring
+ * ice_xsk_pool - get XSK buffer pool bound to a ring
  * @ring: Rx ring to use
  *
- * Sets XSK buff pool pointer on Rx ring.
+ * Returns a pointer to xsk_buff_pool structure if there is a buffer pool
+ * present, NULL otherwise.
  */
-static inline void ice_rx_xsk_pool(struct ice_rx_ring *ring)
+static inline struct xsk_buff_pool *ice_xsk_pool(struct ice_rx_ring *ring)
 {
 	struct ice_vsi *vsi = ring->vsi;
 	u16 qid = ring->q_index;
 
-	WRITE_ONCE(ring->xsk_pool, ice_get_xp_from_qid(vsi, qid));
+	return ice_get_xp_from_qid(vsi, qid);
 }
 
 /**
@@ -810,7 +801,7 @@ static inline void ice_tx_xsk_pool(struct ice_vsi *vsi, u16 qid)
 	if (!ring)
 		return;
 
-	WRITE_ONCE(ring->xsk_pool, ice_get_xp_from_qid(vsi, qid));
+	ring->xsk_pool = ice_get_xp_from_qid(vsi, qid);
 }
 
 /**
@@ -926,7 +917,6 @@ int ice_vsi_open(struct ice_vsi *vsi);
 void ice_set_ethtool_ops(struct net_device *netdev);
 void ice_set_ethtool_repr_ops(struct net_device *netdev);
 void ice_set_ethtool_safe_mode_ops(struct net_device *netdev);
-void ice_set_ethtool_sf_ops(struct net_device *netdev);
 u16 ice_get_avail_txq_count(struct ice_pf *pf);
 u16 ice_get_avail_rxq_count(struct ice_pf *pf);
 int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx, bool locked);
@@ -1012,14 +1002,6 @@ void ice_unload(struct ice_pf *pf);
 void ice_adv_lnk_speed_maps_init(void);
 int ice_init_dev(struct ice_pf *pf);
 void ice_deinit_dev(struct ice_pf *pf);
-int ice_change_mtu(struct net_device *netdev, int new_mtu);
-void ice_tx_timeout(struct net_device *netdev, unsigned int txqueue);
-int ice_xdp(struct net_device *dev, struct netdev_bpf *xdp);
-void ice_set_netdev_features(struct net_device *netdev);
-int ice_vlan_rx_add_vid(struct net_device *netdev, __be16 proto, u16 vid);
-int ice_vlan_rx_kill_vid(struct net_device *netdev, __be16 proto, u16 vid);
-void ice_get_stats64(struct net_device *netdev,
-		     struct rtnl_link_stats64 *stats);
 
 /**
  * ice_set_rdma_cap - enable RDMA support

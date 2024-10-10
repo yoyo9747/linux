@@ -32,11 +32,3 @@
 &mmc0 {
 	non-removable;
 };
-
-&pcie0 {
-	status = "okay";
-};
-
-&pcie1 {
-	status = "okay";
-};

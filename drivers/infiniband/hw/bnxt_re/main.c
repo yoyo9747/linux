@@ -83,12 +83,11 @@ static void bnxt_re_dev_stop(struct bnxt_re_dev *rdev);
 static int bnxt_re_netdev_event(struct notifier_block *notifier,
 				unsigned long event, void *ptr);
 static struct bnxt_re_dev *bnxt_re_from_netdev(struct net_device *netdev);
-static void bnxt_re_dev_uninit(struct bnxt_re_dev *rdev, u8 op_type);
+static void bnxt_re_dev_uninit(struct bnxt_re_dev *rdev);
 static int bnxt_re_hwrm_qcaps(struct bnxt_re_dev *rdev);
 
 static int bnxt_re_hwrm_qcfg(struct bnxt_re_dev *rdev, u32 *db_len,
 			     u32 *offset);
-static void bnxt_re_setup_cc(struct bnxt_re_dev *rdev, bool enable);
 static void bnxt_re_set_db_offset(struct bnxt_re_dev *rdev)
 {
 	struct bnxt_qplib_chip_ctx *cctx;
@@ -130,20 +129,18 @@ static void bnxt_re_set_db_offset(struct bnxt_re_dev *rdev)
 	}
 }
 
-static void bnxt_re_set_drv_mode(struct bnxt_re_dev *rdev)
+static void bnxt_re_set_drv_mode(struct bnxt_re_dev *rdev, u8 mode)
 {
 	struct bnxt_qplib_chip_ctx *cctx;
 
 	cctx = rdev->chip_ctx;
-	cctx->modes.wqe_mode = bnxt_qplib_is_chip_gen_p7(rdev->chip_ctx) ?
-			       BNXT_QPLIB_WQE_MODE_VARIABLE : BNXT_QPLIB_WQE_MODE_STATIC;
+	cctx->modes.wqe_mode = bnxt_qplib_is_chip_gen_p5_p7(rdev->chip_ctx) ?
+			       mode : BNXT_QPLIB_WQE_MODE_STATIC;
 	if (bnxt_re_hwrm_qcaps(rdev))
 		dev_err(rdev_to_dev(rdev),
 			"Failed to query hwrm qcaps\n");
-	if (bnxt_qplib_is_chip_gen_p7(rdev->chip_ctx)) {
+	if (bnxt_qplib_is_chip_gen_p7(rdev->chip_ctx))
 		cctx->modes.toggle_bits |= BNXT_QPLIB_CQ_TOGGLE_BIT;
-		cctx->modes.toggle_bits |= BNXT_QPLIB_SRQ_TOGGLE_BIT;
-	}
 }
 
 static void bnxt_re_destroy_chip_ctx(struct bnxt_re_dev *rdev)
@@ -161,7 +158,7 @@ static void bnxt_re_destroy_chip_ctx(struct bnxt_re_dev *rdev)
 	kfree(chip_ctx);
 }
 
-static int bnxt_re_setup_chip_ctx(struct bnxt_re_dev *rdev)
+static int bnxt_re_setup_chip_ctx(struct bnxt_re_dev *rdev, u8 wqe_mode)
 {
 	struct bnxt_qplib_chip_ctx *chip_ctx;
 	struct bnxt_en_dev *en_dev;
@@ -169,7 +166,6 @@ static int bnxt_re_setup_chip_ctx(struct bnxt_re_dev *rdev)
 
 	en_dev = rdev->en_dev;
 
-	rdev->qplib_res.pdev = en_dev->pdev;
 	chip_ctx = kzalloc(sizeof(*chip_ctx), GFP_KERNEL);
 	if (!chip_ctx)
 		return -ENOMEM;
@@ -184,7 +180,7 @@ static int bnxt_re_setup_chip_ctx(struct bnxt_re_dev *rdev)
 	rdev->qplib_res.dattr = &rdev->dev_attr;
 	rdev->qplib_res.is_vf = BNXT_EN_VF(en_dev);
 
-	bnxt_re_set_drv_mode(rdev);
+	bnxt_re_set_drv_mode(rdev, wqe_mode);
 
 	bnxt_re_set_db_offset(rdev);
 	rc = bnxt_qplib_map_db_bar(&rdev->qplib_res);
@@ -294,30 +290,20 @@ static void bnxt_re_vf_res_config(struct bnxt_re_dev *rdev)
 
 static void bnxt_re_shutdown(struct auxiliary_device *adev)
 {
-	struct bnxt_re_en_dev_info *en_info = auxiliary_get_drvdata(adev);
-	struct bnxt_re_dev *rdev;
+	struct bnxt_re_dev *rdev = auxiliary_get_drvdata(adev);
 
-	if (!en_info)
+	if (!rdev)
 		return;
-
-	rdev = en_info->rdev;
 	ib_unregister_device(&rdev->ibdev);
-	bnxt_re_dev_uninit(rdev, BNXT_RE_COMPLETE_REMOVE);
+	bnxt_re_dev_uninit(rdev);
 }
 
 static void bnxt_re_stop_irq(void *handle)
 {
-	struct bnxt_re_en_dev_info *en_info = auxiliary_get_drvdata(handle);
-	struct bnxt_qplib_rcfw *rcfw;
-	struct bnxt_re_dev *rdev;
+	struct bnxt_re_dev *rdev = (struct bnxt_re_dev *)handle;
+	struct bnxt_qplib_rcfw *rcfw = &rdev->rcfw;
 	struct bnxt_qplib_nq *nq;
 	int indx;
-
-	if (!en_info)
-		return;
-
-	rdev = en_info->rdev;
-	rcfw = &rdev->rcfw;
 
 	for (indx = BNXT_RE_NQ_IDX; indx < rdev->num_msix; indx++) {
 		nq = &rdev->nq[indx - 1];
@@ -329,19 +315,12 @@ static void bnxt_re_stop_irq(void *handle)
 
 static void bnxt_re_start_irq(void *handle, struct bnxt_msix_entry *ent)
 {
-	struct bnxt_re_en_dev_info *en_info = auxiliary_get_drvdata(handle);
-	struct bnxt_msix_entry *msix_ent;
-	struct bnxt_qplib_rcfw *rcfw;
-	struct bnxt_re_dev *rdev;
+	struct bnxt_re_dev *rdev = (struct bnxt_re_dev *)handle;
+	struct bnxt_msix_entry *msix_ent = rdev->en_dev->msix_entries;
+	struct bnxt_qplib_rcfw *rcfw = &rdev->rcfw;
 	struct bnxt_qplib_nq *nq;
 	int indx, rc;
 
-	if (!en_info)
-		return;
-
-	rdev = en_info->rdev;
-	msix_ent = rdev->en_dev->msix_entries;
-	rcfw = &rdev->rcfw;
 	if (!ent) {
 		/* Not setting the f/w timeout bit in rcfw.
 		 * During the driver unload the first command
@@ -386,9 +365,14 @@ static struct bnxt_ulp_ops bnxt_re_ulp_ops = {
 static int bnxt_re_register_netdev(struct bnxt_re_dev *rdev)
 {
 	struct bnxt_en_dev *en_dev;
+	int rc;
 
 	en_dev = rdev->en_dev;
-	return bnxt_register_dev(en_dev, &bnxt_re_ulp_ops, rdev->adev);
+
+	rc = bnxt_register_dev(en_dev, &bnxt_re_ulp_ops, rdev);
+	if (!rc)
+		rdev->qplib_res.pdev = rdev->en_dev->pdev;
+	return rc;
 }
 
 static void bnxt_re_init_hwrm_hdr(struct input *hdr, u16 opcd)
@@ -439,7 +423,6 @@ int bnxt_re_hwrm_qcaps(struct bnxt_re_dev *rdev)
 	struct hwrm_func_qcaps_input req = {};
 	struct bnxt_qplib_chip_ctx *cctx;
 	struct bnxt_fw_msg fw_msg = {};
-	u32 flags_ext2;
 	int rc;
 
 	cctx = rdev->chip_ctx;
@@ -453,15 +436,14 @@ int bnxt_re_hwrm_qcaps(struct bnxt_re_dev *rdev)
 		return rc;
 	cctx->modes.db_push = le32_to_cpu(resp.flags) & FUNC_QCAPS_RESP_FLAGS_WCB_PUSH_MODE;
 
-	flags_ext2 = le32_to_cpu(resp.flags_ext2);
-	cctx->modes.dbr_pacing = flags_ext2 & FUNC_QCAPS_RESP_FLAGS_EXT2_DBR_PACING_EXT_SUPPORTED ||
-				 flags_ext2 & FUNC_QCAPS_RESP_FLAGS_EXT2_DBR_PACING_V0_SUPPORTED;
+	cctx->modes.dbr_pacing =
+		le32_to_cpu(resp.flags_ext2) &
+		FUNC_QCAPS_RESP_FLAGS_EXT2_DBR_PACING_EXT_SUPPORTED;
 	return 0;
 }
 
 static int bnxt_re_hwrm_dbr_pacing_qcfg(struct bnxt_re_dev *rdev)
 {
-	struct bnxt_qplib_db_pacing_data *pacing_data = rdev->qplib_res.pacing_data;
 	struct hwrm_func_dbr_pacing_qcfg_output resp = {};
 	struct hwrm_func_dbr_pacing_qcfg_input req = {};
 	struct bnxt_en_dev *en_dev = rdev->en_dev;
@@ -483,13 +465,6 @@ static int bnxt_re_hwrm_dbr_pacing_qcfg(struct bnxt_re_dev *rdev)
 		cctx->dbr_stat_db_fifo =
 			le32_to_cpu(resp.dbr_stat_db_fifo_reg) &
 			~FUNC_DBR_PACING_QCFG_RESP_DBR_STAT_DB_FIFO_REG_ADDR_SPACE_MASK;
-
-	pacing_data->fifo_max_depth = le32_to_cpu(resp.dbr_stat_db_max_fifo_depth);
-	if (!pacing_data->fifo_max_depth)
-		pacing_data->fifo_max_depth = BNXT_RE_MAX_FIFO_DEPTH(cctx);
-	pacing_data->fifo_room_mask = le32_to_cpu(resp.dbr_stat_db_fifo_reg_fifo_room_mask);
-	pacing_data->fifo_room_shift = resp.dbr_stat_db_fifo_reg_fifo_room_shift;
-
 	return 0;
 }
 
@@ -504,45 +479,23 @@ static void bnxt_re_set_default_pacing_data(struct bnxt_re_dev *rdev)
 		pacing_data->pacing_th * BNXT_RE_PACING_ALARM_TH_MULTIPLE;
 }
 
-static u32 __get_fifo_occupancy(struct bnxt_re_dev *rdev)
-{
-	struct bnxt_qplib_db_pacing_data *pacing_data = rdev->qplib_res.pacing_data;
-	u32 read_val, fifo_occup;
-
-	read_val = readl(rdev->en_dev->bar0 + rdev->pacing.dbr_db_fifo_reg_off);
-	fifo_occup = pacing_data->fifo_max_depth -
-		     ((read_val & pacing_data->fifo_room_mask) >>
-		      pacing_data->fifo_room_shift);
-	return fifo_occup;
-}
-
-static bool is_dbr_fifo_full(struct bnxt_re_dev *rdev)
-{
-	u32 max_occup, fifo_occup;
-
-	fifo_occup = __get_fifo_occupancy(rdev);
-	max_occup = BNXT_RE_MAX_FIFO_DEPTH(rdev->chip_ctx) - 1;
-	if (fifo_occup == max_occup)
-		return true;
-
-	return false;
-}
-
 static void __wait_for_fifo_occupancy_below_th(struct bnxt_re_dev *rdev)
 {
-	struct bnxt_qplib_db_pacing_data *pacing_data = rdev->qplib_res.pacing_data;
-	u32 fifo_occup;
+	u32 read_val, fifo_occup;
 
 	/* loop shouldn't run infintely as the occupancy usually goes
 	 * below pacing algo threshold as soon as pacing kicks in.
 	 */
 	while (1) {
-		fifo_occup = __get_fifo_occupancy(rdev);
+		read_val = readl(rdev->en_dev->bar0 + rdev->pacing.dbr_db_fifo_reg_off);
+		fifo_occup = BNXT_RE_MAX_FIFO_DEPTH -
+			((read_val & BNXT_RE_DB_FIFO_ROOM_MASK) >>
+			 BNXT_RE_DB_FIFO_ROOM_SHIFT);
 		/* Fifo occupancy cannot be greater the MAX FIFO depth */
-		if (fifo_occup > pacing_data->fifo_max_depth)
+		if (fifo_occup > BNXT_RE_MAX_FIFO_DEPTH)
 			break;
 
-		if (fifo_occup < pacing_data->pacing_th)
+		if (fifo_occup < rdev->qplib_res.pacing_data->pacing_th)
 			break;
 	}
 }
@@ -593,13 +546,16 @@ static void bnxt_re_pacing_timer_exp(struct work_struct *work)
 	struct bnxt_re_dev *rdev = container_of(work, struct bnxt_re_dev,
 			dbq_pacing_work.work);
 	struct bnxt_qplib_db_pacing_data *pacing_data;
-	u32 fifo_occup;
+	u32 read_val, fifo_occup;
 
 	if (!mutex_trylock(&rdev->pacing.dbq_lock))
 		return;
 
 	pacing_data = rdev->qplib_res.pacing_data;
-	fifo_occup = __get_fifo_occupancy(rdev);
+	read_val = readl(rdev->en_dev->bar0 + rdev->pacing.dbr_db_fifo_reg_off);
+	fifo_occup = BNXT_RE_MAX_FIFO_DEPTH -
+		((read_val & BNXT_RE_DB_FIFO_ROOM_MASK) >>
+		 BNXT_RE_DB_FIFO_ROOM_SHIFT);
 
 	if (fifo_occup > pacing_data->pacing_th)
 		goto restart_timer;
@@ -638,7 +594,7 @@ void bnxt_re_pacing_alert(struct bnxt_re_dev *rdev)
 	 * Increase the alarm_th to max so that other user lib instances do not
 	 * keep alerting the driver.
 	 */
-	pacing_data->alarm_th = pacing_data->fifo_max_depth;
+	pacing_data->alarm_th = BNXT_RE_MAX_FIFO_DEPTH;
 	pacing_data->do_pacing = BNXT_RE_MAX_DBR_DO_PACING;
 	cancel_work_sync(&rdev->dbq_fifo_check_work);
 	schedule_work(&rdev->dbq_fifo_check_work);
@@ -647,6 +603,9 @@ void bnxt_re_pacing_alert(struct bnxt_re_dev *rdev)
 
 static int bnxt_re_initialize_dbr_pacing(struct bnxt_re_dev *rdev)
 {
+	if (bnxt_re_hwrm_dbr_pacing_qcfg(rdev))
+		return -EIO;
+
 	/* Allocate a page for app use */
 	rdev->pacing.dbr_page = (void *)__get_free_page(GFP_KERNEL);
 	if (!rdev->pacing.dbr_page)
@@ -654,12 +613,6 @@ static int bnxt_re_initialize_dbr_pacing(struct bnxt_re_dev *rdev)
 
 	memset((u8 *)rdev->pacing.dbr_page, 0, PAGE_SIZE);
 	rdev->qplib_res.pacing_data = (struct bnxt_qplib_db_pacing_data *)rdev->pacing.dbr_page;
-
-	if (bnxt_re_hwrm_dbr_pacing_qcfg(rdev)) {
-		free_page((u64)rdev->pacing.dbr_page);
-		rdev->pacing.dbr_page = NULL;
-		return -EIO;
-	}
 
 	/* MAP HW window 2 for reading db fifo depth */
 	writel(rdev->chip_ctx->dbr_stat_db_fifo & BNXT_GRC_BASE_MASK,
@@ -670,16 +623,13 @@ static int bnxt_re_initialize_dbr_pacing(struct bnxt_re_dev *rdev)
 	rdev->pacing.dbr_bar_addr =
 		pci_resource_start(rdev->qplib_res.pdev, 0) + rdev->pacing.dbr_db_fifo_reg_off;
 
-	if (is_dbr_fifo_full(rdev)) {
-		free_page((u64)rdev->pacing.dbr_page);
-		rdev->pacing.dbr_page = NULL;
-		return -EIO;
-	}
-
 	rdev->pacing.pacing_algo_th = BNXT_RE_PACING_ALGO_THRESHOLD;
 	rdev->pacing.dbq_pacing_time = BNXT_RE_DBR_PACING_TIME;
 	rdev->pacing.dbr_def_do_pacing = BNXT_RE_DBR_DO_PACING_NO_CONGESTION;
 	rdev->pacing.do_pacing_save = rdev->pacing.dbr_def_do_pacing;
+	rdev->qplib_res.pacing_data->fifo_max_depth = BNXT_RE_MAX_FIFO_DEPTH;
+	rdev->qplib_res.pacing_data->fifo_room_mask = BNXT_RE_DB_FIFO_ROOM_MASK;
+	rdev->qplib_res.pacing_data->fifo_room_shift = BNXT_RE_DB_FIFO_ROOM_SHIFT;
 	rdev->qplib_res.pacing_data->grc_reg_offset = rdev->pacing.dbr_db_fifo_reg_off;
 	bnxt_re_set_default_pacing_data(rdev);
 	/* Initialize worker for DBR Pacing */
@@ -1589,7 +1539,7 @@ static int bnxt_re_ib_init(struct bnxt_re_dev *rdev)
 	return rc;
 }
 
-static void bnxt_re_dev_uninit(struct bnxt_re_dev *rdev, u8 op_type)
+static void bnxt_re_dev_uninit(struct bnxt_re_dev *rdev)
 {
 	u8 type;
 	int rc;
@@ -1622,10 +1572,8 @@ static void bnxt_re_dev_uninit(struct bnxt_re_dev *rdev, u8 op_type)
 		bnxt_re_deinitialize_dbr_pacing(rdev);
 
 	bnxt_re_destroy_chip_ctx(rdev);
-	if (op_type == BNXT_RE_COMPLETE_REMOVE) {
-		if (test_and_clear_bit(BNXT_RE_FLAG_NETDEV_REGISTERED, &rdev->flags))
-			bnxt_unregister_dev(rdev->en_dev);
-	}
+	if (test_and_clear_bit(BNXT_RE_FLAG_NETDEV_REGISTERED, &rdev->flags))
+		bnxt_unregister_dev(rdev->en_dev);
 }
 
 /* worker thread for polling periodic events. Now used for QoS programming*/
@@ -1638,7 +1586,7 @@ static void bnxt_re_worker(struct work_struct *work)
 	schedule_delayed_work(&rdev->worker, msecs_to_jiffies(30000));
 }
 
-static int bnxt_re_dev_init(struct bnxt_re_dev *rdev, u8 op_type)
+static int bnxt_re_dev_init(struct bnxt_re_dev *rdev, u8 wqe_mode)
 {
 	struct bnxt_re_ring_attr rattr = {};
 	struct bnxt_qplib_creq_ctx *creq;
@@ -1647,18 +1595,16 @@ static int bnxt_re_dev_init(struct bnxt_re_dev *rdev, u8 op_type)
 	u8 type;
 	int rc;
 
-	if (op_type == BNXT_RE_COMPLETE_INIT) {
-		/* Registered a new RoCE device instance to netdev */
-		rc = bnxt_re_register_netdev(rdev);
-		if (rc) {
-			ibdev_err(&rdev->ibdev,
-				  "Failed to register with netedev: %#x\n", rc);
-			return -EINVAL;
-		}
+	/* Registered a new RoCE device instance to netdev */
+	rc = bnxt_re_register_netdev(rdev);
+	if (rc) {
+		ibdev_err(&rdev->ibdev,
+			  "Failed to register with netedev: %#x\n", rc);
+		return -EINVAL;
 	}
 	set_bit(BNXT_RE_FLAG_NETDEV_REGISTERED, &rdev->flags);
 
-	rc = bnxt_re_setup_chip_ctx(rdev);
+	rc = bnxt_re_setup_chip_ctx(rdev, wqe_mode);
 	if (rc) {
 		bnxt_unregister_dev(rdev->en_dev);
 		clear_bit(BNXT_RE_FLAG_NETDEV_REGISTERED, &rdev->flags);
@@ -1791,8 +1737,6 @@ static int bnxt_re_dev_init(struct bnxt_re_dev *rdev, u8 op_type)
 		bnxt_re_vf_res_config(rdev);
 	}
 	hash_init(rdev->cq_hash);
-	if (rdev->chip_ctx->modes.toggle_bits & BNXT_QPLIB_SRQ_TOGGLE_BIT)
-		hash_init(rdev->srq_hash);
 
 	return 0;
 free_sctx:
@@ -1807,38 +1751,21 @@ free_ring:
 free_rcfw:
 	bnxt_qplib_free_rcfw_channel(&rdev->rcfw);
 fail:
-	bnxt_re_dev_uninit(rdev, BNXT_RE_COMPLETE_REMOVE);
+	bnxt_re_dev_uninit(rdev);
 
 	return rc;
 }
 
-static void bnxt_re_update_en_info_rdev(struct bnxt_re_dev *rdev,
-					struct bnxt_re_en_dev_info *en_info,
-					struct auxiliary_device *adev)
-{
-	/* Before updating the rdev pointer in bnxt_re_en_dev_info structure,
-	 * take the rtnl lock to avoid accessing invalid rdev pointer from
-	 * L2 ULP callbacks. This is applicable in all the places where rdev
-	 * pointer is updated in bnxt_re_en_dev_info.
-	 */
-	rtnl_lock();
-	en_info->rdev = rdev;
-	rdev->adev = adev;
-	rtnl_unlock();
-}
-
-static int bnxt_re_add_device(struct auxiliary_device *adev, u8 op_type)
+static int bnxt_re_add_device(struct auxiliary_device *adev, u8 wqe_mode)
 {
 	struct bnxt_aux_priv *aux_priv =
 		container_of(adev, struct bnxt_aux_priv, aux_dev);
-	struct bnxt_re_en_dev_info *en_info;
 	struct bnxt_en_dev *en_dev;
 	struct bnxt_re_dev *rdev;
 	int rc;
 
-	en_info = auxiliary_get_drvdata(adev);
-	en_dev = en_info->en_dev;
-
+	/* en_dev should never be NULL as long as adev and aux_dev are valid. */
+	en_dev = aux_priv->edev;
 
 	rdev = bnxt_re_dev_add(aux_priv, en_dev);
 	if (!rdev || !rdev_to_dev(rdev)) {
@@ -1846,9 +1773,7 @@ static int bnxt_re_add_device(struct auxiliary_device *adev, u8 op_type)
 		goto exit;
 	}
 
-	bnxt_re_update_en_info_rdev(rdev, en_info, adev);
-
-	rc = bnxt_re_dev_init(rdev, op_type);
+	rc = bnxt_re_dev_init(rdev, wqe_mode);
 	if (rc)
 		goto re_dev_dealloc;
 
@@ -1858,22 +1783,12 @@ static int bnxt_re_add_device(struct auxiliary_device *adev, u8 op_type)
 			aux_priv->aux_dev.name);
 		goto re_dev_uninit;
 	}
-
-	rdev->nb.notifier_call = bnxt_re_netdev_event;
-	rc = register_netdevice_notifier(&rdev->nb);
-	if (rc) {
-		rdev->nb.notifier_call = NULL;
-		pr_err("%s: Cannot register to netdevice_notifier",
-		       ROCE_DRV_MODULE_NAME);
-		return rc;
-	}
-	bnxt_re_setup_cc(rdev, true);
+	auxiliary_set_drvdata(adev, rdev);
 
 	return 0;
 
 re_dev_uninit:
-	bnxt_re_update_en_info_rdev(NULL, en_info, adev);
-	bnxt_re_dev_uninit(rdev, BNXT_RE_COMPLETE_REMOVE);
+	bnxt_re_dev_uninit(rdev);
 re_dev_dealloc:
 	ib_dealloc_device(&rdev->ibdev);
 exit:
@@ -1956,9 +1871,14 @@ exit:
 
 #define BNXT_ADEV_NAME "bnxt_en"
 
-static void bnxt_re_remove_device(struct bnxt_re_dev *rdev, u8 op_type,
-				  struct auxiliary_device *aux_dev)
+static void bnxt_re_remove(struct auxiliary_device *adev)
 {
+	struct bnxt_re_dev *rdev = auxiliary_get_drvdata(adev);
+
+	if (!rdev)
+		return;
+
+	mutex_lock(&bnxt_re_mutex);
 	if (rdev->nb.notifier_call) {
 		unregister_netdevice_notifier(&rdev->nb);
 		rdev->nb.notifier_call = NULL;
@@ -1966,56 +1886,41 @@ static void bnxt_re_remove_device(struct bnxt_re_dev *rdev, u8 op_type,
 		/* If notifier is null, we should have already done a
 		 * clean up before coming here.
 		 */
-		return;
+		goto skip_remove;
 	}
 	bnxt_re_setup_cc(rdev, false);
 	ib_unregister_device(&rdev->ibdev);
-	bnxt_re_dev_uninit(rdev, op_type);
+	bnxt_re_dev_uninit(rdev);
 	ib_dealloc_device(&rdev->ibdev);
-}
-
-static void bnxt_re_remove(struct auxiliary_device *adev)
-{
-	struct bnxt_re_en_dev_info *en_info = auxiliary_get_drvdata(adev);
-	struct bnxt_re_dev *rdev;
-
-	mutex_lock(&bnxt_re_mutex);
-	if (!en_info) {
-		mutex_unlock(&bnxt_re_mutex);
-		return;
-	}
-	rdev = en_info->rdev;
-
-	if (rdev)
-		bnxt_re_remove_device(rdev, BNXT_RE_COMPLETE_REMOVE, adev);
-	kfree(en_info);
+skip_remove:
 	mutex_unlock(&bnxt_re_mutex);
 }
 
 static int bnxt_re_probe(struct auxiliary_device *adev,
 			 const struct auxiliary_device_id *id)
 {
-	struct bnxt_aux_priv *aux_priv =
-		container_of(adev, struct bnxt_aux_priv, aux_dev);
-	struct bnxt_re_en_dev_info *en_info;
-	struct bnxt_en_dev *en_dev;
+	struct bnxt_re_dev *rdev;
 	int rc;
 
-	en_dev = aux_priv->edev;
-
 	mutex_lock(&bnxt_re_mutex);
-	en_info = kzalloc(sizeof(*en_info), GFP_KERNEL);
-	if (!en_info) {
+	rc = bnxt_re_add_device(adev, BNXT_QPLIB_WQE_MODE_STATIC);
+	if (rc) {
 		mutex_unlock(&bnxt_re_mutex);
-		return -ENOMEM;
+		return rc;
 	}
-	en_info->en_dev = en_dev;
 
-	auxiliary_set_drvdata(adev, en_info);
+	rdev = auxiliary_get_drvdata(adev);
 
-	rc = bnxt_re_add_device(adev, BNXT_RE_COMPLETE_INIT);
-	if (rc)
+	rdev->nb.notifier_call = bnxt_re_netdev_event;
+	rc = register_netdevice_notifier(&rdev->nb);
+	if (rc) {
+		rdev->nb.notifier_call = NULL;
+		pr_err("%s: Cannot register to netdevice_notifier",
+		       ROCE_DRV_MODULE_NAME);
 		goto err;
+	}
+
+	bnxt_re_setup_cc(rdev, true);
 	mutex_unlock(&bnxt_re_mutex);
 	return 0;
 
@@ -2028,15 +1933,11 @@ err:
 
 static int bnxt_re_suspend(struct auxiliary_device *adev, pm_message_t state)
 {
-	struct bnxt_re_en_dev_info *en_info = auxiliary_get_drvdata(adev);
-	struct bnxt_en_dev *en_dev;
-	struct bnxt_re_dev *rdev;
+	struct bnxt_re_dev *rdev = auxiliary_get_drvdata(adev);
 
-	if (!en_info)
+	if (!rdev)
 		return 0;
 
-	rdev = en_info->rdev;
-	en_dev = en_info->en_dev;
 	mutex_lock(&bnxt_re_mutex);
 	/* L2 driver may invoke this callback during device error/crash or device
 	 * reset. Current RoCE driver doesn't recover the device in case of
@@ -2055,20 +1956,13 @@ static int bnxt_re_suspend(struct auxiliary_device *adev, pm_message_t state)
 		set_bit(ERR_DEVICE_DETACHED, &rdev->rcfw.cmdq.flags);
 
 	bnxt_re_dev_stop(rdev);
-	bnxt_re_stop_irq(adev);
+	bnxt_re_stop_irq(rdev);
 	/* Move the device states to detached and  avoid sending any more
 	 * commands to HW
 	 */
 	set_bit(BNXT_RE_FLAG_ERR_DEVICE_DETACHED, &rdev->flags);
 	set_bit(ERR_DEVICE_DETACHED, &rdev->rcfw.cmdq.flags);
 	wake_up_all(&rdev->rcfw.cmdq.waitq);
-
-	if (rdev->pacing.dbr_pacing)
-		bnxt_re_set_pacing_dev_state(rdev);
-
-	ibdev_info(&rdev->ibdev, "%s: L2 driver notified to stop en_state 0x%lx",
-		   __func__, en_dev->en_state);
-	bnxt_re_remove_device(rdev, BNXT_RE_PRE_RECOVERY_REMOVE, adev);
 	mutex_unlock(&bnxt_re_mutex);
 
 	return 0;
@@ -2076,10 +1970,9 @@ static int bnxt_re_suspend(struct auxiliary_device *adev, pm_message_t state)
 
 static int bnxt_re_resume(struct auxiliary_device *adev)
 {
-	struct bnxt_re_en_dev_info *en_info = auxiliary_get_drvdata(adev);
-	struct bnxt_re_dev *rdev;
+	struct bnxt_re_dev *rdev = auxiliary_get_drvdata(adev);
 
-	if (!en_info)
+	if (!rdev)
 		return 0;
 
 	mutex_lock(&bnxt_re_mutex);
@@ -2090,9 +1983,7 @@ static int bnxt_re_resume(struct auxiliary_device *adev)
 	 * L2 driver want to modify the MSIx table.
 	 */
 
-	bnxt_re_add_device(adev, BNXT_RE_POST_RECOVERY_INIT);
-	rdev = en_info->rdev;
-	ibdev_info(&rdev->ibdev, "Device resume completed");
+	ibdev_info(&rdev->ibdev, "Handle device resume call");
 	mutex_unlock(&bnxt_re_mutex);
 
 	return 0;

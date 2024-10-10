@@ -8,7 +8,6 @@
 #define DRV_SUMMARY	"Intel(R) Infrastructure Data Path Function Linux Driver"
 
 MODULE_DESCRIPTION(DRV_SUMMARY);
-MODULE_IMPORT_NS(LIBETH);
 MODULE_LICENSE("GPL");
 
 /**

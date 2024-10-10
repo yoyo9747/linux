@@ -28,6 +28,7 @@ properties:
 
 required:
   - compatible
+  - '#thermal-sensor-cells'
 
 additionalProperties: false
 

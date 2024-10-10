@@ -1033,7 +1033,8 @@ static int snd_dummy_probe(struct platform_device *devptr)
 	dummy->card = card;
 	for (mdl = dummy_models; *mdl && model[dev]; mdl++) {
 		if (strcmp(model[dev], (*mdl)->name) == 0) {
-			pr_info("snd-dummy: Using model '%s' for card %i\n",
+			printk(KERN_INFO
+				"snd-dummy: Using model '%s' for card %i\n",
 				(*mdl)->name, card->number);
 			m = dummy->model = *mdl;
 			break;
@@ -1167,7 +1168,7 @@ static int __init alsa_card_dummy_init(void)
 	}
 	if (!cards) {
 #ifdef MODULE
-		pr_err("Dummy soundcard not found or device busy\n");
+		printk(KERN_ERR "Dummy soundcard not found or device busy\n");
 #endif
 		snd_dummy_unregister_all();
 		return -ENODEV;

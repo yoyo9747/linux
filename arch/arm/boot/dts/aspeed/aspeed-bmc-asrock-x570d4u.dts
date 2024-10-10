@@ -254,6 +254,10 @@
 	status = "okay";
 };
 
+&pinctrl {
+	aspeed,external-nodes = <&gfx &lhc>;
+};
+
 &vhub {
 	status = "okay";
 };

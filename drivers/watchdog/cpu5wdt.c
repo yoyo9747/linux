@@ -185,6 +185,7 @@ static ssize_t cpu5wdt_write(struct file *file, const char __user *buf,
 
 static const struct file_operations cpu5wdt_fops = {
 	.owner		= THIS_MODULE,
+	.llseek		= no_llseek,
 	.unlocked_ioctl	= cpu5wdt_ioctl,
 	.compat_ioctl	= compat_ptr_ioctl,
 	.open		= cpu5wdt_open,

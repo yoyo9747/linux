@@ -43,6 +43,7 @@
 #include <linux/bitops.h>
 #include <linux/dmi.h>
 #include <linux/backlight.h>
+#include <linux/fb.h>
 #include <linux/input.h>
 #include <linux/input/sparse-keymap.h>
 #include <linux/kfifo.h>
@@ -355,7 +356,7 @@ static int bl_get_brightness(struct backlight_device *b)
 {
 	struct acpi_device *device = bl_get_data(b);
 
-	return b->props.power == BACKLIGHT_POWER_OFF ? 0 : get_lcd_level(device);
+	return b->props.power == FB_BLANK_POWERDOWN ? 0 : get_lcd_level(device);
 }
 
 static int bl_update_status(struct backlight_device *b)
@@ -363,7 +364,7 @@ static int bl_update_status(struct backlight_device *b)
 	struct acpi_device *device = bl_get_data(b);
 
 	if (fext) {
-		if (b->props.power == BACKLIGHT_POWER_OFF)
+		if (b->props.power == FB_BLANK_POWERDOWN)
 			call_fext_func(fext, FUNC_BACKLIGHT, 0x1,
 				       BACKLIGHT_PARAM_POWER, BACKLIGHT_OFF);
 		else
@@ -932,9 +933,9 @@ static int acpi_fujitsu_laptop_add(struct acpi_device *device)
 	    acpi_video_get_backlight_type() == acpi_backlight_vendor) {
 		if (call_fext_func(fext, FUNC_BACKLIGHT, 0x2,
 				   BACKLIGHT_PARAM_POWER, 0x0) == BACKLIGHT_OFF)
-			fujitsu_bl->bl_device->props.power = BACKLIGHT_POWER_OFF;
+			fujitsu_bl->bl_device->props.power = FB_BLANK_POWERDOWN;
 		else
-			fujitsu_bl->bl_device->props.power = BACKLIGHT_POWER_ON;
+			fujitsu_bl->bl_device->props.power = FB_BLANK_UNBLANK;
 	}
 
 	ret = acpi_fujitsu_laptop_input_setup(device);

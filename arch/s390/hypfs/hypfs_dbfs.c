@@ -39,9 +39,7 @@ static ssize_t dbfs_read(struct file *file, char __user *buf,
 		return 0;
 
 	df = file_inode(file)->i_private;
-	if (mutex_lock_interruptible(&df->lock))
-		return -ERESTARTSYS;
-
+	mutex_lock(&df->lock);
 	data = hypfs_dbfs_data_alloc(df);
 	if (!data) {
 		mutex_unlock(&df->lock);
@@ -76,6 +74,7 @@ static long dbfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 static const struct file_operations dbfs_ops = {
 	.read		= dbfs_read,
+	.llseek		= no_llseek,
 	.unlocked_ioctl = dbfs_ioctl,
 };
 

@@ -36,7 +36,7 @@
 #include <linux/miscdevice.h>
 #include <linux/rhashtable.h>
 #include <linux/mutex.h>
-#include <linux/xarray.h>
+#include <linux/idr.h>
 #include <linux/ratelimit.h>
 #include <linux/uaccess.h>
 
@@ -295,7 +295,6 @@ struct dlm_lkb {
 		void			*lkb_astparam;	/* caller's ast arg */
 		struct dlm_user_args	*lkb_ua;
 	};
-	struct rcu_head		rcu;
 };
 
 /*
@@ -317,24 +316,26 @@ struct dlm_rsb {
 	int			res_nodeid;
 	int			res_master_nodeid;
 	int			res_dir_nodeid;
-	unsigned long		res_id;		/* for ls_recover_xa */
+	int			res_id;		/* for ls_recover_idr */
 	uint32_t                res_lvbseq;
 	uint32_t		res_hash;
 	unsigned long		res_toss_time;
 	uint32_t		res_first_lkid;
 	struct list_head	res_lookup;	/* lkbs waiting on first */
-	struct rhash_head	res_node;	/* rsbtbl */
+	union {
+		struct list_head	res_hashchain;
+		struct rhash_head	res_node; /* rsbtbl */
+	};
 	struct list_head	res_grantqueue;
 	struct list_head	res_convertqueue;
 	struct list_head	res_waitqueue;
 
-	struct list_head	res_slow_list;      /* ls_slow_* */
-	struct list_head	res_scan_list;
+	struct list_head	res_rsbs_list;
 	struct list_head	res_root_list;	    /* used for recovery */
 	struct list_head	res_masters_list;   /* used for recovery */
 	struct list_head	res_recover_list;   /* used for recovery */
+	struct list_head	res_toss_q_list;
 	int			res_recover_locks_count;
-	struct rcu_head		rcu;
 
 	char			*res_lvbptr;
 	char			res_name[DLM_RESNAME_MAXLEN+1];
@@ -367,8 +368,7 @@ enum rsb_flags {
 	RSB_RECOVER_CONVERT,
 	RSB_RECOVER_GRANT,
 	RSB_RECOVER_LVB_INVAL,
-	RSB_INACTIVE,
-	RSB_HASHED, /* set while rsb is on ls_rsbtbl */
+	RSB_TOSS,
 };
 
 static inline void rsb_set_flag(struct dlm_rsb *r, enum rsb_flags flag)
@@ -559,8 +559,16 @@ struct rcom_lock {
 	char			rl_lvb[];
 };
 
+/*
+ * The max number of resources per rsbtbl bucket that shrink will attempt
+ * to remove in each iteration.
+ */
+
+#define DLM_REMOVE_NAMES_MAX 8
+
 struct dlm_ls {
 	struct list_head	ls_list;	/* list of lockspaces */
+	dlm_lockspace_t		*ls_local_handle;
 	uint32_t		ls_global_id;	/* global unique lockspace ID */
 	uint32_t		ls_generation;
 	uint32_t		ls_exflags;
@@ -570,27 +578,36 @@ struct dlm_ls {
 	wait_queue_head_t	ls_count_wait;
 	int			ls_create_count; /* create/release refcount */
 	unsigned long		ls_flags;	/* LSFL_ */
+	unsigned long		ls_scan_time;
 	struct kobject		ls_kobj;
 
-	struct xarray		ls_lkbxa;
-	rwlock_t		ls_lkbxa_lock;
+	struct idr		ls_lkbidr;
+	rwlock_t		ls_lkbidr_lock;
 
-	/* an rsb is on rsbtl for primary locking functions,
-	   and on a slow list for recovery/dump iteration  */
 	struct rhashtable	ls_rsbtbl;
-	rwlock_t		ls_rsbtbl_lock; /* for ls_rsbtbl and ls_slow */
-	struct list_head	ls_slow_inactive; /* to iterate rsbtbl */
-	struct list_head	ls_slow_active;   /* to iterate rsbtbl */
+	rwlock_t		ls_rsbtbl_lock;
 
-	struct timer_list	ls_scan_timer; /* based on first scan_list rsb toss_time */
-	struct list_head	ls_scan_list;  /* rsbs ordered by res_toss_time */
-	spinlock_t		ls_scan_lock;
+	struct list_head	ls_toss;
+	struct list_head	ls_keep;
+
+	struct timer_list	ls_timer;
+	/* this queue is ordered according the
+	 * absolute res_toss_time jiffies time
+	 * to mod_timer() with the first element
+	 * if necessary.
+	 */
+	struct list_head	ls_toss_q;
+	spinlock_t		ls_toss_q_lock;
 
 	spinlock_t		ls_waiters_lock;
 	struct list_head	ls_waiters;	/* lkbs needing a reply */
 
 	spinlock_t		ls_orphans_lock;
 	struct list_head	ls_orphans;
+
+	spinlock_t		ls_new_rsb_spin;
+	int			ls_new_rsb_count;
+	struct list_head	ls_new_rsb;	/* new rsb structs */
 
 	struct list_head	ls_nodes;	/* current nodes in ls */
 	struct list_head	ls_nodes_gone;	/* dead node list, recovery */
@@ -647,8 +664,8 @@ struct dlm_ls {
 	struct list_head	ls_recover_list;
 	spinlock_t		ls_recover_list_lock;
 	int			ls_recover_list_count;
-	struct xarray		ls_recover_xa;
-	spinlock_t		ls_recover_xa_lock;
+	struct idr		ls_recover_idr;
+	spinlock_t		ls_recover_idr_lock;
 	wait_queue_head_t	ls_wait_general;
 	wait_queue_head_t	ls_recover_lock_wait;
 	spinlock_t		ls_clear_proc_locks;
@@ -660,8 +677,6 @@ struct dlm_ls {
 
 	const struct dlm_lockspace_ops *ls_ops;
 	void			*ls_ops_arg;
-
-	struct work_struct	ls_free_work;
 
 	int			ls_namelen;
 	char			ls_name[DLM_LOCKSPACE_LEN + 1];
@@ -701,8 +716,6 @@ struct dlm_ls {
 #define LSFL_CB_DELAY		9
 #define LSFL_NODIR		10
 #define LSFL_RECV_MSG_BLOCKED	11
-#define LSFL_FS			12
-#define LSFL_SOFTIRQ		13
 
 #define DLM_PROC_FLAGS_CLOSING 1
 #define DLM_PROC_FLAGS_COMPAT  2
@@ -805,8 +818,6 @@ static inline void dlm_set_sbflags_val(struct dlm_lkb *lkb, uint32_t val)
 	dlm_set_flags_val(&lkb->lkb_sbflags, val, __DLM_SBF_MIN_BIT,
 			  __DLM_SBF_MAX_BIT);
 }
-
-extern struct workqueue_struct *dlm_wq;
 
 int dlm_plock_init(void);
 void dlm_plock_exit(void);

@@ -144,6 +144,7 @@ gpio_keys_polled_get_devtree_pdata(struct device *dev)
 {
 	struct gpio_keys_platform_data *pdata;
 	struct gpio_keys_button *button;
+	struct fwnode_handle *child;
 	int nbuttons;
 
 	nbuttons = device_get_child_node_count(dev);
@@ -165,10 +166,11 @@ gpio_keys_polled_get_devtree_pdata(struct device *dev)
 
 	device_property_read_string(dev, "label", &pdata->name);
 
-	device_for_each_child_node_scoped(dev, child) {
+	device_for_each_child_node(dev, child) {
 		if (fwnode_property_read_u32(child, "linux,code",
 					     &button->code)) {
 			dev_err(dev, "button without keycode\n");
+			fwnode_handle_put(child);
 			return ERR_PTR(-EINVAL);
 		}
 

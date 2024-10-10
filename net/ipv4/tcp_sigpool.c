@@ -10,14 +10,7 @@
 #include <net/tcp.h>
 
 static size_t __scratch_size;
-struct sigpool_scratch {
-	local_lock_t bh_lock;
-	void __rcu *pad;
-};
-
-static DEFINE_PER_CPU(struct sigpool_scratch, sigpool_scratch) = {
-	.bh_lock = INIT_LOCAL_LOCK(bh_lock),
-};
+static DEFINE_PER_CPU(void __rcu *, sigpool_scratch);
 
 struct sigpool_entry {
 	struct crypto_ahash	*hash;
@@ -79,7 +72,7 @@ static int sigpool_reserve_scratch(size_t size)
 			break;
 		}
 
-		old_scratch = rcu_replace_pointer(per_cpu(sigpool_scratch.pad, cpu),
+		old_scratch = rcu_replace_pointer(per_cpu(sigpool_scratch, cpu),
 					scratch, lockdep_is_held(&cpool_mutex));
 		if (!cpu_online(cpu) || !old_scratch) {
 			kfree(old_scratch);
@@ -100,7 +93,7 @@ static void sigpool_scratch_free(void)
 	int cpu;
 
 	for_each_possible_cpu(cpu)
-		kfree(rcu_replace_pointer(per_cpu(sigpool_scratch.pad, cpu),
+		kfree(rcu_replace_pointer(per_cpu(sigpool_scratch, cpu),
 					  NULL, lockdep_is_held(&cpool_mutex)));
 	__scratch_size = 0;
 }
@@ -284,8 +277,7 @@ int tcp_sigpool_start(unsigned int id, struct tcp_sigpool *c) __cond_acquires(RC
 	/* Pairs with tcp_sigpool_reserve_scratch(), scratch area is
 	 * valid (allocated) until tcp_sigpool_end().
 	 */
-	local_lock_nested_bh(&sigpool_scratch.bh_lock);
-	c->scratch = rcu_dereference_bh(*this_cpu_ptr(&sigpool_scratch.pad));
+	c->scratch = rcu_dereference_bh(*this_cpu_ptr(&sigpool_scratch));
 	return 0;
 }
 EXPORT_SYMBOL_GPL(tcp_sigpool_start);
@@ -294,7 +286,6 @@ void tcp_sigpool_end(struct tcp_sigpool *c) __releases(RCU_BH)
 {
 	struct crypto_ahash *hash = crypto_ahash_reqtfm(c->req);
 
-	local_unlock_nested_bh(&sigpool_scratch.bh_lock);
 	rcu_read_unlock_bh();
 	ahash_request_free(c->req);
 	crypto_free_ahash(hash);

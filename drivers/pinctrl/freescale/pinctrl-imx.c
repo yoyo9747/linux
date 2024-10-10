@@ -266,7 +266,7 @@ static int imx_pmx_set(struct pinctrl_dev *pctldev, unsigned selector,
 	npins = grp->grp.npins;
 
 	dev_dbg(ipctl->dev, "enable function %s group %s\n",
-		func->func.name, grp->grp.name);
+		func->name, grp->grp.name);
 
 	for (i = 0; i < npins; i++) {
 		/*
@@ -580,6 +580,7 @@ static int imx_pinctrl_parse_functions(struct device_node *np,
 				       u32 index)
 {
 	struct pinctrl_dev *pctl = ipctl->pctl;
+	struct device_node *child;
 	struct function_desc *func;
 	struct group_desc *grp;
 	const char **group_names;
@@ -592,27 +593,29 @@ static int imx_pinctrl_parse_functions(struct device_node *np,
 		return -EINVAL;
 
 	/* Initialise function */
-	func->func.name = np->name;
-	func->func.ngroups = of_get_child_count(np);
-	if (func->func.ngroups == 0) {
+	func->name = np->name;
+	func->num_group_names = of_get_child_count(np);
+	if (func->num_group_names == 0) {
 		dev_info(ipctl->dev, "no groups defined in %pOF\n", np);
 		return -EINVAL;
 	}
 
-	group_names = devm_kcalloc(ipctl->dev, func->func.ngroups,
-				   sizeof(*func->func.groups), GFP_KERNEL);
+	group_names = devm_kcalloc(ipctl->dev, func->num_group_names,
+				   sizeof(char *), GFP_KERNEL);
 	if (!group_names)
 		return -ENOMEM;
 	i = 0;
-	for_each_child_of_node_scoped(np, child)
+	for_each_child_of_node(np, child)
 		group_names[i++] = child->name;
-	func->func.groups = group_names;
+	func->group_names = group_names;
 
 	i = 0;
-	for_each_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		grp = devm_kzalloc(ipctl->dev, sizeof(*grp), GFP_KERNEL);
-		if (!grp)
+		if (!grp) {
+			of_node_put(child);
 			return -ENOMEM;
+		}
 
 		mutex_lock(&ipctl->mutex);
 		radix_tree_insert(&pctl->pin_group_tree,
@@ -632,13 +635,21 @@ static int imx_pinctrl_parse_functions(struct device_node *np,
  */
 static bool imx_pinctrl_dt_is_flat_functions(struct device_node *np)
 {
-	for_each_child_of_node_scoped(np, function_np) {
-		if (of_property_read_bool(function_np, "fsl,pins"))
-			return true;
+	struct device_node *function_np;
+	struct device_node *pinctrl_np;
 
-		for_each_child_of_node_scoped(function_np, pinctrl_np) {
-			if (of_property_read_bool(pinctrl_np, "fsl,pins"))
+	for_each_child_of_node(np, function_np) {
+		if (of_property_read_bool(function_np, "fsl,pins")) {
+			of_node_put(function_np);
+			return true;
+		}
+
+		for_each_child_of_node(function_np, pinctrl_np) {
+			if (of_property_read_bool(pinctrl_np, "fsl,pins")) {
+				of_node_put(pinctrl_np);
+				of_node_put(function_np);
 				return false;
+			}
 		}
 	}
 
@@ -804,14 +815,14 @@ int imx_pinctrl_probe(struct platform_device *pdev,
 }
 EXPORT_SYMBOL_GPL(imx_pinctrl_probe);
 
-static int imx_pinctrl_suspend(struct device *dev)
+static int __maybe_unused imx_pinctrl_suspend(struct device *dev)
 {
 	struct imx_pinctrl *ipctl = dev_get_drvdata(dev);
 
 	return pinctrl_force_sleep(ipctl->pctl);
 }
 
-static int imx_pinctrl_resume(struct device *dev)
+static int __maybe_unused imx_pinctrl_resume(struct device *dev)
 {
 	struct imx_pinctrl *ipctl = dev_get_drvdata(dev);
 
@@ -819,7 +830,8 @@ static int imx_pinctrl_resume(struct device *dev)
 }
 
 const struct dev_pm_ops imx_pinctrl_pm_ops = {
-	LATE_SYSTEM_SLEEP_PM_OPS(imx_pinctrl_suspend, imx_pinctrl_resume)
+	SET_LATE_SYSTEM_SLEEP_PM_OPS(imx_pinctrl_suspend,
+					imx_pinctrl_resume)
 };
 EXPORT_SYMBOL_GPL(imx_pinctrl_pm_ops);
 

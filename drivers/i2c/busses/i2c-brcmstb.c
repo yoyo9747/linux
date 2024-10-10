@@ -67,7 +67,7 @@
 
 /* BSC block register map structure to cache fields to be written */
 struct bsc_regs {
-	u32	chip_address;           /* target address */
+	u32	chip_address;           /* slave address */
 	u32	data_in[N_DATA_REGS];   /* tx data buffer*/
 	u32	cnt_reg;		/* rx/tx data length */
 	u32	ctl_reg;		/* control register */
@@ -320,7 +320,7 @@ cmd_out:
 	return rc;
 }
 
-/* Actual data transfer through the BSC controller */
+/* Actual data transfer through the BSC master */
 static int brcmstb_i2c_xfer_bsc_data(struct brcmstb_i2c_dev *dev,
 				     u8 *buf, unsigned int len,
 				     struct i2c_msg *pmsg)
@@ -441,6 +441,7 @@ static int brcmstb_i2c_do_addr(struct brcmstb_i2c_dev *dev,
 	return 0;
 }
 
+/* Master transfer function */
 static int brcmstb_i2c_xfer(struct i2c_adapter *adapter,
 			    struct i2c_msg msgs[], int num)
 {
@@ -472,7 +473,7 @@ static int brcmstb_i2c_xfer(struct i2c_adapter *adapter,
 
 		brcmstb_set_i2c_start_stop(dev, cond);
 
-		/* Send target address */
+		/* Send slave address */
 		if (!(pmsg->flags & I2C_M_NOSTART)) {
 			rc = brcmstb_i2c_do_addr(dev, pmsg);
 			if (rc < 0) {
@@ -544,8 +545,8 @@ static u32 brcmstb_i2c_functionality(struct i2c_adapter *adap)
 }
 
 static const struct i2c_algorithm brcmstb_i2c_algo = {
-	.xfer = brcmstb_i2c_xfer,
-	.xfer_atomic = brcmstb_i2c_xfer_atomic,
+	.master_xfer = brcmstb_i2c_xfer,
+	.master_xfer_atomic = brcmstb_i2c_xfer_atomic,
 	.functionality = brcmstb_i2c_functionality,
 };
 

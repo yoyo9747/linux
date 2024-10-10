@@ -38,19 +38,11 @@ static const struct class hidraw_class = {
 static struct hidraw *hidraw_table[HIDRAW_MAX_DEVICES];
 static DECLARE_RWSEM(minors_rwsem);
 
-static inline bool hidraw_is_revoked(struct hidraw_list *list)
-{
-	return list->revoked;
-}
-
 static ssize_t hidraw_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos)
 {
 	struct hidraw_list *list = file->private_data;
 	int ret = 0, len;
 	DECLARE_WAITQUEUE(wait, current);
-
-	if (hidraw_is_revoked(list))
-		return -ENODEV;
 
 	mutex_lock(&list->read_mutex);
 
@@ -148,7 +140,7 @@ static ssize_t hidraw_send_report(struct file *file, const char __user *buffer, 
 
 	if ((report_type == HID_OUTPUT_REPORT) &&
 	    !(dev->quirks & HID_QUIRK_NO_OUTPUT_REPORTS_ON_INTR_EP)) {
-		ret = __hid_hw_output_report(dev, buf, count, (u64)(long)file, false);
+		ret = hid_hw_output_report(dev, buf, count);
 		/*
 		 * compatibility with old implementation of USB-HID and I2C-HID:
 		 * if the device does not support receiving output reports,
@@ -158,8 +150,8 @@ static ssize_t hidraw_send_report(struct file *file, const char __user *buffer, 
 			goto out_free;
 	}
 
-	ret = __hid_hw_raw_request(dev, buf[0], buf, count, report_type,
-				   HID_REQ_SET_REPORT, (u64)(long)file, false);
+	ret = hid_hw_raw_request(dev, buf[0], buf, count, report_type,
+				HID_REQ_SET_REPORT);
 
 out_free:
 	kfree(buf);
@@ -169,13 +161,9 @@ out:
 
 static ssize_t hidraw_write(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
 {
-	struct hidraw_list *list = file->private_data;
 	ssize_t ret;
 	down_read(&minors_rwsem);
-	if (hidraw_is_revoked(list))
-		ret = -ENODEV;
-	else
-		ret = hidraw_send_report(file, buffer, count, HID_OUTPUT_REPORT);
+	ret = hidraw_send_report(file, buffer, count, HID_OUTPUT_REPORT);
 	up_read(&minors_rwsem);
 	return ret;
 }
@@ -239,8 +227,8 @@ static ssize_t hidraw_get_report(struct file *file, char __user *buffer, size_t 
 		goto out_free;
 	}
 
-	ret = __hid_hw_raw_request(dev, report_number, buf, count, report_type,
-				   HID_REQ_GET_REPORT, (u64)(long)file, false);
+	ret = hid_hw_raw_request(dev, report_number, buf, count, report_type,
+				 HID_REQ_GET_REPORT);
 
 	if (ret < 0)
 		goto out_free;
@@ -268,7 +256,7 @@ static __poll_t hidraw_poll(struct file *file, poll_table *wait)
 	poll_wait(file, &list->hidraw->wait, wait);
 	if (list->head != list->tail)
 		mask |= EPOLLIN | EPOLLRDNORM;
-	if (!list->hidraw->exist || hidraw_is_revoked(list))
+	if (!list->hidraw->exist)
 		mask |= EPOLLERR | EPOLLHUP;
 	return mask;
 }
@@ -332,9 +320,6 @@ static int hidraw_fasync(int fd, struct file *file, int on)
 {
 	struct hidraw_list *list = file->private_data;
 
-	if (hidraw_is_revoked(list))
-		return -ENODEV;
-
 	return fasync_helper(fd, file, on, &list->fasync);
 }
 
@@ -387,13 +372,6 @@ static int hidraw_release(struct inode * inode, struct file * file)
 	return 0;
 }
 
-static int hidraw_revoke(struct hidraw_list *list)
-{
-	list->revoked = true;
-
-	return 0;
-}
-
 static long hidraw_ioctl(struct file *file, unsigned int cmd,
 							unsigned long arg)
 {
@@ -401,12 +379,11 @@ static long hidraw_ioctl(struct file *file, unsigned int cmd,
 	unsigned int minor = iminor(inode);
 	long ret = 0;
 	struct hidraw *dev;
-	struct hidraw_list *list = file->private_data;
 	void __user *user_arg = (void __user*) arg;
 
 	down_read(&minors_rwsem);
 	dev = hidraw_table[minor];
-	if (!dev || !dev->exist || hidraw_is_revoked(list)) {
+	if (!dev || !dev->exist) {
 		ret = -ENODEV;
 		goto out;
 	}
@@ -442,14 +419,6 @@ static long hidraw_ioctl(struct file *file, unsigned int cmd,
 				dinfo.product = dev->hid->product;
 				if (copy_to_user(user_arg, &dinfo, sizeof(dinfo)))
 					ret = -EFAULT;
-				break;
-			}
-		case HIDIOCREVOKE:
-			{
-				if (user_arg)
-					ret = -EINVAL;
-				else
-					ret = hidraw_revoke(list);
 				break;
 			}
 		default:
@@ -558,7 +527,7 @@ int hidraw_report_event(struct hid_device *hid, u8 *data, int len)
 	list_for_each_entry(list, &dev->list, node) {
 		int new_head = (list->head + 1) & (HIDRAW_BUFFER_SIZE - 1);
 
-		if (hidraw_is_revoked(list) || new_head == list->tail)
+		if (new_head == list->tail)
 			continue;
 
 		if (!(list->buffer[list->head].value = kmemdup(data, len, GFP_ATOMIC))) {

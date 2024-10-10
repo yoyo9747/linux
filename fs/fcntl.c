@@ -33,8 +33,6 @@
 #include <asm/siginfo.h>
 #include <linux/uaccess.h>
 
-#include "internal.h"
-
 #define SETFL_MASK (O_APPEND | O_NONBLOCK | O_NDELAY | O_DIRECT | O_NOATIME)
 
 static int setfl(int fd, struct file * filp, unsigned int arg)
@@ -89,65 +87,29 @@ static int setfl(int fd, struct file * filp, unsigned int arg)
 	return error;
 }
 
-/*
- * Allocate an file->f_owner struct if it doesn't exist, handling racing
- * allocations correctly.
- */
-int file_f_owner_allocate(struct file *file)
+static void f_modown(struct file *filp, struct pid *pid, enum pid_type type,
+                     int force)
 {
-	struct fown_struct *f_owner;
+	write_lock_irq(&filp->f_owner.lock);
+	if (force || !filp->f_owner.pid) {
+		put_pid(filp->f_owner.pid);
+		filp->f_owner.pid = get_pid(pid);
+		filp->f_owner.pid_type = type;
 
-	f_owner = file_f_owner(file);
-	if (f_owner)
-		return 0;
-
-	f_owner = kzalloc(sizeof(struct fown_struct), GFP_KERNEL);
-	if (!f_owner)
-		return -ENOMEM;
-
-	rwlock_init(&f_owner->lock);
-	f_owner->file = file;
-	/* If someone else raced us, drop our allocation. */
-	if (unlikely(cmpxchg(&file->f_owner, NULL, f_owner)))
-		kfree(f_owner);
-	return 0;
-}
-EXPORT_SYMBOL(file_f_owner_allocate);
-
-void file_f_owner_release(struct file *file)
-{
-	struct fown_struct *f_owner;
-
-	f_owner = file_f_owner(file);
-	if (f_owner) {
-		put_pid(f_owner->pid);
-		kfree(f_owner);
+		if (pid) {
+			const struct cred *cred = current_cred();
+			filp->f_owner.uid = cred->uid;
+			filp->f_owner.euid = cred->euid;
+		}
 	}
+	write_unlock_irq(&filp->f_owner.lock);
 }
 
 void __f_setown(struct file *filp, struct pid *pid, enum pid_type type,
 		int force)
 {
-	struct fown_struct *f_owner;
-
-	f_owner = file_f_owner(filp);
-	if (WARN_ON_ONCE(!f_owner))
-		return;
-
-	write_lock_irq(&f_owner->lock);
-	if (force || !f_owner->pid) {
-		put_pid(f_owner->pid);
-		f_owner->pid = get_pid(pid);
-		f_owner->pid_type = type;
-
-		if (pid) {
-			const struct cred *cred = current_cred();
-			security_file_set_fowner(filp);
-			f_owner->uid = cred->uid;
-			f_owner->euid = cred->euid;
-		}
-	}
-	write_unlock_irq(&f_owner->lock);
+	security_file_set_fowner(filp);
+	f_modown(filp, pid, type, force);
 }
 EXPORT_SYMBOL(__f_setown);
 
@@ -156,8 +118,6 @@ int f_setown(struct file *filp, int who, int force)
 	enum pid_type type;
 	struct pid *pid = NULL;
 	int ret = 0;
-
-	might_sleep();
 
 	type = PIDTYPE_TGID;
 	if (who < 0) {
@@ -168,10 +128,6 @@ int f_setown(struct file *filp, int who, int force)
 		type = PIDTYPE_PGID;
 		who = -who;
 	}
-
-	ret = file_f_owner_allocate(filp);
-	if (ret)
-		return ret;
 
 	rcu_read_lock();
 	if (who) {
@@ -190,27 +146,22 @@ EXPORT_SYMBOL(f_setown);
 
 void f_delown(struct file *filp)
 {
-	__f_setown(filp, NULL, PIDTYPE_TGID, 1);
+	f_modown(filp, NULL, PIDTYPE_TGID, 1);
 }
 
 pid_t f_getown(struct file *filp)
 {
 	pid_t pid = 0;
-	struct fown_struct *f_owner;
 
-	f_owner = file_f_owner(filp);
-	if (!f_owner)
-		return pid;
-
-	read_lock_irq(&f_owner->lock);
+	read_lock_irq(&filp->f_owner.lock);
 	rcu_read_lock();
-	if (pid_task(f_owner->pid, f_owner->pid_type)) {
-		pid = pid_vnr(f_owner->pid);
-		if (f_owner->pid_type == PIDTYPE_PGID)
+	if (pid_task(filp->f_owner.pid, filp->f_owner.pid_type)) {
+		pid = pid_vnr(filp->f_owner.pid);
+		if (filp->f_owner.pid_type == PIDTYPE_PGID)
 			pid = -pid;
 	}
 	rcu_read_unlock();
-	read_unlock_irq(&f_owner->lock);
+	read_unlock_irq(&filp->f_owner.lock);
 	return pid;
 }
 
@@ -243,10 +194,6 @@ static int f_setown_ex(struct file *filp, unsigned long arg)
 		return -EINVAL;
 	}
 
-	ret = file_f_owner_allocate(filp);
-	if (ret)
-		return ret;
-
 	rcu_read_lock();
 	pid = find_vpid(owner.pid);
 	if (owner.pid && !pid)
@@ -263,20 +210,13 @@ static int f_getown_ex(struct file *filp, unsigned long arg)
 	struct f_owner_ex __user *owner_p = (void __user *)arg;
 	struct f_owner_ex owner = {};
 	int ret = 0;
-	struct fown_struct *f_owner;
-	enum pid_type pid_type = PIDTYPE_PID;
 
-	f_owner = file_f_owner(filp);
-	if (f_owner) {
-		read_lock_irq(&f_owner->lock);
-		rcu_read_lock();
-		if (pid_task(f_owner->pid, f_owner->pid_type))
-			owner.pid = pid_vnr(f_owner->pid);
-		rcu_read_unlock();
-		pid_type = f_owner->pid_type;
-	}
-
-	switch (pid_type) {
+	read_lock_irq(&filp->f_owner.lock);
+	rcu_read_lock();
+	if (pid_task(filp->f_owner.pid, filp->f_owner.pid_type))
+		owner.pid = pid_vnr(filp->f_owner.pid);
+	rcu_read_unlock();
+	switch (filp->f_owner.pid_type) {
 	case PIDTYPE_PID:
 		owner.type = F_OWNER_TID;
 		break;
@@ -294,8 +234,7 @@ static int f_getown_ex(struct file *filp, unsigned long arg)
 		ret = -EINVAL;
 		break;
 	}
-	if (f_owner)
-		read_unlock_irq(&f_owner->lock);
+	read_unlock_irq(&filp->f_owner.lock);
 
 	if (!ret) {
 		ret = copy_to_user(owner_p, &owner, sizeof(owner));
@@ -309,18 +248,14 @@ static int f_getown_ex(struct file *filp, unsigned long arg)
 static int f_getowner_uids(struct file *filp, unsigned long arg)
 {
 	struct user_namespace *user_ns = current_user_ns();
-	struct fown_struct *f_owner;
 	uid_t __user *dst = (void __user *)arg;
-	uid_t src[2] = {0, 0};
+	uid_t src[2];
 	int err;
 
-	f_owner = file_f_owner(filp);
-	if (f_owner) {
-		read_lock_irq(&f_owner->lock);
-		src[0] = from_kuid(user_ns, f_owner->uid);
-		src[1] = from_kuid(user_ns, f_owner->euid);
-		read_unlock_irq(&f_owner->lock);
-	}
+	read_lock_irq(&filp->f_owner.lock);
+	src[0] = from_kuid(user_ns, filp->f_owner.uid);
+	src[1] = from_kuid(user_ns, filp->f_owner.euid);
+	read_unlock_irq(&filp->f_owner.lock);
 
 	err  = put_user(src[0], &dst[0]);
 	err |= put_user(src[1], &dst[1]);
@@ -405,37 +340,7 @@ static long f_dupfd_query(int fd, struct file *filp)
 	 * overkill, but given our lockless file pointer lookup, the
 	 * alternatives are complicated.
 	 */
-	return fd_file(f) == filp;
-}
-
-/* Let the caller figure out whether a given file was just created. */
-static long f_created_query(const struct file *filp)
-{
-	return !!(filp->f_mode & FMODE_CREATED);
-}
-
-static int f_owner_sig(struct file *filp, int signum, bool setsig)
-{
-	int ret = 0;
-	struct fown_struct *f_owner;
-
-	might_sleep();
-
-	if (setsig) {
-		if (!valid_signal(signum))
-			return -EINVAL;
-
-		ret = file_f_owner_allocate(filp);
-		if (ret)
-			return ret;
-	}
-
-	f_owner = file_f_owner(filp);
-	if (setsig)
-		f_owner->signum = signum;
-	else if (f_owner)
-		ret = f_owner->signum;
-	return ret;
+	return f.file == filp;
 }
 
 static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
@@ -447,9 +352,6 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 	long err = -EINVAL;
 
 	switch (cmd) {
-	case F_CREATED_QUERY:
-		err = f_created_query(filp);
-		break;
 	case F_DUPFD:
 		err = f_dupfd(argi, filp, 0);
 		break;
@@ -519,10 +421,15 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 		err = f_getowner_uids(filp, arg);
 		break;
 	case F_GETSIG:
-		err = f_owner_sig(filp, 0, false);
+		err = filp->f_owner.signum;
 		break;
 	case F_SETSIG:
-		err = f_owner_sig(filp, argi, true);
+		/* arg == 0 restores default behaviour. */
+		if (!valid_signal(argi)) {
+			break;
+		}
+		err = 0;
+		filp->f_owner.signum = argi;
 		break;
 	case F_GETLEASE:
 		err = fcntl_getlease(filp);
@@ -556,7 +463,6 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 static int check_fcntl_cmd(unsigned cmd)
 {
 	switch (cmd) {
-	case F_CREATED_QUERY:
 	case F_DUPFD:
 	case F_DUPFD_CLOEXEC:
 	case F_DUPFD_QUERY:
@@ -573,17 +479,17 @@ SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	struct fd f = fdget_raw(fd);
 	long err = -EBADF;
 
-	if (!fd_file(f))
+	if (!f.file)
 		goto out;
 
-	if (unlikely(fd_file(f)->f_mode & FMODE_PATH)) {
+	if (unlikely(f.file->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))
 			goto out1;
 	}
 
-	err = security_file_fcntl(fd_file(f), cmd, arg);
+	err = security_file_fcntl(f.file, cmd, arg);
 	if (!err)
-		err = do_fcntl(fd, cmd, arg, fd_file(f));
+		err = do_fcntl(fd, cmd, arg, f.file);
 
 out1:
  	fdput(f);
@@ -600,15 +506,15 @@ SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 	struct flock64 flock;
 	long err = -EBADF;
 
-	if (!fd_file(f))
+	if (!f.file)
 		goto out;
 
-	if (unlikely(fd_file(f)->f_mode & FMODE_PATH)) {
+	if (unlikely(f.file->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))
 			goto out1;
 	}
 
-	err = security_file_fcntl(fd_file(f), cmd, arg);
+	err = security_file_fcntl(f.file, cmd, arg);
 	if (err)
 		goto out1;
 	
@@ -618,7 +524,7 @@ SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		err = -EFAULT;
 		if (copy_from_user(&flock, argp, sizeof(flock)))
 			break;
-		err = fcntl_getlk64(fd_file(f), cmd, &flock);
+		err = fcntl_getlk64(f.file, cmd, &flock);
 		if (!err && copy_to_user(argp, &flock, sizeof(flock)))
 			err = -EFAULT;
 		break;
@@ -629,10 +535,10 @@ SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		err = -EFAULT;
 		if (copy_from_user(&flock, argp, sizeof(flock)))
 			break;
-		err = fcntl_setlk64(fd, fd_file(f), cmd, &flock);
+		err = fcntl_setlk64(fd, f.file, cmd, &flock);
 		break;
 	default:
-		err = do_fcntl(fd, cmd, arg, fd_file(f));
+		err = do_fcntl(fd, cmd, arg, f.file);
 		break;
 	}
 out1:
@@ -737,15 +643,15 @@ static long do_compat_fcntl64(unsigned int fd, unsigned int cmd,
 	struct flock flock;
 	long err = -EBADF;
 
-	if (!fd_file(f))
+	if (!f.file)
 		return err;
 
-	if (unlikely(fd_file(f)->f_mode & FMODE_PATH)) {
+	if (unlikely(f.file->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))
 			goto out_put;
 	}
 
-	err = security_file_fcntl(fd_file(f), cmd, arg);
+	err = security_file_fcntl(f.file, cmd, arg);
 	if (err)
 		goto out_put;
 
@@ -754,7 +660,7 @@ static long do_compat_fcntl64(unsigned int fd, unsigned int cmd,
 		err = get_compat_flock(&flock, compat_ptr(arg));
 		if (err)
 			break;
-		err = fcntl_getlk(fd_file(f), convert_fcntl_cmd(cmd), &flock);
+		err = fcntl_getlk(f.file, convert_fcntl_cmd(cmd), &flock);
 		if (err)
 			break;
 		err = fixup_compat_flock(&flock);
@@ -766,7 +672,7 @@ static long do_compat_fcntl64(unsigned int fd, unsigned int cmd,
 		err = get_compat_flock64(&flock, compat_ptr(arg));
 		if (err)
 			break;
-		err = fcntl_getlk(fd_file(f), convert_fcntl_cmd(cmd), &flock);
+		err = fcntl_getlk(f.file, convert_fcntl_cmd(cmd), &flock);
 		if (!err)
 			err = put_compat_flock64(&flock, compat_ptr(arg));
 		break;
@@ -775,7 +681,7 @@ static long do_compat_fcntl64(unsigned int fd, unsigned int cmd,
 		err = get_compat_flock(&flock, compat_ptr(arg));
 		if (err)
 			break;
-		err = fcntl_setlk(fd, fd_file(f), convert_fcntl_cmd(cmd), &flock);
+		err = fcntl_setlk(fd, f.file, convert_fcntl_cmd(cmd), &flock);
 		break;
 	case F_SETLK64:
 	case F_SETLKW64:
@@ -784,10 +690,10 @@ static long do_compat_fcntl64(unsigned int fd, unsigned int cmd,
 		err = get_compat_flock64(&flock, compat_ptr(arg));
 		if (err)
 			break;
-		err = fcntl_setlk(fd, fd_file(f), convert_fcntl_cmd(cmd), &flock);
+		err = fcntl_setlk(fd, f.file, convert_fcntl_cmd(cmd), &flock);
 		break;
 	default:
-		err = do_fcntl(fd, cmd, arg, fd_file(f));
+		err = do_fcntl(fd, cmd, arg, f.file);
 		break;
 	}
 out_put:
@@ -938,19 +844,14 @@ static void send_sigurg_to_task(struct task_struct *p,
 		do_send_sig_info(SIGURG, SEND_SIG_PRIV, p, type);
 }
 
-int send_sigurg(struct file *file)
+int send_sigurg(struct fown_struct *fown)
 {
-	struct fown_struct *fown;
 	struct task_struct *p;
 	enum pid_type type;
 	struct pid *pid;
 	unsigned long flags;
 	int ret = 0;
 	
-	fown = file_f_owner(file);
-	if (!fown)
-		return 0;
-
 	read_lock_irqsave(&fown->lock, flags);
 
 	type = fown->pid_type;
@@ -1126,16 +1027,13 @@ static void kill_fasync_rcu(struct fasync_struct *fa, int sig, int band)
 		}
 		read_lock_irqsave(&fa->fa_lock, flags);
 		if (fa->fa_file) {
-			fown = file_f_owner(fa->fa_file);
-			if (!fown)
-				goto next;
+			fown = &fa->fa_file->f_owner;
 			/* Don't send SIGURG to processes which have not set a
 			   queued signum: SIGURG has its own default signalling
 			   mechanism. */
 			if (!(sig == SIGURG && fown->signum == 0))
 				send_sigio(fown, fa->fa_fd, band);
 		}
-next:
 		read_unlock_irqrestore(&fa->fa_lock, flags);
 		fa = rcu_dereference(fa->fa_next);
 	}

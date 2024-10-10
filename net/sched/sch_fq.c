@@ -663,9 +663,7 @@ begin:
 			pband = &q->band_flows[q->band_nr];
 			pband->credit = min(pband->credit + pband->quantum,
 					    pband->quantum);
-			if (pband->credit > 0)
-				goto begin;
-			retry = 0;
+			goto begin;
 		}
 		if (q->time_next_delayed_flow != ~0ULL)
 			qdisc_watchdog_schedule_range_ns(&q->watchdog,

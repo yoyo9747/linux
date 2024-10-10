@@ -63,8 +63,7 @@ xchk_setup_rtsummary(
 	 * us to avoid pinning kernel memory for this purpose.
 	 */
 	descr = xchk_xfile_descr(sc, "realtime summary file");
-	error = xfile_create(descr, XFS_FSB_TO_B(mp, mp->m_rsumblocks),
-			&sc->xfile);
+	error = xfile_create(descr, mp->m_rsumsize, &sc->xfile);
 	kfree(descr);
 	if (error)
 		return error;
@@ -96,14 +95,16 @@ xchk_setup_rtsummary(
 	 * volume.  Hence it is safe to compute and check the geometry values.
 	 */
 	if (mp->m_sb.sb_rblocks) {
+		xfs_filblks_t	rsumblocks;
 		int		rextslog;
 
 		rts->rextents = xfs_rtb_to_rtx(mp, mp->m_sb.sb_rblocks);
 		rextslog = xfs_compute_rextslog(rts->rextents);
 		rts->rsumlevels = rextslog + 1;
 		rts->rbmblocks = xfs_rtbitmap_blockcount(mp, rts->rextents);
-		rts->rsumblocks = xfs_rtsummary_blockcount(mp, rts->rsumlevels,
+		rsumblocks = xfs_rtsummary_blockcount(mp, rts->rsumlevels,
 				rts->rbmblocks);
+		rts->rsumsize = XFS_FSB_TO_B(mp, rsumblocks);
 	}
 	return 0;
 }
@@ -315,7 +316,7 @@ xchk_rtsummary(
 	}
 
 	/* Is m_rsumsize correct? */
-	if (mp->m_rsumblocks != rts->rsumblocks) {
+	if (mp->m_rsumsize != rts->rsumsize) {
 		xchk_ino_set_corrupt(sc, mp->m_rsumip->i_ino);
 		goto out_rbm;
 	}
@@ -331,7 +332,7 @@ xchk_rtsummary(
 	 * growfsrt expands the summary file before updating sb_rextents, so
 	 * the file can be larger than rsumsize.
 	 */
-	if (mp->m_rsumip->i_disk_size < XFS_FSB_TO_B(mp, rts->rsumblocks)) {
+	if (mp->m_rsumip->i_disk_size < rts->rsumsize) {
 		xchk_ino_set_corrupt(sc, mp->m_rsumip->i_ino);
 		goto out_rbm;
 	}

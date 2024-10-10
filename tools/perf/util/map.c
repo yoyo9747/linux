@@ -102,21 +102,16 @@ static inline bool replace_android_lib(const char *filename, char *newfilename)
 	return false;
 }
 
-static void map__init(struct map *map, u64 start, u64 end, u64 pgoff,
-		      struct dso *dso, u32 prot, u32 flags)
+void map__init(struct map *map, u64 start, u64 end, u64 pgoff, struct dso *dso)
 {
 	map__set_start(map, start);
 	map__set_end(map, end);
 	map__set_pgoff(map, pgoff);
-	assert(map__reloc(map) == 0);
+	map__set_reloc(map, 0);
 	map__set_dso(map, dso__get(dso));
-	refcount_set(map__refcnt(map), 1);
-	RC_CHK_ACCESS(map)->prot = prot;
-	RC_CHK_ACCESS(map)->flags = flags;
 	map__set_mapping_type(map, MAPPING_TYPE__DSO);
-	assert(map__erange_warned(map) == false);
-	assert(map__priv(map) == false);
-	assert(map__hit(map) == false);
+	map__set_erange_warned(map, false);
+	refcount_set(map__refcnt(map), 1);
 }
 
 struct map *map__new(struct machine *machine, u64 start, u64 len,
@@ -129,7 +124,7 @@ struct map *map__new(struct machine *machine, u64 start, u64 len,
 	struct nsinfo *nsi = NULL;
 	struct nsinfo *nnsi;
 
-	map = zalloc(sizeof(*map));
+	map = malloc(sizeof(*map));
 	if (ADD_RC_CHK(result, map)) {
 		char newfilename[PATH_MAX];
 		struct dso *dso, *header_bid_dso;
@@ -139,6 +134,8 @@ struct map *map__new(struct machine *machine, u64 start, u64 len,
 		anon = is_anon_memory(filename) || flags & MAP_HUGETLB;
 		vdso = is_vdso_map(filename);
 		no_dso = is_no_dso_memory(filename);
+		map->prot = prot;
+		map->flags = flags;
 		nsi = nsinfo__get(thread__nsinfo(thread));
 
 		if ((anon || no_dso) && nsi && (prot & PROT_EXEC)) {
@@ -172,7 +169,7 @@ struct map *map__new(struct machine *machine, u64 start, u64 len,
 			goto out_delete;
 
 		assert(!dso__kernel(dso));
-		map__init(result, start, start + len, pgoff, dso, prot, flags);
+		map__init(result, start, start + len, pgoff, dso);
 
 		if (anon || no_dso) {
 			map->mapping_type = MAPPING_TYPE__IDENTITY;
@@ -226,8 +223,10 @@ struct map *map__new2(u64 start, struct dso *dso)
 
 	map = calloc(1, sizeof(*map) + (dso__kernel(dso) ? sizeof(struct kmap) : 0));
 	if (ADD_RC_CHK(result, map)) {
-		/* ->end will be filled after we load all the symbols. */
-		map__init(result, start, /*end=*/0, /*pgoff=*/0, dso, /*prot=*/0, /*flags=*/0);
+		/*
+		 * ->end will be filled after we load all the symbols
+		 */
+		map__init(result, start, 0, 0, dso);
 	}
 
 	return result;

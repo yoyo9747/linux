@@ -340,5 +340,4 @@ static struct platform_driver meson_sm_driver = {
 	},
 };
 module_platform_driver_probe(meson_sm_driver, meson_sm_probe);
-MODULE_DESCRIPTION("Amlogic Secure Monitor driver");
 MODULE_LICENSE("GPL v2");

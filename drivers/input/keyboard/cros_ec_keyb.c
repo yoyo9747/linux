@@ -27,7 +27,7 @@
 #include <linux/platform_data/cros_ec_commands.h>
 #include <linux/platform_data/cros_ec_proto.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 /**
  * struct cros_ec_keyb - Structure representing EC keyboard device

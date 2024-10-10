@@ -1544,31 +1544,11 @@ int erdma_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
 	return ret;
 }
 
-static enum ib_qp_state query_qp_state(struct erdma_qp *qp)
-{
-	switch (qp->attrs.state) {
-	case ERDMA_QP_STATE_IDLE:
-		return IB_QPS_INIT;
-	case ERDMA_QP_STATE_RTR:
-		return IB_QPS_RTR;
-	case ERDMA_QP_STATE_RTS:
-		return IB_QPS_RTS;
-	case ERDMA_QP_STATE_CLOSING:
-		return IB_QPS_ERR;
-	case ERDMA_QP_STATE_TERMINATE:
-		return IB_QPS_ERR;
-	case ERDMA_QP_STATE_ERROR:
-		return IB_QPS_ERR;
-	default:
-		return IB_QPS_ERR;
-	}
-}
-
 int erdma_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 		   int qp_attr_mask, struct ib_qp_init_attr *qp_init_attr)
 {
-	struct erdma_dev *dev;
 	struct erdma_qp *qp;
+	struct erdma_dev *dev;
 
 	if (ibqp && qp_attr && qp_init_attr) {
 		qp = to_eqp(ibqp);
@@ -1594,9 +1574,6 @@ int erdma_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 				   IB_ACCESS_REMOTE_READ;
 
 	qp_init_attr->cap = qp_attr->cap;
-
-	qp_attr->qp_state = query_qp_state(qp);
-	qp_attr->cur_qp_state = query_qp_state(qp);
 
 	return 0;
 }
@@ -1651,9 +1628,8 @@ err_out:
 }
 
 int erdma_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
-		    struct uverbs_attr_bundle *attrs)
+		    struct ib_udata *udata)
 {
-	struct ib_udata *udata = &attrs->driver_udata;
 	struct erdma_cq *cq = to_ecq(ibcq);
 	struct erdma_dev *dev = to_edev(ibcq->device);
 	unsigned int depth = attr->cqe;
@@ -1722,10 +1698,6 @@ err_out_xa:
 	xa_erase(&dev->cq_xa, cq->cqn);
 
 	return ret;
-}
-
-void erdma_disassociate_ucontext(struct ib_ucontext *ibcontext)
-{
 }
 
 void erdma_set_mtu(struct erdma_dev *dev, u32 mtu)

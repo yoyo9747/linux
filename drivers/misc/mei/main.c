@@ -1176,6 +1176,7 @@ static const struct file_operations mei_fops = {
 	.poll = mei_poll,
 	.fsync = mei_fsync,
 	.fasync = mei_fasync,
+	.llseek = no_llseek
 };
 
 /**

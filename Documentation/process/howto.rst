@@ -331,7 +331,7 @@ they need to be integration-tested.  For this purpose, a special
 testing repository exists into which virtually all subsystem trees are
 pulled on an almost daily basis:
 
-	https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git
+	https://git.kernel.org/?p=linux/kernel/git/next/linux-next.git
 
 This way, the linux-next gives a summary outlook onto what will be
 expected to go into the mainline kernel at the next merge period.
@@ -373,12 +373,12 @@ As some of the above documents describe, the majority of the core kernel
 developers participate on the Linux Kernel Mailing list.  Details on how
 to subscribe and unsubscribe from the list can be found at:
 
-	https://subspace.kernel.org/subscribing.html
+	http://vger.kernel.org/vger-lists.html#linux-kernel
 
 There are archives of the mailing list on the web in many different
 places.  Use a search engine to find these archives.  For example:
 
-	https://lore.kernel.org/linux-kernel/
+	https://lore.kernel.org/lkml/
 
 It is highly recommended that you search the archives about the topic
 you want to bring up, before you post it to the list. A lot of things
@@ -393,13 +393,13 @@ groups.
 Many of the lists are hosted on kernel.org. Information on them can be
 found at:
 
-	https://subspace.kernel.org
+	http://vger.kernel.org/vger-lists.html
 
 Please remember to follow good behavioral habits when using the lists.
 Though a bit cheesy, the following URL has some simple guidelines for
 interacting with the list (or any list):
 
-	https://subspace.kernel.org/etiquette.html
+	http://www.albion.com/netiquette/
 
 If multiple people respond to your mail, the CC: list of recipients may
 get pretty large. Don't remove anybody from the CC: list without a good

@@ -490,10 +490,10 @@ int gb_spilib_master_init(struct gb_connection *connection, struct device *dev,
 	int ret;
 	u8 i;
 
-	/* Allocate host with space for data */
-	ctlr = spi_alloc_host(dev, sizeof(*spi));
+	/* Allocate master with space for data */
+	ctlr = spi_alloc_master(dev, sizeof(*spi));
 	if (!ctlr) {
-		dev_err(dev, "cannot alloc SPI host\n");
+		dev_err(dev, "cannot alloc SPI master\n");
 		return -ENOMEM;
 	}
 
@@ -567,5 +567,4 @@ void gb_spilib_master_exit(struct gb_connection *connection)
 }
 EXPORT_SYMBOL_GPL(gb_spilib_master_exit);
 
-MODULE_DESCRIPTION("Greybus SPI library");
 MODULE_LICENSE("GPL v2");

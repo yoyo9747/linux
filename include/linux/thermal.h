@@ -55,7 +55,6 @@ enum thermal_notify_event {
 	THERMAL_TZ_BIND_CDEV, /* Cooling dev is bind to the thermal zone */
 	THERMAL_TZ_UNBIND_CDEV, /* Cooling dev is unbind from the thermal zone */
 	THERMAL_INSTANCE_WEIGHT_CHANGED, /* Thermal instance weight changed */
-	THERMAL_TZ_RESUME, /* Thermal zone is resuming after system sleep */
 };
 
 /**
@@ -80,28 +79,18 @@ struct thermal_trip {
 #define THERMAL_TRIP_FLAG_RW	(THERMAL_TRIP_FLAG_RW_TEMP | \
 				 THERMAL_TRIP_FLAG_RW_HYST)
 
-#define THERMAL_TRIP_PRIV_TO_INT(_val_)	(uintptr_t)(_val_)
-#define THERMAL_INT_TO_TRIP_PRIV(_val_)	(void *)(uintptr_t)(_val_)
-
 struct thermal_zone_device;
 
-struct cooling_spec {
-	unsigned long upper;	/* Highest cooling state  */
-	unsigned long lower;	/* Lowest cooling state  */
-	unsigned int weight;	/* Cooling device weight */
-};
-
 struct thermal_zone_device_ops {
-	bool (*should_bind) (struct thermal_zone_device *,
-			     const struct thermal_trip *,
-			     struct thermal_cooling_device *,
-			     struct cooling_spec *);
+	int (*bind) (struct thermal_zone_device *,
+		     struct thermal_cooling_device *);
+	int (*unbind) (struct thermal_zone_device *,
+		       struct thermal_cooling_device *);
 	int (*get_temp) (struct thermal_zone_device *, int *);
 	int (*set_trips) (struct thermal_zone_device *, int, int);
 	int (*change_mode) (struct thermal_zone_device *,
 		enum thermal_device_mode);
-	int (*set_trip_temp) (struct thermal_zone_device *,
-			      const struct thermal_trip *, int);
+	int (*set_trip_temp) (struct thermal_zone_device *, int, int);
 	int (*get_crit_temp) (struct thermal_zone_device *, int *);
 	int (*set_emul_temp) (struct thermal_zone_device *, int);
 	int (*get_trend) (struct thermal_zone_device *,
@@ -209,12 +198,17 @@ static inline void devm_thermal_of_zone_unregister(struct device *dev,
 }
 #endif
 
+int __thermal_zone_get_trip(struct thermal_zone_device *tz, int trip_id,
+			    struct thermal_trip *trip);
+int thermal_zone_get_trip(struct thermal_zone_device *tz, int trip_id,
+			  struct thermal_trip *trip);
 int for_each_thermal_trip(struct thermal_zone_device *tz,
 			  int (*cb)(struct thermal_trip *, void *),
 			  void *data);
 int thermal_zone_for_each_trip(struct thermal_zone_device *tz,
 			       int (*cb)(struct thermal_trip *, void *),
 			       void *data);
+int thermal_zone_get_num_trips(struct thermal_zone_device *tz);
 void thermal_zone_set_trip_temp(struct thermal_zone_device *tz,
 				struct thermal_trip *trip, int temp);
 
@@ -227,8 +221,7 @@ struct thermal_zone_device *thermal_zone_device_register_with_trips(
 					int num_trips, void *devdata,
 					const struct thermal_zone_device_ops *ops,
 					const struct thermal_zone_params *tzp,
-					unsigned int passive_delay,
-					unsigned int polling_delay);
+					int passive_delay, int polling_delay);
 
 struct thermal_zone_device *thermal_tripless_zone_device_register(
 					const char *type,
@@ -243,6 +236,20 @@ const char *thermal_zone_device_type(struct thermal_zone_device *tzd);
 int thermal_zone_device_id(struct thermal_zone_device *tzd);
 struct device *thermal_zone_device(struct thermal_zone_device *tzd);
 
+int thermal_bind_cdev_to_trip(struct thermal_zone_device *tz,
+			      const struct thermal_trip *trip,
+			      struct thermal_cooling_device *cdev,
+			      unsigned long upper, unsigned long lower,
+			      unsigned int weight);
+int thermal_zone_bind_cooling_device(struct thermal_zone_device *, int,
+				     struct thermal_cooling_device *,
+				     unsigned long, unsigned long,
+				     unsigned int);
+int thermal_unbind_cdev_from_trip(struct thermal_zone_device *tz,
+				  const struct thermal_trip *trip,
+				  struct thermal_cooling_device *cdev);
+int thermal_zone_unbind_cooling_device(struct thermal_zone_device *, int,
+				       struct thermal_cooling_device *);
 void thermal_zone_device_update(struct thermal_zone_device *,
 				enum thermal_notify_event);
 
@@ -254,7 +261,7 @@ thermal_of_cooling_device_register(struct device_node *np, const char *, void *,
 struct thermal_cooling_device *
 devm_thermal_of_cooling_device_register(struct device *dev,
 				struct device_node *np,
-				const char *type, void *devdata,
+				char *type, void *devdata,
 				const struct thermal_cooling_device_ops *ops);
 void thermal_cooling_device_update(struct thermal_cooling_device *);
 void thermal_cooling_device_unregister(struct thermal_cooling_device *);
@@ -262,9 +269,6 @@ struct thermal_zone_device *thermal_zone_get_zone_by_name(const char *name);
 int thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp);
 int thermal_zone_get_slope(struct thermal_zone_device *tz);
 int thermal_zone_get_offset(struct thermal_zone_device *tz);
-bool thermal_trip_is_bound_to_cdev(struct thermal_zone_device *tz,
-				   const struct thermal_trip *trip,
-				   struct thermal_cooling_device *cdev);
 
 int thermal_zone_device_enable(struct thermal_zone_device *tz);
 int thermal_zone_device_disable(struct thermal_zone_device *tz);
@@ -301,7 +305,7 @@ thermal_of_cooling_device_register(struct device_node *np,
 static inline struct thermal_cooling_device *
 devm_thermal_of_cooling_device_register(struct device *dev,
 				struct device_node *np,
-				const char *type, void *devdata,
+				char *type, void *devdata,
 				const struct thermal_cooling_device_ops *ops)
 {
 	return ERR_PTR(-ENODEV);

@@ -787,9 +787,6 @@ static void swim_cleanup_floppy_disk(struct floppy_state *fs)
 
 static int swim_floppy_init(struct swim_priv *swd)
 {
-	struct queue_limits lim = {
-		.features		= BLK_FEAT_ROTATIONAL,
-	};
 	int err;
 	int drive;
 	struct swim __iomem *base = swd->base;
@@ -823,7 +820,7 @@ static int swim_floppy_init(struct swim_priv *swd)
 			goto exit_put_disks;
 
 		swd->unit[drive].disk =
-			blk_mq_alloc_disk(&swd->unit[drive].tag_set, &lim,
+			blk_mq_alloc_disk(&swd->unit[drive].tag_set, NULL,
 					  &swd->unit[drive]);
 		if (IS_ERR(swd->unit[drive].disk)) {
 			blk_mq_free_tag_set(&swd->unit[drive].tag_set);

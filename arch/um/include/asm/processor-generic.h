@@ -28,10 +28,20 @@ struct thread_struct {
 	struct arch_thread arch;
 	jmp_buf switch_buf;
 	struct {
-		struct {
-			int (*proc)(void *);
-			void *arg;
-		} thread;
+		int op;
+		union {
+			struct {
+				int pid;
+			} fork, exec;
+			struct {
+				int (*proc)(void *);
+				void *arg;
+			} thread;
+			struct {
+				void (*proc)(void *);
+				void *arg;
+			} cb;
+		} u;
 	} request;
 };
 
@@ -41,7 +51,7 @@ struct thread_struct {
 	.fault_addr		= NULL, \
 	.prev_sched		= NULL, \
 	.arch			= INIT_ARCH_THREAD, \
-	.request		= { } \
+	.request		= { 0 } \
 }
 
 /*

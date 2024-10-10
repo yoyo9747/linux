@@ -831,7 +831,7 @@ static const struct reg_default fsl_micfil_reg_defaults[] = {
 	{REG_MICFIL_CTRL1,		0x00000000},
 	{REG_MICFIL_CTRL2,		0x00000000},
 	{REG_MICFIL_STAT,		0x00000000},
-	{REG_MICFIL_FIFO_CTRL,		0x0000001F},
+	{REG_MICFIL_FIFO_CTRL,		0x00000007},
 	{REG_MICFIL_FIFO_STAT,		0x00000000},
 	{REG_MICFIL_DATACH0,		0x00000000},
 	{REG_MICFIL_DATACH1,		0x00000000},
@@ -855,8 +855,6 @@ static const struct reg_default fsl_micfil_reg_defaults[] = {
 
 static bool fsl_micfil_readable_reg(struct device *dev, unsigned int reg)
 {
-	struct fsl_micfil *micfil = dev_get_drvdata(dev);
-
 	switch (reg) {
 	case REG_MICFIL_CTRL1:
 	case REG_MICFIL_CTRL2:
@@ -874,6 +872,9 @@ static bool fsl_micfil_readable_reg(struct device *dev, unsigned int reg)
 	case REG_MICFIL_DC_CTRL:
 	case REG_MICFIL_OUT_CTRL:
 	case REG_MICFIL_OUT_STAT:
+	case REG_MICFIL_FSYNC_CTRL:
+	case REG_MICFIL_VERID:
+	case REG_MICFIL_PARAM:
 	case REG_MICFIL_VAD0_CTRL1:
 	case REG_MICFIL_VAD0_CTRL2:
 	case REG_MICFIL_VAD0_STAT:
@@ -882,12 +883,6 @@ static bool fsl_micfil_readable_reg(struct device *dev, unsigned int reg)
 	case REG_MICFIL_VAD0_NDATA:
 	case REG_MICFIL_VAD0_ZCD:
 		return true;
-	case REG_MICFIL_FSYNC_CTRL:
-	case REG_MICFIL_VERID:
-	case REG_MICFIL_PARAM:
-		if (micfil->soc->use_verid)
-			return true;
-		fallthrough;
 	default:
 		return false;
 	}
@@ -895,8 +890,6 @@ static bool fsl_micfil_readable_reg(struct device *dev, unsigned int reg)
 
 static bool fsl_micfil_writeable_reg(struct device *dev, unsigned int reg)
 {
-	struct fsl_micfil *micfil = dev_get_drvdata(dev);
-
 	switch (reg) {
 	case REG_MICFIL_CTRL1:
 	case REG_MICFIL_CTRL2:
@@ -906,6 +899,7 @@ static bool fsl_micfil_writeable_reg(struct device *dev, unsigned int reg)
 	case REG_MICFIL_DC_CTRL:
 	case REG_MICFIL_OUT_CTRL:
 	case REG_MICFIL_OUT_STAT:	/* Write 1 to Clear */
+	case REG_MICFIL_FSYNC_CTRL:
 	case REG_MICFIL_VAD0_CTRL1:
 	case REG_MICFIL_VAD0_CTRL2:
 	case REG_MICFIL_VAD0_STAT:	/* Write 1 to Clear */
@@ -913,10 +907,6 @@ static bool fsl_micfil_writeable_reg(struct device *dev, unsigned int reg)
 	case REG_MICFIL_VAD0_NCONFIG:
 	case REG_MICFIL_VAD0_ZCD:
 		return true;
-	case REG_MICFIL_FSYNC_CTRL:
-		if (micfil->soc->use_verid)
-			return true;
-		fallthrough;
 	default:
 		return false;
 	}
@@ -1317,7 +1307,7 @@ static const struct dev_pm_ops fsl_micfil_pm_ops = {
 
 static struct platform_driver fsl_micfil_driver = {
 	.probe = fsl_micfil_probe,
-	.remove = fsl_micfil_remove,
+	.remove_new = fsl_micfil_remove,
 	.driver = {
 		.name = "fsl-micfil-dai",
 		.pm = &fsl_micfil_pm_ops,

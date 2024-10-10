@@ -6,6 +6,7 @@
  *******************************************************************************/
 
 #include <drv_types.h>
+#include <rtw_debug.h>
 
 static bool rtw_sdio_claim_host_needed(struct sdio_func *func)
 {

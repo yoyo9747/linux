@@ -26,7 +26,7 @@
 
 #include <linux/regulator/consumer.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "mprls0025pa.h"
 

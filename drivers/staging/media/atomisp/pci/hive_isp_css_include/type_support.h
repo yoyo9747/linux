@@ -33,10 +33,9 @@
 
 #define CHAR_BIT (8)
 
-#include <linux/errno.h>
-#include <linux/limits.h>
 #include <linux/types.h>
-
+#include <linux/limits.h>
+#include <linux/errno.h>
 #define HOST_ADDRESS(x) (unsigned long)(x)
 
 #endif /* __TYPE_SUPPORT_H_INCLUDED__ */

@@ -44,15 +44,16 @@
 
 static int ls7a2000_connector_get_modes(struct drm_connector *connector)
 {
-	int num;
+	unsigned int num = 0;
+	struct edid *edid;
 
 	if (connector->ddc) {
-		const struct drm_edid *drm_edid;
-
-		drm_edid = drm_edid_read(connector);
-		drm_edid_connector_update(connector, drm_edid);
-		num = drm_edid_connector_add_modes(connector);
-		drm_edid_free(drm_edid);
+		edid = drm_get_edid(connector, connector->ddc);
+		if (edid) {
+			drm_connector_update_edid_property(connector, edid);
+			num = drm_add_edid_modes(connector, edid);
+			kfree(edid);
+		}
 
 		return num;
 	}

@@ -893,8 +893,11 @@ int goya_late_init(struct hl_device *hdev)
 	WREG32(mmMMU_LOG2_DDR_SIZE, ilog2(prop->dram_size));
 
 	rc = hl_fw_send_pci_access_msg(hdev, CPUCP_PACKET_ENABLE_PCI_ACCESS, 0x0);
-	if (rc)
+	if (rc) {
+		dev_err(hdev->dev,
+			"Failed to enable PCI access from CPU %d\n", rc);
 		return rc;
+	}
 
 	/* force setting to low frequency */
 	goya->curr_pll_profile = PLL_LOW;
@@ -2861,7 +2864,13 @@ static int goya_hw_fini(struct hl_device *hdev, bool hard_reset, bool fw_reset)
 
 int goya_suspend(struct hl_device *hdev)
 {
-	return hl_fw_send_pci_access_msg(hdev, CPUCP_PACKET_DISABLE_PCI_ACCESS, 0x0);
+	int rc;
+
+	rc = hl_fw_send_pci_access_msg(hdev, CPUCP_PACKET_DISABLE_PCI_ACCESS, 0x0);
+	if (rc)
+		dev_err(hdev->dev, "Failed to disable PCI access from CPU\n");
+
+	return rc;
 }
 
 int goya_resume(struct hl_device *hdev)

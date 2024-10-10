@@ -706,13 +706,6 @@ typedef unsigned int sk_buff_data_t;
 typedef unsigned char *sk_buff_data_t;
 #endif
 
-enum skb_tstamp_type {
-	SKB_CLOCK_REALTIME,
-	SKB_CLOCK_MONOTONIC,
-	SKB_CLOCK_TAI,
-	__SKB_CLOCK_MAX = SKB_CLOCK_TAI,
-};
-
 /**
  * DOC: Basic sk_buff geometry
  *
@@ -827,13 +820,13 @@ enum skb_tstamp_type {
  *	@csum_level: indicates the number of consecutive checksums found in
  *		the packet minus one that have been verified as
  *		CHECKSUM_UNNECESSARY (max 3)
- *	@unreadable: indicates that at least 1 of the fragments in this skb is
- *		unreadable.
  *	@dst_pending_confirm: need to confirm neighbour
  *	@decrypted: Decrypted SKB
  *	@slow_gro: state present at GRO time, slower prepare step required
- *	@tstamp_type: When set, skb->tstamp has the
- *		delivery_time clock base of skb->tstamp.
+ *	@mono_delivery_time: When set, skb->tstamp has the
+ *		delivery_time in mono clock base (i.e. EDT).  Otherwise, the
+ *		skb->tstamp has the (rcv) timestamp at ingress and
+ *		delivery_time at egress.
  *	@napi_id: id of the NAPI struct this skb came from
  *	@sender_cpu: (aka @napi_id) source CPU in XPS
  *	@alloc_cpu: CPU which did the skb allocation.
@@ -961,7 +954,7 @@ struct sk_buff {
 	/* private: */
 	__u8			__mono_tc_offset[0];
 	/* public: */
-	__u8			tstamp_type:2;	/* See skb_tstamp_type */
+	__u8			mono_delivery_time:1;	/* See SKB_MONO_DELIVERY_TIME_MASK */
 #ifdef CONFIG_NET_XGRESS
 	__u8			tc_at_ingress:1;	/* See TC_AT_INGRESS_MASK */
 	__u8			tc_skip_classify:1;
@@ -1010,7 +1003,7 @@ struct sk_buff {
 #if IS_ENABLED(CONFIG_IP_SCTP)
 	__u8			csum_not_inet:1;
 #endif
-	__u8			unreadable:1;
+
 #if defined(CONFIG_NET_SCHED) || defined(CONFIG_NET_XGRESS)
 	__u16			tc_index;	/* traffic control index */
 #endif
@@ -1091,16 +1084,15 @@ struct sk_buff {
 #endif
 #define PKT_TYPE_OFFSET		offsetof(struct sk_buff, __pkt_type_offset)
 
-/* if you move tc_at_ingress or tstamp_type
+/* if you move tc_at_ingress or mono_delivery_time
  * around, you also must adapt these constants.
  */
 #ifdef __BIG_ENDIAN_BITFIELD
-#define SKB_TSTAMP_TYPE_MASK		(3 << 6)
-#define SKB_TSTAMP_TYPE_RSHIFT		(6)
-#define TC_AT_INGRESS_MASK		(1 << 5)
+#define SKB_MONO_DELIVERY_TIME_MASK	(1 << 7)
+#define TC_AT_INGRESS_MASK		(1 << 6)
 #else
-#define SKB_TSTAMP_TYPE_MASK		(3)
-#define TC_AT_INGRESS_MASK		(1 << 2)
+#define SKB_MONO_DELIVERY_TIME_MASK	(1 << 0)
+#define TC_AT_INGRESS_MASK		(1 << 1)
 #endif
 #define SKB_BF_MONO_TC_OFFSET		offsetof(struct sk_buff, __mono_tc_offset)
 
@@ -1227,7 +1219,7 @@ static inline bool skb_unref(struct sk_buff *skb)
 {
 	if (unlikely(!skb))
 		return false;
-	if (!IS_ENABLED(CONFIG_DEBUG_NET) && likely(refcount_read(&skb->users) == 1))
+	if (likely(refcount_read(&skb->users) == 1))
 		smp_rmb();
 	else if (likely(!refcount_dec_and_test(&skb->users)))
 		return false;
@@ -1253,14 +1245,8 @@ static inline bool skb_data_unref(const struct sk_buff *skb,
 	return true;
 }
 
-void __fix_address sk_skb_reason_drop(struct sock *sk, struct sk_buff *skb,
-				      enum skb_drop_reason reason);
-
-static inline void
-kfree_skb_reason(struct sk_buff *skb, enum skb_drop_reason reason)
-{
-	sk_skb_reason_drop(NULL, skb, reason);
-}
+void __fix_address
+kfree_skb_reason(struct sk_buff *skb, enum skb_drop_reason reason);
 
 /**
  *	kfree_skb - free an sk_buff with 'NOT_SPECIFIED' reason
@@ -1435,7 +1421,6 @@ void skb_prepare_seq_read(struct sk_buff *skb, unsigned int from,
 unsigned int skb_seq_read(unsigned int consumed, const u8 **data,
 			  struct skb_seq_state *st);
 void skb_abort_seq_read(struct skb_seq_state *st);
-int skb_copy_seq_read(struct skb_seq_state *st, int offset, void *to, int len);
 
 unsigned int skb_find_text(struct sk_buff *skb, unsigned int from,
 			   unsigned int to, struct ts_config *config);
@@ -1507,14 +1492,8 @@ __skb_set_sw_hash(struct sk_buff *skb, __u32 hash, bool is_l4)
 	__skb_set_hash(skb, hash, true, is_l4);
 }
 
-u32 __skb_get_hash_symmetric_net(const struct net *net, const struct sk_buff *skb);
-
-static inline u32 __skb_get_hash_symmetric(const struct sk_buff *skb)
-{
-	return __skb_get_hash_symmetric_net(NULL, skb);
-}
-
-void __skb_get_hash_net(const struct net *net, struct sk_buff *skb);
+void __skb_get_hash(struct sk_buff *skb);
+u32 __skb_get_hash_symmetric(const struct sk_buff *skb);
 u32 skb_get_poff(const struct sk_buff *skb);
 u32 __skb_get_poff(const struct sk_buff *skb, const void *data,
 		   const struct flow_keys_basic *keys, int hlen);
@@ -1593,18 +1572,10 @@ void skb_flow_dissect_hash(const struct sk_buff *skb,
 			   struct flow_dissector *flow_dissector,
 			   void *target_container);
 
-static inline __u32 skb_get_hash_net(const struct net *net, struct sk_buff *skb)
-{
-	if (!skb->l4_hash && !skb->sw_hash)
-		__skb_get_hash_net(net, skb);
-
-	return skb->hash;
-}
-
 static inline __u32 skb_get_hash(struct sk_buff *skb)
 {
 	if (!skb->l4_hash && !skb->sw_hash)
-		__skb_get_hash_net(NULL, skb);
+		__skb_get_hash(skb);
 
 	return skb->hash;
 }
@@ -1705,9 +1676,6 @@ void msg_zerocopy_put_abort(struct ubuf_info *uarg, bool have_uref);
 int __zerocopy_sg_from_iter(struct msghdr *msg, struct sock *sk,
 			    struct sk_buff *skb, struct iov_iter *from,
 			    size_t length);
-
-int zerocopy_fill_skb_from_iter(struct sk_buff *skb,
-				struct iov_iter *from, size_t length);
 
 static inline int skb_zerocopy_iter_dgram(struct sk_buff *skb,
 					  struct msghdr *msg, int len)
@@ -1824,12 +1792,6 @@ static inline void skb_zcopy_downgrade_managed(struct sk_buff *skb)
 {
 	if (unlikely(skb_zcopy_managed(skb)))
 		__skb_zcopy_downgrade_managed(skb);
-}
-
-/* Return true if frags in this skb are readable by the host. */
-static inline bool skb_frags_readable(const struct sk_buff *skb)
-{
-	return !skb->unreadable;
 }
 
 static inline void skb_mark_not_on_list(struct sk_buff *skb)
@@ -2548,16 +2510,9 @@ static inline void skb_len_add(struct sk_buff *skb, int delta)
 static inline void __skb_fill_netmem_desc(struct sk_buff *skb, int i,
 					  netmem_ref netmem, int off, int size)
 {
-	struct page *page;
+	struct page *page = netmem_to_page(netmem);
 
 	__skb_fill_netmem_desc_noacc(skb_shinfo(skb), i, netmem, off, size);
-
-	if (netmem_is_net_iov(netmem)) {
-		skb->unreadable = true;
-		return;
-	}
-
-	page = netmem_to_page(netmem);
 
 	/* Propagate page pfmemalloc to the skb if we can. The problem is
 	 * that not all callers have unique ownership of the page but rely
@@ -3445,10 +3400,6 @@ static inline struct page *__dev_alloc_pages_noprof(gfp_t gfp_mask,
 }
 #define __dev_alloc_pages(...)	alloc_hooks(__dev_alloc_pages_noprof(__VA_ARGS__))
 
-/*
- * This specialized allocator has to be a macro for its allocations to be
- * accounted separately (to have a separate alloc_tag).
- */
 #define dev_alloc_pages(_order) __dev_alloc_pages(GFP_ATOMIC | __GFP_NOWARN, _order)
 
 /**
@@ -3465,10 +3416,6 @@ static inline struct page *__dev_alloc_page_noprof(gfp_t gfp_mask)
 }
 #define __dev_alloc_page(...)	alloc_hooks(__dev_alloc_page_noprof(__VA_ARGS__))
 
-/*
- * This specialized allocator has to be a macro for its allocations to be
- * accounted separately (to have a separate alloc_tag).
- */
 #define dev_alloc_page()	dev_alloc_pages(0)
 
 /**
@@ -3539,58 +3486,21 @@ static inline void skb_frag_off_copy(skb_frag_t *fragto,
 	fragto->offset = fragfrom->offset;
 }
 
-/* Return: true if the skb_frag contains a net_iov. */
-static inline bool skb_frag_is_net_iov(const skb_frag_t *frag)
-{
-	return netmem_is_net_iov(frag->netmem);
-}
-
-/**
- * skb_frag_net_iov - retrieve the net_iov referred to by fragment
- * @frag: the fragment
- *
- * Return: the &struct net_iov associated with @frag. Returns NULL if this
- * frag has no associated net_iov.
- */
-static inline struct net_iov *skb_frag_net_iov(const skb_frag_t *frag)
-{
-	if (!skb_frag_is_net_iov(frag))
-		return NULL;
-
-	return netmem_to_net_iov(frag->netmem);
-}
-
 /**
  * skb_frag_page - retrieve the page referred to by a paged fragment
  * @frag: the paged fragment
  *
- * Return: the &struct page associated with @frag. Returns NULL if this frag
- * has no associated page.
+ * Returns the &struct page associated with @frag.
  */
 static inline struct page *skb_frag_page(const skb_frag_t *frag)
 {
-	if (skb_frag_is_net_iov(frag))
-		return NULL;
-
 	return netmem_to_page(frag->netmem);
-}
-
-/**
- * skb_frag_netmem - retrieve the netmem referred to by a fragment
- * @frag: the fragment
- *
- * Return: the &netmem_ref associated with @frag.
- */
-static inline netmem_ref skb_frag_netmem(const skb_frag_t *frag)
-{
-	return frag->netmem;
 }
 
 int skb_pp_cow_data(struct page_pool *pool, struct sk_buff **pskb,
 		    unsigned int headroom);
 int skb_cow_data_for_xdp(struct page_pool *pool, struct sk_buff **pskb,
 			 struct bpf_prog *prog);
-
 /**
  * skb_frag_address - gets the address of the data contained in a paged fragment
  * @frag: the paged fragment buffer
@@ -3600,9 +3510,6 @@ int skb_cow_data_for_xdp(struct page_pool *pool, struct sk_buff **pskb,
  */
 static inline void *skb_frag_address(const skb_frag_t *frag)
 {
-	if (!skb_frag_page(frag))
-		return NULL;
-
 	return page_address(skb_frag_page(frag)) + skb_frag_off(frag);
 }
 
@@ -4272,7 +4179,7 @@ static inline void skb_get_new_timestampns(const struct sk_buff *skb,
 static inline void __net_timestamp(struct sk_buff *skb)
 {
 	skb->tstamp = ktime_get_real();
-	skb->tstamp_type = SKB_CLOCK_REALTIME;
+	skb->mono_delivery_time = 0;
 }
 
 static inline ktime_t net_timedelta(ktime_t t)
@@ -4281,36 +4188,10 @@ static inline ktime_t net_timedelta(ktime_t t)
 }
 
 static inline void skb_set_delivery_time(struct sk_buff *skb, ktime_t kt,
-					 u8 tstamp_type)
+					 bool mono)
 {
 	skb->tstamp = kt;
-
-	if (kt)
-		skb->tstamp_type = tstamp_type;
-	else
-		skb->tstamp_type = SKB_CLOCK_REALTIME;
-}
-
-static inline void skb_set_delivery_type_by_clockid(struct sk_buff *skb,
-						    ktime_t kt, clockid_t clockid)
-{
-	u8 tstamp_type = SKB_CLOCK_REALTIME;
-
-	switch (clockid) {
-	case CLOCK_REALTIME:
-		break;
-	case CLOCK_MONOTONIC:
-		tstamp_type = SKB_CLOCK_MONOTONIC;
-		break;
-	case CLOCK_TAI:
-		tstamp_type = SKB_CLOCK_TAI;
-		break;
-	default:
-		WARN_ON_ONCE(1);
-		kt = 0;
-	}
-
-	skb_set_delivery_time(skb, kt, tstamp_type);
+	skb->mono_delivery_time = kt && mono;
 }
 
 DECLARE_STATIC_KEY_FALSE(netstamp_needed_key);
@@ -4320,8 +4201,8 @@ DECLARE_STATIC_KEY_FALSE(netstamp_needed_key);
  */
 static inline void skb_clear_delivery_time(struct sk_buff *skb)
 {
-	if (skb->tstamp_type) {
-		skb->tstamp_type = SKB_CLOCK_REALTIME;
+	if (skb->mono_delivery_time) {
+		skb->mono_delivery_time = 0;
 		if (static_branch_unlikely(&netstamp_needed_key))
 			skb->tstamp = ktime_get_real();
 		else
@@ -4331,7 +4212,7 @@ static inline void skb_clear_delivery_time(struct sk_buff *skb)
 
 static inline void skb_clear_tstamp(struct sk_buff *skb)
 {
-	if (skb->tstamp_type)
+	if (skb->mono_delivery_time)
 		return;
 
 	skb->tstamp = 0;
@@ -4339,7 +4220,7 @@ static inline void skb_clear_tstamp(struct sk_buff *skb)
 
 static inline ktime_t skb_tstamp(const struct sk_buff *skb)
 {
-	if (skb->tstamp_type)
+	if (skb->mono_delivery_time)
 		return 0;
 
 	return skb->tstamp;
@@ -4347,7 +4228,7 @@ static inline ktime_t skb_tstamp(const struct sk_buff *skb)
 
 static inline ktime_t skb_tstamp_cond(const struct sk_buff *skb, bool cond)
 {
-	if (skb->tstamp_type != SKB_CLOCK_MONOTONIC && skb->tstamp)
+	if (!skb->mono_delivery_time && skb->tstamp)
 		return skb->tstamp;
 
 	if (static_branch_unlikely(&netstamp_needed_key) || cond)

@@ -1660,6 +1660,5 @@ console_initcall(amiserial_console_init);
 
 #endif /* CONFIG_SERIAL_CONSOLE && !MODULE */
 
-MODULE_DESCRIPTION("Serial driver for the amiga builtin port");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:amiga-serial");

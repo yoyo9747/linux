@@ -64,16 +64,6 @@ setfx:
 }
 
 /*
- * Update the value of PKRU register that was already pushed onto the signal frame.
- */
-static inline int update_pkru_in_sigframe(struct xregs_state __user *buf, u32 pkru)
-{
-	if (unlikely(!cpu_feature_enabled(X86_FEATURE_OSPKE)))
-		return 0;
-	return __put_user(pkru, (unsigned int __user *)get_xsave_addr_user(buf, XFEATURE_PKRU));
-}
-
-/*
  * Signal frame handlers.
  */
 static inline bool save_fsave_header(struct task_struct *tsk, void __user *buf)
@@ -166,17 +156,10 @@ static inline bool save_xstate_epilog(void __user *buf, int ia32_frame,
 	return !err;
 }
 
-static inline int copy_fpregs_to_sigframe(struct xregs_state __user *buf, u32 pkru)
+static inline int copy_fpregs_to_sigframe(struct xregs_state __user *buf)
 {
-	int err = 0;
-
-	if (use_xsave()) {
-		err = xsave_to_user_sigframe(buf);
-		if (!err)
-			err = update_pkru_in_sigframe(buf, pkru);
-		return err;
-	}
-
+	if (use_xsave())
+		return xsave_to_user_sigframe(buf);
 	if (use_fxsr())
 		return fxsave_to_user_sigframe((struct fxregs_state __user *) buf);
 	else
@@ -202,7 +185,7 @@ static inline int copy_fpregs_to_sigframe(struct xregs_state __user *buf, u32 pk
  * For [f]xsave state, update the SW reserved fields in the [f]xsave frame
  * indicating the absence/presence of the extended state to the user.
  */
-bool copy_fpstate_to_sigframe(void __user *buf, void __user *buf_fx, int size, u32 pkru)
+bool copy_fpstate_to_sigframe(void __user *buf, void __user *buf_fx, int size)
 {
 	struct task_struct *tsk = current;
 	struct fpstate *fpstate = tsk->thread.fpu.fpstate;
@@ -245,7 +228,7 @@ retry:
 		fpregs_restore_userregs();
 
 	pagefault_disable();
-	ret = copy_fpregs_to_sigframe(buf_fx, pkru);
+	ret = copy_fpregs_to_sigframe(buf_fx);
 	pagefault_enable();
 	fpregs_unlock();
 

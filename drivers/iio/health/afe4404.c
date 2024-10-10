@@ -333,7 +333,8 @@ static irqreturn_t afe4404_trigger_handler(int irq, void *private)
 	struct afe4404_data *afe = iio_priv(indio_dev);
 	int ret, bit, i = 0;
 
-	iio_for_each_active_channel(indio_dev, bit) {
+	for_each_set_bit(bit, indio_dev->active_scan_mask,
+			 indio_dev->masklength) {
 		ret = regmap_read(afe->regmap, afe4404_channel_values[bit],
 				  &afe->buffer[i++]);
 		if (ret)
@@ -429,8 +430,9 @@ static int afe4404_suspend(struct device *dev)
 	struct afe4404_data *afe = iio_priv(indio_dev);
 	int ret;
 
-	ret = regmap_set_bits(afe->regmap, AFE440X_CONTROL2,
-			      AFE440X_CONTROL2_PDN_AFE);
+	ret = regmap_update_bits(afe->regmap, AFE440X_CONTROL2,
+				 AFE440X_CONTROL2_PDN_AFE,
+				 AFE440X_CONTROL2_PDN_AFE);
 	if (ret)
 		return ret;
 
@@ -455,8 +457,8 @@ static int afe4404_resume(struct device *dev)
 		return ret;
 	}
 
-	ret = regmap_clear_bits(afe->regmap, AFE440X_CONTROL2,
-				AFE440X_CONTROL2_PDN_AFE);
+	ret = regmap_update_bits(afe->regmap, AFE440X_CONTROL2,
+				 AFE440X_CONTROL2_PDN_AFE, 0);
 	if (ret)
 		return ret;
 
@@ -580,7 +582,7 @@ static int afe4404_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id afe4404_ids[] = {
-	{ "afe4404" },
+	{ "afe4404", 0 },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(i2c, afe4404_ids);

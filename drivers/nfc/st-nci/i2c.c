@@ -257,7 +257,7 @@ static void st_nci_i2c_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id st_nci_i2c_id_table[] = {
-	{ ST_NCI_DRIVER_NAME },
+	{ST_NCI_DRIVER_NAME, 0},
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, st_nci_i2c_id_table);

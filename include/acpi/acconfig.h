@@ -67,6 +67,7 @@
  *      General Purpose Events (GPEs)
  *      Global Lock
  *      ACPI PM timer
+ *      FACS table (Waking vectors and Global Lock)
  */
 #ifndef ACPI_REDUCED_HARDWARE
 #define ACPI_REDUCED_HARDWARE           FALSE

@@ -18,8 +18,6 @@ struct ionic_lif;
 #define PCI_DEVICE_ID_PENSANDO_IONIC_ETH_PF	0x1002
 #define PCI_DEVICE_ID_PENSANDO_IONIC_ETH_VF	0x1003
 
-#define IONIC_ASIC_TYPE_ELBA	2
-
 #define DEVCMD_TIMEOUT			5
 #define IONIC_ADMINQ_TIME_SLICE		msecs_to_jiffies(100)
 
@@ -49,7 +47,6 @@ struct ionic {
 	struct ionic_dev_bar bars[IONIC_BARS_MAX];
 	unsigned int num_bars;
 	struct ionic_identity ident;
-	struct workqueue_struct *wq;
 	struct ionic_lif *lif;
 	unsigned int nnqs_per_lif;
 	unsigned int neqs_per_lif;
@@ -57,8 +54,6 @@ struct ionic {
 	unsigned int nrxqs_per_lif;
 	unsigned int nintrs;
 	DECLARE_BITMAP(intrs, IONIC_INTR_CTRL_REGS_MAX);
-	cpumask_var_t *affinity_masks;
-	struct delayed_work doorbell_check_dwork;
 	struct work_struct nb_work;
 	struct notifier_block nb;
 	struct rw_semaphore vf_op_lock;	/* lock for VF operations */
@@ -97,7 +92,5 @@ int ionic_reset(struct ionic *ionic);
 int ionic_port_identify(struct ionic *ionic);
 int ionic_port_init(struct ionic *ionic);
 int ionic_port_reset(struct ionic *ionic);
-
-bool ionic_doorbell_wa(struct ionic *ionic);
 
 #endif /* _IONIC_H_ */

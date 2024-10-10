@@ -28,8 +28,6 @@ static int vbi_out_queue_setup(struct vb2_queue *vq,
 	if (!vivid_is_svid_out(dev))
 		return -EINVAL;
 
-	if (*nplanes)
-		return sizes[0] < size ? -EINVAL : 0;
 	sizes[0] = size;
 
 	*nplanes = 1;

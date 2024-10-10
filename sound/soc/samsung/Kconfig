@@ -140,7 +140,7 @@ config SND_SOC_SAMSUNG_ARIES_WM8994
 
 config SND_SOC_SAMSUNG_MIDAS_WM1811
 	tristate "SoC I2S Audio support for Midas boards"
-	depends on SND_SOC_SAMSUNG && IIO
+	depends on SND_SOC_SAMSUNG
 	select SND_SAMSUNG_I2S
 	select SND_SOC_WM8994
 	help

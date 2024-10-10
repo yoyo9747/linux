@@ -54,7 +54,7 @@
 #include <linux/interrupt.h>
 #include <linux/raid_class.h>
 #include <linux/blk-mq-pci.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "mpt3sas_base.h"
 
@@ -2680,6 +2680,12 @@ scsih_device_configure(struct scsi_device *sdev, struct queue_limits *lim)
 		pcie_device_put(pcie_device);
 		spin_unlock_irqrestore(&ioc->pcie_device_lock, flags);
 		mpt3sas_scsih_change_queue_depth(sdev, qdepth);
+		/* Enable QUEUE_FLAG_NOMERGES flag, so that IOs won't be
+		 ** merged and can eliminate holes created during merging
+		 ** operation.
+		 **/
+		blk_queue_flag_set(QUEUE_FLAG_NOMERGES,
+				sdev->request_queue);
 		lim->virt_boundary_mask = ioc->page_size - 1;
 		return 0;
 	}
@@ -12301,8 +12307,10 @@ _scsih_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	scsi_host_set_guard(shost, SHOST_DIX_GUARD_CRC);
 
 	/* event thread */
+	snprintf(ioc->firmware_event_name, sizeof(ioc->firmware_event_name),
+	    "fw_event_%s%d", ioc->driver_name, ioc->id);
 	ioc->firmware_event_thread = alloc_ordered_workqueue(
-		"fw_event_%s%d", 0, ioc->driver_name, ioc->id);
+	    ioc->firmware_event_name, 0);
 	if (!ioc->firmware_event_thread) {
 		ioc_err(ioc, "failure at %s:%d/%s()!\n",
 			__FILE__, __LINE__, __func__);

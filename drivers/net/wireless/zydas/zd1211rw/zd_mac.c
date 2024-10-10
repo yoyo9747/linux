@@ -326,7 +326,7 @@ out:
 	return r;
 }
 
-void zd_op_stop(struct ieee80211_hw *hw, bool suspend)
+void zd_op_stop(struct ieee80211_hw *hw)
 {
 	struct zd_mac *mac = zd_hw_mac(hw);
 	struct zd_chip *chip = &mac->chip;

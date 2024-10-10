@@ -26,7 +26,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/units.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <linux/iio/events.h>
 #include <linux/iio/iio.h>

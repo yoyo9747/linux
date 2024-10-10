@@ -14,7 +14,6 @@
 static u_int debug;
 
 MODULE_AUTHOR("Karsten Keil");
-MODULE_DESCRIPTION("Modular ISDN core driver");
 MODULE_LICENSE("GPL");
 module_param(debug, uint, S_IRUGO | S_IWUSR);
 

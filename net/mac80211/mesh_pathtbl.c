@@ -580,7 +580,7 @@ void mesh_fast_tx_cache(struct ieee80211_sub_if_data *sdata,
 	prev = rhashtable_lookup_get_insert_fast(&cache->rht,
 						 &entry->rhash,
 						 fast_tx_rht_params);
-	if (IS_ERR(prev)) {
+	if (unlikely(IS_ERR(prev))) {
 		kfree(entry);
 		goto unlock_cache;
 	}

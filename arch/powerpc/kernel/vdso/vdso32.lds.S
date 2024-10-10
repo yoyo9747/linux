@@ -74,8 +74,6 @@ SECTIONS
 	.got		: { *(.got) }			:text
 	.plt		: { *(.plt) }
 
-	.rela.dyn	: { *(.rela .rela*) }
-
 	_end = .;
 	__end = .;
 	PROVIDE(end = .);
@@ -89,7 +87,7 @@ SECTIONS
 		*(.branch_lt)
 		*(.data .data.* .gnu.linkonce.d.* .sdata*)
 		*(.bss .sbss .dynbss .dynsbss)
-		*(.got1 .glink .iplt)
+		*(.got1 .glink .iplt .rela*)
 	}
 }
 
@@ -130,7 +128,6 @@ VERSION
 #if defined(CONFIG_PPC64) || !defined(CONFIG_SMP)
 		__kernel_getcpu;
 #endif
-		__kernel_getrandom;
 
 	local: *;
 	};

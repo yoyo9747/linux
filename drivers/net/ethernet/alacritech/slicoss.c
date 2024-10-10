@@ -1678,15 +1678,17 @@ static int slic_init(struct slic_device *sdev)
 	slic_card_reset(sdev);
 
 	err = slic_load_firmware(sdev);
-	if (err)
-		return dev_err_probe(&sdev->pdev->dev, err,
-			"failed to load firmware\n");
+	if (err) {
+		dev_err(&sdev->pdev->dev, "failed to load firmware\n");
+		return err;
+	}
 
 	/* we need the shared memory to read EEPROM so set it up temporarily */
 	err = slic_init_shmem(sdev);
-	if (err)
-		return dev_err_probe(&sdev->pdev->dev, err,
-			"failed to init shared memory\n");
+	if (err) {
+		dev_err(&sdev->pdev->dev, "failed to init shared memory\n");
+		return err;
+	}
 
 	err = slic_read_eeprom(sdev);
 	if (err) {
@@ -1739,9 +1741,10 @@ static int slic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	int err;
 
 	err = pci_enable_device(pdev);
-	if (err)
-		return dev_err_probe(&pdev->dev, err,
-			"failed to enable PCI device\n");
+	if (err) {
+		dev_err(&pdev->dev, "failed to enable PCI device\n");
+		return err;
+	}
 
 	pci_set_master(pdev);
 	pci_try_set_mwi(pdev);

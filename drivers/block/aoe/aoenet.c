@@ -10,7 +10,7 @@
 #include <linux/netdevice.h>
 #include <linux/moduleparam.h>
 #include <net/net_namespace.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include "aoe.h"
 
 #define NECODES 5

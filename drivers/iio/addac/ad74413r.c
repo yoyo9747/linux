@@ -4,7 +4,7 @@
  * Author: Cosmin Tanislav <cosmin.tanislav@analog.com>
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/bitfield.h>
 #include <linux/crc8.h>
 #include <linux/device.h>
@@ -1365,9 +1365,16 @@ static int ad74413r_probe(struct spi_device *spi)
 
 	st->spi = spi;
 	st->dev = &spi->dev;
-	st->chip_info = spi_get_device_match_data(spi);
-	if (!st->chip_info)
-		return -EINVAL;
+	st->chip_info = device_get_match_data(&spi->dev);
+	if (!st->chip_info) {
+		const struct spi_device_id *id = spi_get_device_id(spi);
+
+		if (id)
+			st->chip_info =
+				(struct ad74413r_chip_info *)id->driver_data;
+		if (!st->chip_info)
+			return -EINVAL;
+	}
 
 	mutex_init(&st->lock);
 	init_completion(&st->adc_data_completion);

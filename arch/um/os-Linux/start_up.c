@@ -17,7 +17,6 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <asm/ldt.h>
 #include <asm/unistd.h>
 #include <init.h>
 #include <os.h>

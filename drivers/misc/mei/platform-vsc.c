@@ -19,7 +19,7 @@
 #include <linux/types.h>
 
 #include <asm-generic/bug.h>
-#include <linux/unaligned.h>
+#include <asm-generic/unaligned.h>
 
 #include "mei_dev.h"
 #include "vsc-tp.h"

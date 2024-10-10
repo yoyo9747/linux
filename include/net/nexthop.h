@@ -105,7 +105,7 @@ struct nh_grp_entry_stats {
 struct nh_grp_entry {
 	struct nexthop	*nh;
 	struct nh_grp_entry_stats __percpu	*stats;
-	u16		weight;
+	u8		weight;
 
 	union {
 		struct {
@@ -192,7 +192,7 @@ struct nh_notifier_single_info {
 };
 
 struct nh_notifier_grp_entry_info {
-	u16 weight;
+	u8 weight;
 	struct nh_notifier_single_info nh;
 };
 

@@ -437,5 +437,4 @@ static void __exit algif_skcipher_exit(void)
 
 module_init(algif_skcipher_init);
 module_exit(algif_skcipher_exit);
-MODULE_DESCRIPTION("Userspace interface for skcipher algorithms");
 MODULE_LICENSE("GPL");

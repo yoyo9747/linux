@@ -209,18 +209,14 @@ struct backlight_properties {
 	 * attribute: /sys/class/backlight/<backlight>/bl_power
 	 * When the power property is updated update_status() is called.
 	 *
-	 * The possible values are: (0: full on, 4: full off), see
-	 * BACKLIGHT_POWER constants.
+	 * The possible values are: (0: full on, 1 to 3: power saving
+	 * modes; 4: full off), see FB_BLANK_XXX.
 	 *
-	 * When the backlight device is enabled, @power is set to
-	 * BACKLIGHT_POWER_ON. When the backlight device is disabled,
-	 * @power is set to BACKLIGHT_POWER_OFF.
+	 * When the backlight device is enabled @power is set
+	 * to FB_BLANK_UNBLANK. When the backlight device is disabled
+	 * @power is set to FB_BLANK_POWERDOWN.
 	 */
 	int power;
-
-#define BACKLIGHT_POWER_ON		(0)
-#define BACKLIGHT_POWER_OFF		(4)
-#define BACKLIGHT_POWER_REDUCED		(1) // deprecated; don't use in new code
 
 	/**
 	 * @type: The type of backlight supported.
@@ -350,7 +346,7 @@ static inline int backlight_enable(struct backlight_device *bd)
 	if (!bd)
 		return 0;
 
-	bd->props.power = BACKLIGHT_POWER_ON;
+	bd->props.power = FB_BLANK_UNBLANK;
 	bd->props.state &= ~BL_CORE_FBBLANK;
 
 	return backlight_update_status(bd);
@@ -365,7 +361,7 @@ static inline int backlight_disable(struct backlight_device *bd)
 	if (!bd)
 		return 0;
 
-	bd->props.power = BACKLIGHT_POWER_OFF;
+	bd->props.power = FB_BLANK_POWERDOWN;
 	bd->props.state |= BL_CORE_FBBLANK;
 
 	return backlight_update_status(bd);
@@ -384,7 +380,7 @@ static inline int backlight_disable(struct backlight_device *bd)
  */
 static inline bool backlight_is_blank(const struct backlight_device *bd)
 {
-	return bd->props.power != BACKLIGHT_POWER_ON ||
+	return bd->props.power != FB_BLANK_UNBLANK ||
 	       bd->props.state & (BL_CORE_SUSPENDED | BL_CORE_FBBLANK);
 }
 

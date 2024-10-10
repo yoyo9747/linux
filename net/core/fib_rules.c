@@ -11,7 +11,6 @@
 #include <linux/list.h>
 #include <linux/module.h>
 #include <net/net_namespace.h>
-#include <net/inet_dscp.h>
 #include <net/sock.h>
 #include <net/fib_rules.h>
 #include <net/ip_tunnels.h>
@@ -73,7 +72,7 @@ int fib_default_rule_add(struct fib_rules_ops *ops,
 	r->suppress_prefixlen = -1;
 	r->suppress_ifgroup = -1;
 
-	/* The lock is not required here, the list in unreachable
+	/* The lock is not required here, the list in unreacheable
 	 * at the moment this function is called */
 	list_add_tail(&r->list, &ops->rules_list);
 	return 0;
@@ -767,8 +766,7 @@ static const struct nla_policy fib_rule_policy[FRA_MAX + 1] = {
 	[FRA_PROTOCOL]  = { .type = NLA_U8 },
 	[FRA_IP_PROTO]  = { .type = NLA_U8 },
 	[FRA_SPORT_RANGE] = { .len = sizeof(struct fib_rule_port_range) },
-	[FRA_DPORT_RANGE] = { .len = sizeof(struct fib_rule_port_range) },
-	[FRA_DSCP]	= NLA_POLICY_MAX(NLA_U8, INET_DSCP_MASK >> 2),
+	[FRA_DPORT_RANGE] = { .len = sizeof(struct fib_rule_port_range) }
 };
 
 int fib_nl_newrule(struct sk_buff *skb, struct nlmsghdr *nlh,
@@ -1207,7 +1205,8 @@ static void notify_rule_change(int event, struct fib_rule *rule,
 	rtnl_notify(skb, net, pid, ops->nlgroup, nlh, GFP_KERNEL);
 	return;
 errout:
-	rtnl_set_sk_err(net, ops->nlgroup, err);
+	if (err < 0)
+		rtnl_set_sk_err(net, ops->nlgroup, err);
 }
 
 static void attach_rules(struct list_head *rules, struct net_device *dev)

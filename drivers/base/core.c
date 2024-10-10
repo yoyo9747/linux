@@ -9,30 +9,28 @@
  */
 
 #include <linux/acpi.h>
-#include <linux/blkdev.h>
-#include <linux/cleanup.h>
 #include <linux/cpufreq.h>
 #include <linux/device.h>
-#include <linux/dma-map-ops.h> /* for dma_default_coherent */
 #include <linux/err.h>
 #include <linux/fwnode.h>
 #include <linux/init.h>
-#include <linux/kdev_t.h>
 #include <linux/kstrtox.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
-#include <linux/netdevice.h>
+#include <linux/slab.h>
+#include <linux/kdev_t.h>
 #include <linux/notifier.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/blkdev.h>
+#include <linux/mutex.h>
 #include <linux/pm_runtime.h>
-#include <linux/rcupdate.h>
-#include <linux/sched/mm.h>
+#include <linux/netdevice.h>
 #include <linux/sched/signal.h>
-#include <linux/slab.h>
+#include <linux/sched/mm.h>
 #include <linux/string_helpers.h>
 #include <linux/swiotlb.h>
 #include <linux/sysfs.h>
+#include <linux/dma-map-ops.h> /* for dma_default_coherent */
 
 #include "base.h"
 #include "physical_location.h"
@@ -98,9 +96,12 @@ static int __fwnode_link_add(struct fwnode_handle *con,
 int fwnode_link_add(struct fwnode_handle *con, struct fwnode_handle *sup,
 		    u8 flags)
 {
-	guard(mutex)(&fwnode_link_lock);
+	int ret;
 
-	return __fwnode_link_add(con, sup, flags);
+	mutex_lock(&fwnode_link_lock);
+	ret = __fwnode_link_add(con, sup, flags);
+	mutex_unlock(&fwnode_link_lock);
+	return ret;
 }
 
 /**
@@ -141,10 +142,10 @@ static void fwnode_links_purge_suppliers(struct fwnode_handle *fwnode)
 {
 	struct fwnode_link *link, *tmp;
 
-	guard(mutex)(&fwnode_link_lock);
-
+	mutex_lock(&fwnode_link_lock);
 	list_for_each_entry_safe(link, tmp, &fwnode->suppliers, c_hook)
 		__fwnode_link_del(link);
+	mutex_unlock(&fwnode_link_lock);
 }
 
 /**
@@ -157,10 +158,10 @@ static void fwnode_links_purge_consumers(struct fwnode_handle *fwnode)
 {
 	struct fwnode_link *link, *tmp;
 
-	guard(mutex)(&fwnode_link_lock);
-
+	mutex_lock(&fwnode_link_lock);
 	list_for_each_entry_safe(link, tmp, &fwnode->consumers, s_hook)
 		__fwnode_link_del(link);
+	mutex_unlock(&fwnode_link_lock);
 }
 
 /**
@@ -561,11 +562,20 @@ static struct class devlink_class = {
 
 static int devlink_add_symlinks(struct device *dev)
 {
-	char *buf_con __free(kfree) = NULL, *buf_sup __free(kfree) = NULL;
 	int ret;
+	size_t len;
 	struct device_link *link = to_devlink(dev);
 	struct device *sup = link->supplier;
 	struct device *con = link->consumer;
+	char *buf;
+
+	len = max(strlen(dev_bus_name(sup)) + strlen(dev_name(sup)),
+		  strlen(dev_bus_name(con)) + strlen(dev_name(con)));
+	len += strlen(":");
+	len += strlen("supplier:") + 1;
+	buf = kzalloc(len, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	ret = sysfs_create_link(&link->link_dev.kobj, &sup->kobj, "supplier");
 	if (ret)
@@ -575,64 +585,58 @@ static int devlink_add_symlinks(struct device *dev)
 	if (ret)
 		goto err_con;
 
-	buf_con = kasprintf(GFP_KERNEL, "consumer:%s:%s", dev_bus_name(con), dev_name(con));
-	if (!buf_con) {
-		ret = -ENOMEM;
-		goto err_con_dev;
-	}
-
-	ret = sysfs_create_link(&sup->kobj, &link->link_dev.kobj, buf_con);
+	snprintf(buf, len, "consumer:%s:%s", dev_bus_name(con), dev_name(con));
+	ret = sysfs_create_link(&sup->kobj, &link->link_dev.kobj, buf);
 	if (ret)
 		goto err_con_dev;
 
-	buf_sup = kasprintf(GFP_KERNEL, "supplier:%s:%s", dev_bus_name(sup), dev_name(sup));
-	if (!buf_sup) {
-		ret = -ENOMEM;
-		goto err_sup_dev;
-	}
-
-	ret = sysfs_create_link(&con->kobj, &link->link_dev.kobj, buf_sup);
+	snprintf(buf, len, "supplier:%s:%s", dev_bus_name(sup), dev_name(sup));
+	ret = sysfs_create_link(&con->kobj, &link->link_dev.kobj, buf);
 	if (ret)
 		goto err_sup_dev;
 
 	goto out;
 
 err_sup_dev:
-	sysfs_remove_link(&sup->kobj, buf_con);
+	snprintf(buf, len, "consumer:%s:%s", dev_bus_name(con), dev_name(con));
+	sysfs_remove_link(&sup->kobj, buf);
 err_con_dev:
 	sysfs_remove_link(&link->link_dev.kobj, "consumer");
 err_con:
 	sysfs_remove_link(&link->link_dev.kobj, "supplier");
 out:
+	kfree(buf);
 	return ret;
 }
 
 static void devlink_remove_symlinks(struct device *dev)
 {
-	char *buf_con __free(kfree) = NULL, *buf_sup __free(kfree) = NULL;
 	struct device_link *link = to_devlink(dev);
+	size_t len;
 	struct device *sup = link->supplier;
 	struct device *con = link->consumer;
+	char *buf;
 
 	sysfs_remove_link(&link->link_dev.kobj, "consumer");
 	sysfs_remove_link(&link->link_dev.kobj, "supplier");
 
-	if (device_is_registered(con)) {
-		buf_sup = kasprintf(GFP_KERNEL, "supplier:%s:%s", dev_bus_name(sup), dev_name(sup));
-		if (!buf_sup)
-			goto out;
-		sysfs_remove_link(&con->kobj, buf_sup);
+	len = max(strlen(dev_bus_name(sup)) + strlen(dev_name(sup)),
+		  strlen(dev_bus_name(con)) + strlen(dev_name(con)));
+	len += strlen(":");
+	len += strlen("supplier:") + 1;
+	buf = kzalloc(len, GFP_KERNEL);
+	if (!buf) {
+		WARN(1, "Unable to properly free device link symlinks!\n");
+		return;
 	}
 
-	buf_con = kasprintf(GFP_KERNEL, "consumer:%s:%s", dev_bus_name(con), dev_name(con));
-	if (!buf_con)
-		goto out;
-	sysfs_remove_link(&sup->kobj, buf_con);
-
-	return;
-
-out:
-	WARN(1, "Unable to properly free device link symlinks!\n");
+	if (device_is_registered(con)) {
+		snprintf(buf, len, "supplier:%s:%s", dev_bus_name(sup), dev_name(sup));
+		sysfs_remove_link(&con->kobj, buf);
+	}
+	snprintf(buf, len, "consumer:%s:%s", dev_bus_name(con), dev_name(con));
+	sysfs_remove_link(&sup->kobj, buf);
+	kfree(buf);
 }
 
 static struct class_interface devlink_class_intf = {
@@ -672,9 +676,6 @@ postcore_initcall(devlink_class_init);
  * @consumer: Consumer end of the link.
  * @supplier: Supplier end of the link.
  * @flags: Link flags.
- *
- * Return: On success, a device_link struct will be returned.
- *         On error or invalid flag settings, NULL will be returned.
  *
  * The caller is responsible for the proper synchronization of the link creation
  * with runtime PM.  First, setting the DL_FLAG_PM_RUNTIME flag will cause the
@@ -1059,16 +1060,20 @@ int device_links_check_suppliers(struct device *dev)
 	 * Device waiting for supplier to become available is not allowed to
 	 * probe.
 	 */
-	scoped_guard(mutex, &fwnode_link_lock) {
-		sup_fw = fwnode_links_check_suppliers(dev->fwnode);
-		if (sup_fw) {
-			if (dev_is_best_effort(dev))
-				fwnode_ret = -EAGAIN;
-			else
-				return dev_err_probe(dev, -EPROBE_DEFER,
-						     "wait for supplier %pfwf\n", sup_fw);
+	mutex_lock(&fwnode_link_lock);
+	sup_fw = fwnode_links_check_suppliers(dev->fwnode);
+	if (sup_fw) {
+		if (!dev_is_best_effort(dev)) {
+			fwnode_ret = -EPROBE_DEFER;
+			dev_err_probe(dev, -EPROBE_DEFER,
+				    "wait for supplier %pfwf\n", sup_fw);
+		} else {
+			fwnode_ret = -EAGAIN;
 		}
 	}
+	mutex_unlock(&fwnode_link_lock);
+	if (fwnode_ret == -EPROBE_DEFER)
+		return fwnode_ret;
 
 	device_links_write_lock();
 
@@ -1087,8 +1092,10 @@ int device_links_check_suppliers(struct device *dev)
 			}
 
 			device_links_missing_supplier(dev);
-			ret = dev_err_probe(dev, -EPROBE_DEFER,
-					    "supplier %s not ready\n", dev_name(link->supplier));
+			dev_err_probe(dev, -EPROBE_DEFER,
+				      "supplier %s not ready\n",
+				      dev_name(link->supplier));
+			ret = -EPROBE_DEFER;
 			break;
 		}
 		WRITE_ONCE(link->status, DL_STATE_CONSUMER_PROBE);
@@ -1241,8 +1248,9 @@ static ssize_t waiting_for_supplier_show(struct device *dev,
 	bool val;
 
 	device_lock(dev);
-	scoped_guard(mutex, &fwnode_link_lock)
-		val = !!fwnode_links_check_suppliers(dev->fwnode);
+	mutex_lock(&fwnode_link_lock);
+	val = !!fwnode_links_check_suppliers(dev->fwnode);
+	mutex_unlock(&fwnode_link_lock);
 	device_unlock(dev);
 	return sysfs_emit(buf, "%u\n", val);
 }
@@ -1315,15 +1323,13 @@ void device_links_driver_bound(struct device *dev)
 	 */
 	if (dev->fwnode && dev->fwnode->dev == dev) {
 		struct fwnode_handle *child;
-
 		fwnode_links_purge_suppliers(dev->fwnode);
-
-		guard(mutex)(&fwnode_link_lock);
-
+		mutex_lock(&fwnode_link_lock);
 		fwnode_for_each_available_child_node(dev->fwnode, child)
 			__fw_devlink_pickup_dangling_consumers(child,
 							       dev->fwnode);
 		__fw_devlink_link_to_consumers(dev);
+		mutex_unlock(&fwnode_link_lock);
 	}
 	device_remove_file(dev, &dev_attr_waiting_for_supplier);
 
@@ -2332,10 +2338,10 @@ static void fw_devlink_link_device(struct device *dev)
 
 	fw_devlink_parse_fwtree(fwnode);
 
-	guard(mutex)(&fwnode_link_lock);
-
+	mutex_lock(&fwnode_link_lock);
 	__fw_devlink_link_to_consumers(dev);
 	__fw_devlink_link_to_suppliers(dev, fwnode);
+	mutex_unlock(&fwnode_link_lock);
 }
 
 /* Device links support end. */
@@ -2584,7 +2590,7 @@ static const void *device_namespace(const struct kobject *kobj)
 	const struct device *dev = kobj_to_dev(kobj);
 	const void *ns = NULL;
 
-	if (dev->class && dev->class->namespace)
+	if (dev->class && dev->class->ns_type)
 		ns = dev->class->namespace(dev);
 
 	return ns;
@@ -2634,7 +2640,6 @@ static const char *dev_uevent_name(const struct kobject *kobj)
 static int dev_uevent(const struct kobject *kobj, struct kobj_uevent_env *env)
 {
 	const struct device *dev = kobj_to_dev(kobj);
-	struct device_driver *driver;
 	int retval = 0;
 
 	/* add device node properties if present */
@@ -2663,12 +2668,8 @@ static int dev_uevent(const struct kobject *kobj, struct kobj_uevent_env *env)
 	if (dev->type && dev->type->name)
 		add_uevent_var(env, "DEVTYPE=%s", dev->type->name);
 
-	/* Synchronize with module_remove_driver() */
-	rcu_read_lock();
-	driver = READ_ONCE(dev->driver);
-	if (driver)
-		add_uevent_var(env, "DRIVER=%s", driver->name);
-	rcu_read_unlock();
+	if (dev->driver)
+		add_uevent_var(env, "DRIVER=%s", dev->driver->name);
 
 	/* Add common DT information about the device */
 	of_device_uevent(dev, env);
@@ -2738,8 +2739,11 @@ static ssize_t uevent_show(struct device *dev, struct device_attribute *attr,
 	if (!env)
 		return -ENOMEM;
 
+	/* Synchronize with really_probe() */
+	device_lock(dev);
 	/* let the kset specific function add its keys */
 	retval = kset->uevent_ops->uevent(&dev->kobj, env);
+	device_unlock(dev);
 	if (retval)
 		goto out;
 
@@ -3163,7 +3167,7 @@ void device_initialize(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(device_initialize);
 
-struct kobject *virtual_device_parent(void)
+struct kobject *virtual_device_parent(struct device *dev)
 {
 	static struct kobject *virtual_dir = NULL;
 
@@ -3241,7 +3245,7 @@ static struct kobject *get_device_parent(struct device *dev,
 		 * in a "glue" directory to prevent namespace collisions.
 		 */
 		if (parent == NULL)
-			parent_kobj = virtual_device_parent();
+			parent_kobj = virtual_device_parent(dev);
 		else if (parent->class && !dev->class->ns_type) {
 			subsys_put(sp);
 			return &parent->kobj;
@@ -3996,7 +4000,7 @@ int device_for_each_child(struct device *parent, void *data,
 	struct device *child;
 	int error = 0;
 
-	if (!parent || !parent->p)
+	if (!parent->p)
 		return 0;
 
 	klist_iter_init(&parent->p->klist_children, &i);
@@ -4026,7 +4030,7 @@ int device_for_each_child_reverse(struct device *parent, void *data,
 	struct device *child;
 	int error = 0;
 
-	if (!parent || !parent->p)
+	if (!parent->p)
 		return 0;
 
 	klist_iter_init(&parent->p->klist_children, &i);
@@ -4060,7 +4064,7 @@ struct device *device_find_child(struct device *parent, void *data,
 	struct klist_iter i;
 	struct device *child;
 
-	if (!parent || !parent->p)
+	if (!parent)
 		return NULL;
 
 	klist_iter_init(&parent->p->klist_children, &i);
@@ -4508,11 +4512,9 @@ EXPORT_SYMBOL_GPL(device_destroy);
  */
 int device_rename(struct device *dev, const char *new_name)
 {
-	struct subsys_private *sp = NULL;
 	struct kobject *kobj = &dev->kobj;
 	char *old_device_name = NULL;
 	int error;
-	bool is_link_renamed = false;
 
 	dev = get_device(dev);
 	if (!dev)
@@ -4527,7 +4529,7 @@ int device_rename(struct device *dev, const char *new_name)
 	}
 
 	if (dev->class) {
-		sp = class_to_subsys(dev->class);
+		struct subsys_private *sp = class_to_subsys(dev->class);
 
 		if (!sp) {
 			error = -EINVAL;
@@ -4536,19 +4538,16 @@ int device_rename(struct device *dev, const char *new_name)
 
 		error = sysfs_rename_link_ns(&sp->subsys.kobj, kobj, old_device_name,
 					     new_name, kobject_namespace(kobj));
+		subsys_put(sp);
 		if (error)
 			goto out;
-
-		is_link_renamed = true;
 	}
 
 	error = kobject_rename(kobj, new_name);
-out:
-	if (error && is_link_renamed)
-		sysfs_rename_link_ns(&sp->subsys.kobj, kobj, new_name,
-				     old_device_name, kobject_namespace(kobj));
-	subsys_put(sp);
+	if (error)
+		goto out;
 
+out:
 	put_device(dev);
 
 	kfree(old_device_name);
@@ -4870,7 +4869,7 @@ set_dev_info(const struct device *dev, struct dev_printk_info *dev_info)
 	else
 		return;
 
-	strscpy(dev_info->subsystem, subsys);
+	strscpy(dev_info->subsystem, subsys, sizeof(dev_info->subsystem));
 
 	/*
 	 * Add device identifier DEVICE=:
@@ -5022,22 +5021,11 @@ int dev_err_probe(const struct device *dev, int err, const char *fmt, ...)
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	switch (err) {
-	case -EPROBE_DEFER:
+	if (err != -EPROBE_DEFER) {
+		dev_err(dev, "error %pe: %pV", ERR_PTR(err), &vaf);
+	} else {
 		device_set_deferred_probe_reason(dev, &vaf);
 		dev_dbg(dev, "error %pe: %pV", ERR_PTR(err), &vaf);
-		break;
-
-	case -ENOMEM:
-		/*
-		 * We don't print anything on -ENOMEM, there is already enough
-		 * output.
-		 */
-		break;
-
-	default:
-		dev_err(dev, "error %pe: %pV", ERR_PTR(err), &vaf);
-		break;
 	}
 
 	va_end(args);

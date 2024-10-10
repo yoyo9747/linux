@@ -15,20 +15,8 @@
 #include "thermal_netlink.h"
 #include "thermal_debugfs.h"
 
-struct thermal_attr {
-	struct device_attribute attr;
-	char name[THERMAL_NAME_LENGTH];
-};
-
-struct thermal_trip_attrs {
-	struct thermal_attr type;
-	struct thermal_attr temp;
-	struct thermal_attr hyst;
-};
-
 struct thermal_trip_desc {
 	struct thermal_trip trip;
-	struct thermal_trip_attrs trip_attrs;
 	struct list_head notify_list_node;
 	int notify_temp;
 	int threshold;
@@ -68,6 +56,9 @@ struct thermal_governor {
  * @device:	&struct device for this thermal zone
  * @removal:	removal completion
  * @resume:	resume completion
+ * @trip_temp_attrs:	attributes for trip points for sysfs: trip temperature
+ * @trip_type_attrs:	attributes for trip points for sysfs: trip type
+ * @trip_hyst_attrs:	attributes for trip points for sysfs: trip hysteresis
  * @mode:		current mode of this thermal zone
  * @devdata:	private pointer for device private data
  * @num_trips:	number of trip points the thermal zone supports
@@ -76,8 +67,6 @@ struct thermal_governor {
  * @polling_delay_jiffies: number of jiffies to wait between polls when
  *			checking whether trip points have been crossed (0 for
  *			interrupt driven systems)
- * @recheck_delay_jiffies: delay after a failed attempt to determine the zone
- * 			temperature before trying again
  * @temperature:	current temperature.  This is only for core code,
  *			drivers should use thermal_zone_get_temp() to get the
  *			current temperature
@@ -111,12 +100,14 @@ struct thermal_zone_device {
 	struct completion removal;
 	struct completion resume;
 	struct attribute_group trips_attribute_group;
+	struct thermal_attr *trip_temp_attrs;
+	struct thermal_attr *trip_type_attrs;
+	struct thermal_attr *trip_hyst_attrs;
 	enum thermal_device_mode mode;
 	void *devdata;
 	int num_trips;
 	unsigned long passive_delay_jiffies;
 	unsigned long polling_delay_jiffies;
-	unsigned long recheck_delay_jiffies;
 	int temperature;
 	int last_temperature;
 	int emul_temperature;
@@ -142,15 +133,11 @@ struct thermal_zone_device {
 	struct thermal_trip_desc trips[] __counted_by(num_trips);
 };
 
-/* Initial thermal zone temperature. */
-#define THERMAL_TEMP_INIT	INT_MIN
-
 /*
- * Default and maximum delay after a failed thermal zone temperature check
- * before attempting to check it again (in jiffies).
+ * Default delay after a failing thermal zone temperature check before
+ * attempting to check it again.
  */
-#define THERMAL_RECHECK_DELAY		msecs_to_jiffies(250)
-#define THERMAL_MAX_RECHECK_DELAY	(120 * HZ)
+#define THERMAL_RECHECK_DELAY_MS	250
 
 /* Default Thermal Governor */
 #if defined(CONFIG_THERMAL_DEFAULT_GOV_STEP_WISE)
@@ -194,6 +181,11 @@ int for_each_thermal_governor(int (*cb)(struct thermal_governor *, void *),
 
 struct thermal_zone_device *thermal_zone_get_by_id(int id);
 
+struct thermal_attr {
+	struct device_attribute attr;
+	char name[THERMAL_NAME_LENGTH];
+};
+
 static inline bool cdev_is_power_actor(struct thermal_cooling_device *cdev)
 {
 	return cdev->ops->get_requested_power && cdev->ops->state2power &&
@@ -205,6 +197,11 @@ void __thermal_cdev_update(struct thermal_cooling_device *cdev);
 
 int get_tz_trend(struct thermal_zone_device *tz, const struct thermal_trip *trip);
 
+struct thermal_instance *
+get_thermal_instance(struct thermal_zone_device *tz,
+		     struct thermal_cooling_device *cdev,
+		     int trip);
+
 /*
  * This structure is used to describe the behavior of
  * a certain cooling device on a certain trip point
@@ -213,6 +210,7 @@ int get_tz_trend(struct thermal_zone_device *tz, const struct thermal_trip *trip
 struct thermal_instance {
 	int id;
 	char name[THERMAL_NAME_LENGTH];
+	struct thermal_zone_device *tz;
 	struct thermal_cooling_device *cdev;
 	const struct thermal_trip *trip;
 	bool initialized;
@@ -252,16 +250,14 @@ void thermal_governor_update_tz(struct thermal_zone_device *tz,
 #define trip_to_trip_desc(__trip)	\
 	container_of(__trip, struct thermal_trip_desc, trip)
 
-const char *thermal_trip_type_name(enum thermal_trip_type trip_type);
-
-void thermal_zone_set_trips(struct thermal_zone_device *tz, int low, int high);
+void __thermal_zone_set_trips(struct thermal_zone_device *tz);
 int thermal_zone_trip_id(const struct thermal_zone_device *tz,
 			 const struct thermal_trip *trip);
+void thermal_zone_trip_updated(struct thermal_zone_device *tz,
+			       const struct thermal_trip *trip);
 int __thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp);
 void thermal_zone_trip_down(struct thermal_zone_device *tz,
 			    const struct thermal_trip *trip);
-void thermal_zone_set_trip_hyst(struct thermal_zone_device *tz,
-				struct thermal_trip *trip, int hyst);
 
 /* sysfs I/F */
 int thermal_zone_create_device_groups(struct thermal_zone_device *tz);
@@ -283,5 +279,8 @@ static inline void
 thermal_cooling_device_stats_update(struct thermal_cooling_device *cdev,
 				    unsigned long new_state) {}
 #endif /* CONFIG_THERMAL_STATISTICS */
+
+/* device tree support */
+int thermal_zone_device_is_enabled(struct thermal_zone_device *tz);
 
 #endif /* __THERMAL_CORE_H__ */

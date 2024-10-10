@@ -1166,9 +1166,9 @@ EXPORT_SYMBOL_GPL(anybuss_recv_msg);
 /* ------------------------ bus functions ------------------------ */
 
 static int anybus_bus_match(struct device *dev,
-			    const struct device_driver *drv)
+			    struct device_driver *drv)
 {
-	const struct anybuss_client_driver *adrv =
+	struct anybuss_client_driver *adrv =
 		to_anybuss_client_driver(drv);
 	struct anybuss_client *adev =
 		to_anybuss_client(dev);

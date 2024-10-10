@@ -176,7 +176,7 @@ void __init emergency_stack_init(void)
 }
 #endif
 
-#ifdef CONFIG_BOOKE
+#ifdef CONFIG_BOOKE_OR_40x
 void __init exc_lvl_early_init(void)
 {
 	unsigned int i, hw_cpu;

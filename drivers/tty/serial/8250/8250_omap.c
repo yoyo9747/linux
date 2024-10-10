@@ -27,6 +27,7 @@
 #include <linux/pm_wakeirq.h>
 #include <linux/dma-mapping.h>
 #include <linux/sys_soc.h>
+#include <linux/pm_domain.h>
 
 #include "8250.h"
 
@@ -118,6 +119,12 @@
 #define UART_OMAP_TO_L                 0x26
 #define UART_OMAP_TO_H                 0x27
 
+/*
+ * Copy of the genpd flags for the console.
+ * Only used if console suspend is disabled
+ */
+static unsigned int genpd_flags_console;
+
 struct omap8250_priv {
 	void __iomem *membase;
 	int line;
@@ -137,6 +144,7 @@ struct omap8250_priv {
 	atomic_t active;
 	bool is_suspending;
 	int wakeirq;
+	int wakeups_enabled;
 	u32 latency;
 	u32 calc_latency;
 	struct pm_qos_request pm_qos_request;
@@ -1522,10 +1530,7 @@ static int omap8250_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, priv);
 
-	device_set_wakeup_capable(&pdev->dev, true);
-	if (of_property_read_bool(np, "wakeup-source"))
-		device_set_wakeup_enable(&pdev->dev, true);
-
+	device_init_wakeup(&pdev->dev, true);
 	pm_runtime_enable(&pdev->dev);
 	pm_runtime_use_autosuspend(&pdev->dev);
 
@@ -1583,7 +1588,7 @@ static int omap8250_probe(struct platform_device *pdev)
 	ret = devm_request_irq(&pdev->dev, up.port.irq, omap8250_irq, 0,
 			       dev_name(&pdev->dev), priv);
 	if (ret < 0)
-		goto err;
+		return ret;
 
 	priv->wakeirq = irq_of_parse_and_map(np, 1);
 
@@ -1624,7 +1629,7 @@ static void omap8250_remove(struct platform_device *pdev)
 	flush_work(&priv->qos_work);
 	pm_runtime_disable(&pdev->dev);
 	cpu_latency_qos_remove_request(&priv->pm_qos_request);
-	device_set_wakeup_capable(&pdev->dev, false);
+	device_init_wakeup(&pdev->dev, false);
 }
 
 static int omap8250_prepare(struct device *dev)
@@ -1650,6 +1655,7 @@ static int omap8250_suspend(struct device *dev)
 {
 	struct omap8250_priv *priv = dev_get_drvdata(dev);
 	struct uart_8250_port *up = serial8250_get_port(priv->line);
+	struct generic_pm_domain *genpd = pd_to_genpd(dev->pm_domain);
 	int err = 0;
 
 	serial8250_suspend_port(priv->line);
@@ -1660,8 +1666,19 @@ static int omap8250_suspend(struct device *dev)
 	if (!device_may_wakeup(dev))
 		priv->wer = 0;
 	serial_out(up, UART_OMAP_WER, priv->wer);
-	if (uart_console(&up->port) && console_suspend_enabled)
-		err = pm_runtime_force_suspend(dev);
+	if (uart_console(&up->port)) {
+		if (console_suspend_enabled)
+			err = pm_runtime_force_suspend(dev);
+		else {
+			/*
+			 * The pd shall not be powered-off (no console suspend).
+			 * Make copy of genpd flags before to set it always on.
+			 * The original value is restored during the resume.
+			 */
+			genpd_flags_console = genpd->flags;
+			genpd->flags |= GENPD_FLAG_ALWAYS_ON;
+		}
+	}
 	flush_work(&priv->qos_work);
 
 	return err;
@@ -1671,12 +1688,16 @@ static int omap8250_resume(struct device *dev)
 {
 	struct omap8250_priv *priv = dev_get_drvdata(dev);
 	struct uart_8250_port *up = serial8250_get_port(priv->line);
+	struct generic_pm_domain *genpd = pd_to_genpd(dev->pm_domain);
 	int err;
 
 	if (uart_console(&up->port) && console_suspend_enabled) {
-		err = pm_runtime_force_resume(dev);
-		if (err)
-			return err;
+		if (console_suspend_enabled) {
+			err = pm_runtime_force_resume(dev);
+			if (err)
+				return err;
+		} else
+			genpd->flags = genpd_flags_console;
 	}
 
 	serial8250_resume_port(priv->line);

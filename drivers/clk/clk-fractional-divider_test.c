@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Kunit tests for clk fractional divider
+ * Kunit test for clock fractional divider
  */
 #include <linux/clk-provider.h>
 #include <kunit/test.h>
@@ -144,5 +144,4 @@ static struct kunit_suite clk_fd_approximation_suite = {
 kunit_test_suites(
 	&clk_fd_approximation_suite
 );
-MODULE_DESCRIPTION("Kunit tests for clk fractional divider");
 MODULE_LICENSE("GPL");

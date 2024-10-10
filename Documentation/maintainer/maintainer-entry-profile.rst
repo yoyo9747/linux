@@ -109,4 +109,3 @@ to do something different in the near future.
    ../driver-api/vfio-pci-device-specific-driver-acceptance
    ../nvme/feature-and-quirk-policy
    ../filesystems/xfs/xfs-maintainer-entry-profile
-   ../mm/damon/maintainer-profile

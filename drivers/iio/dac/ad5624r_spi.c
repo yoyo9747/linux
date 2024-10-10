@@ -18,7 +18,7 @@
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "ad5624r.h"
 

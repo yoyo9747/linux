@@ -1550,7 +1550,7 @@ fail:
 	return retval;
 }
 
-static void adm8211_stop(struct ieee80211_hw *dev, bool suspend)
+static void adm8211_stop(struct ieee80211_hw *dev)
 {
 	struct adm8211_priv *priv = dev->priv;
 

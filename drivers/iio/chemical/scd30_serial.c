@@ -15,7 +15,7 @@
 #include <linux/serdev.h>
 #include <linux/string.h>
 #include <linux/types.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "scd30.h"
 

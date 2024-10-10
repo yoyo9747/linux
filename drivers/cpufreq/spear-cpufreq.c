@@ -171,9 +171,10 @@ static struct cpufreq_driver spear_cpufreq_driver = {
 static int spear_cpufreq_probe(struct platform_device *pdev)
 {
 	struct device_node *np;
+	const struct property *prop;
 	struct cpufreq_frequency_table *freq_tbl;
-	u32 val;
-	int cnt, ret, i = 0;
+	const __be32 *val;
+	int cnt, i, ret;
 
 	np = of_cpu_device_node_get(0);
 	if (!np) {
@@ -185,12 +186,15 @@ static int spear_cpufreq_probe(struct platform_device *pdev)
 				&spear_cpufreq.transition_latency))
 		spear_cpufreq.transition_latency = CPUFREQ_ETERNAL;
 
-	cnt = of_property_count_u32_elems(np, "cpufreq_tbl");
-	if (cnt <= 0) {
+	prop = of_find_property(np, "cpufreq_tbl", NULL);
+	if (!prop || !prop->value) {
 		pr_err("Invalid cpufreq_tbl\n");
 		ret = -ENODEV;
 		goto out_put_node;
 	}
+
+	cnt = prop->length / sizeof(u32);
+	val = prop->value;
 
 	freq_tbl = kcalloc(cnt + 1, sizeof(*freq_tbl), GFP_KERNEL);
 	if (!freq_tbl) {
@@ -198,10 +202,10 @@ static int spear_cpufreq_probe(struct platform_device *pdev)
 		goto out_put_node;
 	}
 
-	of_property_for_each_u32(np, "cpufreq_tbl", val)
-		freq_tbl[i++].frequency = val;
+	for (i = 0; i < cnt; i++)
+		freq_tbl[i].frequency = be32_to_cpup(val++);
 
-	freq_tbl[cnt].frequency = CPUFREQ_TABLE_END;
+	freq_tbl[i].frequency = CPUFREQ_TABLE_END;
 
 	spear_cpufreq.freq_tbl = freq_tbl;
 

@@ -16,7 +16,7 @@
 /*
  * General size of kernel stacks
  */
-#if defined(CONFIG_KASAN) || defined(CONFIG_KMSAN)
+#ifdef CONFIG_KASAN
 #define THREAD_SIZE_ORDER 4
 #else
 #define THREAD_SIZE_ORDER 2
@@ -40,7 +40,6 @@ struct thread_info {
 	unsigned long		flags;		/* low level flags */
 	unsigned long		syscall_work;	/* SYSCALL_WORK_ flags */
 	unsigned int		cpu;		/* current CPU */
-	unsigned char		sie;		/* running in SIE context */
 };
 
 /*

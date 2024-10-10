@@ -18,7 +18,7 @@
 #include <sound/pcm.h>
 #include <sound/memalloc.h>
 #include <sound/hda_verbs.h>
-#include <drm/intel/i915_component.h>
+#include <drm/i915_component.h>
 
 /* codec node id */
 typedef u16 hda_nid_t;
@@ -590,7 +590,7 @@ void snd_hdac_stream_sync_trigger(struct hdac_stream *azx_dev, bool set,
 void snd_hdac_stream_sync(struct hdac_stream *azx_dev, bool start,
 			  unsigned int streams);
 void snd_hdac_stream_timecounter_init(struct hdac_stream *azx_dev,
-				      unsigned int streams, bool start);
+				      unsigned int streams);
 int snd_hdac_get_stream_stripe_ctl(struct hdac_bus *bus,
 				struct snd_pcm_substream *substream);
 

@@ -175,8 +175,7 @@ lpfc_dev_loss_tmo_callbk(struct fc_rport *rport)
 			 ndlp->nlp_state, ndlp->fc4_xpt_flags);
 
 	/* Don't schedule a worker thread event if the vport is going down. */
-	if (test_bit(FC_UNLOADING, &vport->load_flag) ||
-	    !test_bit(HBA_SETUP, &phba->hba_flag)) {
+	if (test_bit(FC_UNLOADING, &vport->load_flag)) {
 		spin_lock_irqsave(&ndlp->lock, iflags);
 		ndlp->rport = NULL;
 
@@ -213,11 +212,6 @@ lpfc_dev_loss_tmo_callbk(struct fc_rport *rport)
 	}
 
 	if (ndlp->nlp_state == NLP_STE_MAPPED_NODE)
-		return;
-
-	/* check for recovered fabric node */
-	if (ndlp->nlp_state == NLP_STE_UNMAPPED_NODE &&
-	    ndlp->nlp_DID == Fabric_DID)
 		return;
 
 	if (rport->port_name != wwn_to_u64(ndlp->nlp_portname.u.wwn))
@@ -527,9 +521,6 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 		 * the following lpfc_nlp_put is necessary after fabric node is
 		 * recovered.
 		 */
-		spin_lock_irqsave(&ndlp->lock, iflags);
-		ndlp->nlp_flag &= ~NLP_IN_DEV_LOSS;
-		spin_unlock_irqrestore(&ndlp->lock, iflags);
 		if (recovering) {
 			lpfc_printf_vlog(vport, KERN_INFO,
 					 LOG_DISCOVERY | LOG_NODE,
@@ -542,7 +533,6 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 			spin_lock_irqsave(&ndlp->lock, iflags);
 			ndlp->save_flags |= NLP_IN_RECOV_POST_DEV_LOSS;
 			spin_unlock_irqrestore(&ndlp->lock, iflags);
-			return fcf_inuse;
 		} else if (ndlp->nlp_state == NLP_STE_UNMAPPED_NODE) {
 			/* Fabric node fully recovered before this dev_loss_tmo
 			 * queue work is processed.  Thus, ignore the
@@ -559,6 +549,9 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 			return fcf_inuse;
 		}
 
+		spin_lock_irqsave(&ndlp->lock, iflags);
+		ndlp->nlp_flag &= ~NLP_IN_DEV_LOSS;
+		spin_unlock_irqrestore(&ndlp->lock, iflags);
 		lpfc_nlp_put(ndlp);
 		return fcf_inuse;
 	}
@@ -1253,14 +1246,7 @@ lpfc_linkdown(struct lpfc_hba *phba)
 	lpfc_scsi_dev_block(phba);
 	offline = pci_channel_offline(phba->pcidev);
 
-	/* Decrement the held ndlp if there is a deferred flogi acc */
-	if (phba->defer_flogi_acc.flag) {
-		if (phba->defer_flogi_acc.ndlp) {
-			lpfc_nlp_put(phba->defer_flogi_acc.ndlp);
-			phba->defer_flogi_acc.ndlp = NULL;
-		}
-	}
-	phba->defer_flogi_acc.flag = false;
+	phba->defer_flogi_acc_flag = false;
 
 	/* Clear external loopback plug detected flag */
 	phba->link_flag &= ~LS_EXTERNAL_LOOPBACK;
@@ -1382,7 +1368,7 @@ lpfc_linkup_port(struct lpfc_vport *vport)
 		(vport != phba->pport))
 		return;
 
-	if (phba->defer_flogi_acc.flag) {
+	if (phba->defer_flogi_acc_flag) {
 		clear_bit(FC_ABORT_DISCOVERY, &vport->fc_flag);
 		clear_bit(FC_RSCN_MODE, &vport->fc_flag);
 		clear_bit(FC_NLP_MORE, &vport->fc_flag);
@@ -5739,7 +5725,7 @@ lpfc_setup_disc_node(struct lpfc_vport *vport, uint32_t did)
 				return ndlp;
 
 			if (ndlp->nlp_state > NLP_STE_UNUSED_NODE &&
-			    ndlp->nlp_state <= NLP_STE_PRLI_ISSUE) {
+			    ndlp->nlp_state < NLP_STE_PRLI_ISSUE) {
 				lpfc_disc_state_machine(vport, ndlp, NULL,
 							NLP_EVT_DEVICE_RECOVERY);
 			}

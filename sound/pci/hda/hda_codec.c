@@ -1496,7 +1496,7 @@ update_amp_value(struct hda_codec *codec, hda_nid_t nid,
 	/* ofs = 0: raw max value */
 	maxval = get_amp_max_value(codec, nid, dir, 0);
 	if (val > maxval)
-		return -EINVAL;
+		val = maxval;
 	return snd_hda_codec_amp_update(codec, nid, ch, dir, idx,
 					HDA_AMP_VOLMASK, val);
 }
@@ -1547,21 +1547,13 @@ int snd_hda_mixer_amp_volume_put(struct snd_kcontrol *kcontrol,
 	unsigned int ofs = get_amp_offset(kcontrol);
 	long *valp = ucontrol->value.integer.value;
 	int change = 0;
-	int err;
 
 	if (chs & 1) {
-		err = update_amp_value(codec, nid, 0, dir, idx, ofs, *valp);
-		if (err < 0)
-			return err;
-		change |= err;
+		change = update_amp_value(codec, nid, 0, dir, idx, ofs, *valp);
 		valp++;
 	}
-	if (chs & 2) {
-		err = update_amp_value(codec, nid, 1, dir, idx, ofs, *valp);
-		if (err < 0)
-			return err;
-		change |= err;
-	}
+	if (chs & 2)
+		change |= update_amp_value(codec, nid, 1, dir, idx, ofs, *valp);
 	return change;
 }
 EXPORT_SYMBOL_GPL(snd_hda_mixer_amp_volume_put);
@@ -1734,9 +1726,9 @@ EXPORT_SYMBOL_GPL(snd_hda_ctl_add);
 /**
  * snd_hda_add_nid - Assign a NID to a control element
  * @codec: HD-audio codec
+ * @nid: corresponding NID (optional)
  * @kctl: the control element to assign
  * @index: index to kctl
- * @nid: corresponding NID (optional)
  *
  * Add the given control element to an array inside the codec instance.
  * This function is used when #snd_hda_ctl_add cannot be used for 1:1
@@ -2157,20 +2149,15 @@ int snd_hda_mixer_amp_switch_put(struct snd_kcontrol *kcontrol,
 	int change = 0;
 
 	if (chs & 1) {
-		if (*valp < 0 || *valp > 1)
-			return -EINVAL;
 		change = snd_hda_codec_amp_update(codec, nid, 0, dir, idx,
 						  HDA_AMP_MUTE,
 						  *valp ? 0 : HDA_AMP_MUTE);
 		valp++;
 	}
-	if (chs & 2) {
-		if (*valp < 0 || *valp > 1)
-			return -EINVAL;
+	if (chs & 2)
 		change |= snd_hda_codec_amp_update(codec, nid, 1, dir, idx,
 						   HDA_AMP_MUTE,
 						   *valp ? 0 : HDA_AMP_MUTE);
-	}
 	hda_call_check_power_status(codec, nid);
 	return change;
 }

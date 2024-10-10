@@ -19,7 +19,7 @@
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <scsi/scsi_proto.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <target/target_core_base.h>
 #include <target/target_core_backend.h>

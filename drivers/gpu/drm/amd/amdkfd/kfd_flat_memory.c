@@ -380,8 +380,7 @@ int kfd_init_apertures(struct kfd_process *process)
 
 		pdd = kfd_create_process_device_data(dev, process);
 		if (!pdd) {
-			dev_err(dev->adev->dev,
-				"Failed to create process device data\n");
+			pr_err("Failed to create process device data\n");
 			return -ENOMEM;
 		}
 		/*

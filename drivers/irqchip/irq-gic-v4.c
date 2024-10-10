@@ -97,7 +97,7 @@ bool gic_cpuif_has_vsgi(void)
 
 	fld = cpuid_feature_extract_unsigned_field(reg, ID_AA64PFR0_EL1_GIC_SHIFT);
 
-	return fld >= ID_AA64PFR0_EL1_GIC_V4P1;
+	return fld >= 0x3;
 }
 #else
 bool gic_cpuif_has_vsgi(void)

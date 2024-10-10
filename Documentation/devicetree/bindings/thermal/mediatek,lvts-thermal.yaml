@@ -99,6 +99,7 @@ required:
   - resets
   - nvmem-cells
   - nvmem-cell-names
+  - "#thermal-sensor-cells"
 
 additionalProperties: false
 

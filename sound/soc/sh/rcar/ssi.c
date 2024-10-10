@@ -706,7 +706,7 @@ rsnd_ssi_interrupt_out:
 	spin_unlock(&priv->lock);
 
 	if (elapsed)
-		snd_pcm_period_elapsed(io->substream);
+		rsnd_dai_period_elapsed(io);
 
 	if (stop)
 		snd_pcm_stop_xrun(io->substream);

@@ -439,8 +439,7 @@ def ProcessCommandOutputLines(cmd, per_cpu, fn, *x):
 	pat = re.compile(r"\s*\[[0-9]+\]")
 	p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 	while True:
-		line = p.stdout.readline()
-		if line:
+		if line := p.stdout.readline():
 			line = line.decode("utf-8")
 			if pat.match(line):
 				line = line.split()

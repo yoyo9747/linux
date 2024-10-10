@@ -61,7 +61,6 @@
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #endif
 
-#if defined(__i386__) || defined(__x86_64__) /* arch */
 /*
  * gcc cpuid.h provides __cpuid_count() since v4.4.
  * Clang/LLVM cpuid.h provides  __cpuid_count() since v3.4.0.
@@ -76,7 +75,6 @@
 			      : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
 			      : "0" (level), "2" (count))
 #endif
-#endif /* end arch */
 
 /* define kselftest exit codes */
 #define KSFT_PASS  0
@@ -170,7 +168,15 @@ static inline __printf(1, 2) void ksft_print_msg(const char *msg, ...)
 
 static inline void ksft_perror(const char *msg)
 {
+#ifndef NOLIBC
 	ksft_print_msg("%s: %s (%d)\n", msg, strerror(errno), errno);
+#else
+	/*
+	 * nolibc doesn't provide strerror() and it seems
+	 * inappropriate to add one, just print the errno.
+	 */
+	ksft_print_msg("%s: %d)\n", msg, errno);
+#endif
 }
 
 static inline __printf(1, 2) void ksft_test_result_pass(const char *msg, ...)
@@ -373,7 +379,15 @@ static inline __noreturn __printf(1, 2) void ksft_exit_fail_msg(const char *msg,
 
 static inline __noreturn void ksft_exit_fail_perror(const char *msg)
 {
+#ifndef NOLIBC
 	ksft_exit_fail_msg("%s: %s (%d)\n", msg, strerror(errno), errno);
+#else
+	/*
+	 * nolibc doesn't provide strerror() and it seems
+	 * inappropriate to add one, just print the errno.
+	 */
+	ksft_exit_fail_msg("%s: %d)\n", msg, errno);
+#endif
 }
 
 static inline __noreturn void ksft_exit_xfail(void)

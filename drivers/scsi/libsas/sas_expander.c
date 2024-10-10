@@ -11,7 +11,7 @@
 #include <linux/scatterlist.h>
 #include <linux/blkdev.h>
 #include <linux/slab.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "sas_internal.h"
 

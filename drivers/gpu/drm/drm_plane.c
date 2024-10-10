@@ -877,17 +877,8 @@ int drm_mode_getplane(struct drm_device *dev, void *data,
 	return 0;
 }
 
-/**
- * drm_plane_has_format - Check whether the plane supports this format and modifier combination
- * @plane: drm plane
- * @format: pixel format (DRM_FORMAT_*)
- * @modifier: data layout modifier
- *
- * Returns:
- * Whether the plane supports the specified format and modifier combination.
- */
-bool drm_plane_has_format(struct drm_plane *plane,
-			  u32 format, u64 modifier)
+int drm_plane_check_pixel_format(struct drm_plane *plane,
+				 u32 format, u64 modifier)
 {
 	unsigned int i;
 
@@ -896,26 +887,25 @@ bool drm_plane_has_format(struct drm_plane *plane,
 			break;
 	}
 	if (i == plane->format_count)
-		return false;
+		return -EINVAL;
 
 	if (plane->funcs->format_mod_supported) {
 		if (!plane->funcs->format_mod_supported(plane, format, modifier))
-			return false;
+			return -EINVAL;
 	} else {
 		if (!plane->modifier_count)
-			return true;
+			return 0;
 
 		for (i = 0; i < plane->modifier_count; i++) {
 			if (modifier == plane->modifiers[i])
 				break;
 		}
 		if (i == plane->modifier_count)
-			return false;
+			return -EINVAL;
 	}
 
-	return true;
+	return 0;
 }
-EXPORT_SYMBOL(drm_plane_has_format);
 
 static int __setplane_check(struct drm_plane *plane,
 			    struct drm_crtc *crtc,
@@ -934,10 +924,12 @@ static int __setplane_check(struct drm_plane *plane,
 	}
 
 	/* Check whether this plane supports the fb pixel format. */
-	if (!drm_plane_has_format(plane, fb->format->format, fb->modifier)) {
+	ret = drm_plane_check_pixel_format(plane, fb->format->format,
+					   fb->modifier);
+	if (ret) {
 		DRM_DEBUG_KMS("Invalid pixel format %p4cc, modifier 0x%llx\n",
 			      &fb->format->format, fb->modifier);
-		return -EINVAL;
+		return ret;
 	}
 
 	/* Give drivers some help against integer overflows */
@@ -972,7 +964,7 @@ bool drm_any_plane_has_format(struct drm_device *dev,
 	struct drm_plane *plane;
 
 	drm_for_each_plane(plane, dev) {
-		if (drm_plane_has_format(plane, format, modifier))
+		if (drm_plane_check_pixel_format(plane, format, modifier) == 0)
 			return true;
 	}
 

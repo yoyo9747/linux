@@ -73,13 +73,13 @@ enum hugetlb_param {
 };
 
 static const struct fs_parameter_spec hugetlb_fs_parameters[] = {
-	fsparam_gid   ("gid",		Opt_gid),
+	fsparam_u32   ("gid",		Opt_gid),
 	fsparam_string("min_size",	Opt_min_size),
 	fsparam_u32oct("mode",		Opt_mode),
 	fsparam_string("nr_inodes",	Opt_nr_inodes),
 	fsparam_string("pagesize",	Opt_pagesize),
 	fsparam_string("size",		Opt_size),
-	fsparam_uid   ("uid",		Opt_uid),
+	fsparam_u32   ("uid",		Opt_uid),
 	{}
 };
 
@@ -222,13 +222,13 @@ generic_hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
 				  unsigned long flags)
 {
 	struct mm_struct *mm = current->mm;
-	struct vm_area_struct *vma, *prev;
+	struct vm_area_struct *vma;
 	struct hstate *h = hstate_file(file);
 	const unsigned long mmap_end = arch_get_mmap_end(addr, len, flags);
 
 	if (len & ~huge_page_mask(h))
 		return -EINVAL;
-	if (len > mmap_end - mmap_min_addr)
+	if (len > TASK_SIZE)
 		return -ENOMEM;
 
 	if (flags & MAP_FIXED) {
@@ -239,10 +239,9 @@ generic_hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
 
 	if (addr) {
 		addr = ALIGN(addr, huge_page_size(h));
-		vma = find_vma_prev(mm, addr, &prev);
-		if (mmap_end - len >= addr && addr >= mmap_min_addr &&
-		    (!vma || addr + len <= vm_start_gap(vma)) &&
-		    (!prev || addr >= vm_end_gap(prev)))
+		vma = find_vma(mm, addr);
+		if (mmap_end - len >= addr &&
+		    (!vma || addr + len <= vm_start_gap(vma)))
 			return addr;
 	}
 
@@ -388,14 +387,14 @@ static ssize_t hugetlbfs_read_iter(struct kiocb *iocb, struct iov_iter *to)
 static int hugetlbfs_write_begin(struct file *file,
 			struct address_space *mapping,
 			loff_t pos, unsigned len,
-			struct folio **foliop, void **fsdata)
+			struct page **pagep, void **fsdata)
 {
 	return -EINVAL;
 }
 
 static int hugetlbfs_write_end(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned copied,
-			struct folio *folio, void *fsdata)
+			struct page *page, void *fsdata)
 {
 	BUG();
 	return -EINVAL;
@@ -423,7 +422,7 @@ static bool hugetlb_vma_maps_page(struct vm_area_struct *vma,
 	if (!ptep)
 		return false;
 
-	pte = huge_ptep_get(vma->vm_mm, addr, ptep);
+	pte = huge_ptep_get(ptep);
 	if (huge_pte_none(pte) || !pte_present(pte))
 		return false;
 
@@ -893,7 +892,7 @@ static long hugetlbfs_fallocate(struct file *file, int mode, loff_t offset,
 			error = PTR_ERR(folio);
 			goto out;
 		}
-		folio_zero_user(folio, ALIGN_DOWN(addr, hpage_size));
+		clear_huge_page(&folio->page, addr, pages_per_huge_page(h));
 		__folio_mark_uptodate(folio);
 		error = hugetlb_add_to_page_cache(folio, mapping, index);
 		if (unlikely(error)) {
@@ -1129,7 +1128,10 @@ static int hugetlbfs_migrate_folio(struct address_space *mapping,
 		hugetlb_set_folio_subpool(src, NULL);
 	}
 
-	folio_migrate_flags(dst, src);
+	if (mode != MIGRATE_SYNC_NO_COPY)
+		folio_migrate_copy(dst, src);
+	else
+		folio_migrate_flags(dst, src);
 
 	return MIGRATEPAGE_SUCCESS;
 }
@@ -1374,11 +1376,15 @@ static int hugetlbfs_parse_param(struct fs_context *fc, struct fs_parameter *par
 
 	switch (opt) {
 	case Opt_uid:
-		ctx->uid = result.uid;
+		ctx->uid = make_kuid(current_user_ns(), result.uint_32);
+		if (!uid_valid(ctx->uid))
+			goto bad_val;
 		return 0;
 
 	case Opt_gid:
-		ctx->gid = result.gid;
+		ctx->gid = make_kgid(current_user_ns(), result.uint_32);
+		if (!gid_valid(ctx->gid))
+			goto bad_val;
 		return 0;
 
 	case Opt_mode:

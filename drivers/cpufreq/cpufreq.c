@@ -575,11 +575,30 @@ unsigned int cpufreq_policy_transition_delay_us(struct cpufreq_policy *policy)
 		return policy->transition_delay_us;
 
 	latency = policy->cpuinfo.transition_latency / NSEC_PER_USEC;
-	if (latency)
-		/* Give a 50% breathing room between updates */
-		return latency + (latency >> 1);
+	if (latency) {
+		unsigned int max_delay_us = 2 * MSEC_PER_SEC;
 
-	return USEC_PER_MSEC;
+		/*
+		 * If the platform already has high transition_latency, use it
+		 * as-is.
+		 */
+		if (latency > max_delay_us)
+			return latency;
+
+		/*
+		 * For platforms that can change the frequency very fast (< 2
+		 * us), the above formula gives a decent transition delay. But
+		 * for platforms where transition_latency is in milliseconds, it
+		 * ends up giving unrealistic values.
+		 *
+		 * Cap the default transition delay to 2 ms, which seems to be
+		 * a reasonable amount of time after which we should reevaluate
+		 * the frequency.
+		 */
+		return min(latency * LATENCY_MULTIPLIER, max_delay_us);
+	}
+
+	return LATENCY_MULTIPLIER;
 }
 EXPORT_SYMBOL_GPL(cpufreq_policy_transition_delay_us);
 
@@ -589,15 +608,16 @@ EXPORT_SYMBOL_GPL(cpufreq_policy_transition_delay_us);
 static ssize_t show_boost(struct kobject *kobj,
 			  struct kobj_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", cpufreq_driver->boost_enabled);
+	return sprintf(buf, "%d\n", cpufreq_driver->boost_enabled);
 }
 
 static ssize_t store_boost(struct kobject *kobj, struct kobj_attribute *attr,
 			   const char *buf, size_t count)
 {
-	bool enable;
+	int ret, enable;
 
-	if (kstrtobool(buf, &enable))
+	ret = sscanf(buf, "%d", &enable);
+	if (ret != 1 || enable < 0 || enable > 1)
 		return -EINVAL;
 
 	if (cpufreq_boost_trigger_state(enable)) {
@@ -621,10 +641,10 @@ static ssize_t show_local_boost(struct cpufreq_policy *policy, char *buf)
 static ssize_t store_local_boost(struct cpufreq_policy *policy,
 				 const char *buf, size_t count)
 {
-	int ret;
-	bool enable;
+	int ret, enable;
 
-	if (kstrtobool(buf, &enable))
+	ret = kstrtoint(buf, 10, &enable);
+	if (ret || enable < 0 || enable > 1)
 		return -EINVAL;
 
 	if (!cpufreq_driver->boost_enabled)
@@ -719,7 +739,7 @@ static struct cpufreq_governor *cpufreq_parse_governor(char *str_governor)
 static ssize_t show_##file_name				\
 (struct cpufreq_policy *policy, char *buf)		\
 {							\
-	return sysfs_emit(buf, "%u\n", policy->object);	\
+	return sprintf(buf, "%u\n", policy->object);	\
 }
 
 show_one(cpuinfo_min_freq, cpuinfo.min_freq);
@@ -740,11 +760,11 @@ static ssize_t show_scaling_cur_freq(struct cpufreq_policy *policy, char *buf)
 
 	freq = arch_freq_get_on_cpu(policy->cpu);
 	if (freq)
-		ret = sysfs_emit(buf, "%u\n", freq);
+		ret = sprintf(buf, "%u\n", freq);
 	else if (cpufreq_driver->setpolicy && cpufreq_driver->get)
-		ret = sysfs_emit(buf, "%u\n", cpufreq_driver->get(policy->cpu));
+		ret = sprintf(buf, "%u\n", cpufreq_driver->get(policy->cpu));
 	else
-		ret = sysfs_emit(buf, "%u\n", policy->cur);
+		ret = sprintf(buf, "%u\n", policy->cur);
 	return ret;
 }
 
@@ -778,9 +798,9 @@ static ssize_t show_cpuinfo_cur_freq(struct cpufreq_policy *policy,
 	unsigned int cur_freq = __cpufreq_get(policy);
 
 	if (cur_freq)
-		return sysfs_emit(buf, "%u\n", cur_freq);
+		return sprintf(buf, "%u\n", cur_freq);
 
-	return sysfs_emit(buf, "<unknown>\n");
+	return sprintf(buf, "<unknown>\n");
 }
 
 /*
@@ -789,11 +809,12 @@ static ssize_t show_cpuinfo_cur_freq(struct cpufreq_policy *policy,
 static ssize_t show_scaling_governor(struct cpufreq_policy *policy, char *buf)
 {
 	if (policy->policy == CPUFREQ_POLICY_POWERSAVE)
-		return sysfs_emit(buf, "powersave\n");
+		return sprintf(buf, "powersave\n");
 	else if (policy->policy == CPUFREQ_POLICY_PERFORMANCE)
-		return sysfs_emit(buf, "performance\n");
+		return sprintf(buf, "performance\n");
 	else if (policy->governor)
-		return sysfs_emit(buf, "%s\n", policy->governor->name);
+		return scnprintf(buf, CPUFREQ_NAME_PLEN, "%s\n",
+				policy->governor->name);
 	return -EINVAL;
 }
 
@@ -852,7 +873,7 @@ static ssize_t show_scaling_available_governors(struct cpufreq_policy *policy,
 	struct cpufreq_governor *t;
 
 	if (!has_target()) {
-		i += sysfs_emit(buf, "performance powersave");
+		i += sprintf(buf, "performance powersave");
 		goto out;
 	}
 
@@ -861,11 +882,11 @@ static ssize_t show_scaling_available_governors(struct cpufreq_policy *policy,
 		if (i >= (ssize_t) ((PAGE_SIZE / sizeof(char))
 		    - (CPUFREQ_NAME_LEN + 2)))
 			break;
-		i += sysfs_emit_at(buf, i, "%s ", t->name);
+		i += scnprintf(&buf[i], CPUFREQ_NAME_PLEN, "%s ", t->name);
 	}
 	mutex_unlock(&cpufreq_governor_mutex);
 out:
-	i += sysfs_emit_at(buf, i, "\n");
+	i += sprintf(&buf[i], "\n");
 	return i;
 }
 
@@ -875,7 +896,7 @@ ssize_t cpufreq_show_cpus(const struct cpumask *mask, char *buf)
 	unsigned int cpu;
 
 	for_each_cpu(cpu, mask) {
-		i += sysfs_emit_at(buf, i, "%u ", cpu);
+		i += scnprintf(&buf[i], (PAGE_SIZE - i - 2), "%u ", cpu);
 		if (i >= (PAGE_SIZE - 5))
 			break;
 	}
@@ -883,7 +904,7 @@ ssize_t cpufreq_show_cpus(const struct cpumask *mask, char *buf)
 	/* Remove the extra space at the end */
 	i--;
 
-	i += sysfs_emit_at(buf, i, "\n");
+	i += sprintf(&buf[i], "\n");
 	return i;
 }
 EXPORT_SYMBOL_GPL(cpufreq_show_cpus);
@@ -926,7 +947,7 @@ static ssize_t store_scaling_setspeed(struct cpufreq_policy *policy,
 static ssize_t show_scaling_setspeed(struct cpufreq_policy *policy, char *buf)
 {
 	if (!policy->governor || !policy->governor->show_setspeed)
-		return sysfs_emit(buf, "<unsupported>\n");
+		return sprintf(buf, "<unsupported>\n");
 
 	return policy->governor->show_setspeed(policy, buf);
 }
@@ -940,8 +961,8 @@ static ssize_t show_bios_limit(struct cpufreq_policy *policy, char *buf)
 	int ret;
 	ret = cpufreq_driver->bios_limit(policy->cpu, &limit);
 	if (!ret)
-		return sysfs_emit(buf, "%u\n", limit);
-	return sysfs_emit(buf, "%u\n", policy->cpuinfo.max_freq);
+		return sprintf(buf, "%u\n", limit);
+	return sprintf(buf, "%u\n", policy->cpuinfo.max_freq);
 }
 
 cpufreq_freq_attr_ro_perm(cpuinfo_cur_freq, 0400);
@@ -2855,7 +2876,7 @@ int cpufreq_enable_boost_support(void)
 }
 EXPORT_SYMBOL_GPL(cpufreq_enable_boost_support);
 
-bool cpufreq_boost_enabled(void)
+int cpufreq_boost_enabled(void)
 {
 	return cpufreq_driver->boost_enabled;
 }

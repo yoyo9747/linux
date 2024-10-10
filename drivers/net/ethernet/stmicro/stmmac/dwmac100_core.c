@@ -15,7 +15,7 @@
 *******************************************************************************/
 
 #include <linux/crc32.h>
-#include <linux/io.h>
+#include <asm/io.h>
 #include "stmmac.h"
 #include "dwmac100.h"
 

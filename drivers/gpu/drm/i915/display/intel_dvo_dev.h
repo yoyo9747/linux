@@ -38,7 +38,7 @@ struct intel_dvo_device {
 	enum port port;
 	/* GPIO register used for i2c bus to control this device */
 	u32 gpio;
-	int target_addr;
+	int slave_addr;
 
 	const struct intel_dvo_dev_ops *dev_ops;
 	void *dev_priv;

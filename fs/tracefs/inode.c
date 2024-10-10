@@ -42,7 +42,7 @@ static struct inode *tracefs_alloc_inode(struct super_block *sb)
 	struct tracefs_inode *ti;
 	unsigned long flags;
 
-	ti = alloc_inode_sb(sb, tracefs_inode_cachep, GFP_KERNEL);
+	ti = kmem_cache_alloc(tracefs_inode_cachep, GFP_KERNEL);
 	if (!ti)
 		return NULL;
 
@@ -53,14 +53,15 @@ static struct inode *tracefs_alloc_inode(struct super_block *sb)
 	return &ti->vfs_inode;
 }
 
-static void tracefs_free_inode(struct inode *inode)
+static void tracefs_free_inode_rcu(struct rcu_head *rcu)
 {
-	struct tracefs_inode *ti = get_tracefs(inode);
+	struct tracefs_inode *ti;
 
+	ti = container_of(rcu, struct tracefs_inode, rcu);
 	kmem_cache_free(tracefs_inode_cachep, ti);
 }
 
-static void tracefs_destroy_inode(struct inode *inode)
+static void tracefs_free_inode(struct inode *inode)
 {
 	struct tracefs_inode *ti = get_tracefs(inode);
 	unsigned long flags;
@@ -68,6 +69,8 @@ static void tracefs_destroy_inode(struct inode *inode)
 	spin_lock_irqsave(&tracefs_inode_lock, flags);
 	list_del_rcu(&ti->list);
 	spin_unlock_irqrestore(&tracefs_inode_lock, flags);
+
+	call_rcu(&ti->rcu, tracefs_free_inode_rcu);
 }
 
 static ssize_t default_read_file(struct file *file, char __user *buf,
@@ -293,9 +296,9 @@ enum {
 };
 
 static const struct fs_parameter_spec tracefs_param_specs[] = {
-	fsparam_gid	("gid",		Opt_gid),
+	fsparam_u32	("gid",		Opt_gid),
 	fsparam_u32oct	("mode",	Opt_mode),
-	fsparam_uid	("uid",		Opt_uid),
+	fsparam_u32	("uid",		Opt_uid),
 	{}
 };
 
@@ -303,6 +306,8 @@ static int tracefs_parse_param(struct fs_context *fc, struct fs_parameter *param
 {
 	struct tracefs_fs_info *opts = fc->s_fs_info;
 	struct fs_parse_result result;
+	kuid_t uid;
+	kgid_t gid;
 	int opt;
 
 	opt = fs_parse(fc, tracefs_param_specs, param, &result);
@@ -311,10 +316,16 @@ static int tracefs_parse_param(struct fs_context *fc, struct fs_parameter *param
 
 	switch (opt) {
 	case Opt_uid:
-		opts->uid = result.uid;
+		uid = make_kuid(current_user_ns(), result.uint_32);
+		if (!uid_valid(uid))
+			return invalf(fc, "Unknown uid");
+		opts->uid = uid;
 		break;
 	case Opt_gid:
-		opts->gid = result.gid;
+		gid = make_kgid(current_user_ns(), result.uint_32);
+		if (!gid_valid(gid))
+			return invalf(fc, "Unknown gid");
+		opts->gid = gid;
 		break;
 	case Opt_mode:
 		opts->mode = result.uint_32 & S_IALLUGO;
@@ -434,7 +445,6 @@ static int tracefs_drop_inode(struct inode *inode)
 static const struct super_operations tracefs_super_operations = {
 	.alloc_inode    = tracefs_alloc_inode,
 	.free_inode     = tracefs_free_inode,
-	.destroy_inode  = tracefs_destroy_inode,
 	.drop_inode     = tracefs_drop_inode,
 	.statfs		= simple_statfs,
 	.show_options	= tracefs_show_options,

@@ -130,5 +130,4 @@ static struct platform_driver mmc_pwrseq_sd8787_driver = {
 };
 
 module_platform_driver(mmc_pwrseq_sd8787_driver);
-MODULE_DESCRIPTION("Power sequence support for Marvell SD8787 BT + Wifi chip");
 MODULE_LICENSE("GPL v2");

@@ -155,10 +155,9 @@ static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 
 	return ret;
 }
 
-enum bch_write_flags;
 int bch2_bucket_alloc_set_trans(struct btree_trans *, struct open_buckets *,
 		      struct dev_stripe_state *, struct bch_devs_mask *,
-		      unsigned, unsigned *, bool *, enum bch_write_flags,
+		      unsigned, unsigned *, bool *, unsigned,
 		      enum bch_data_type, enum bch_watermark,
 		      struct closure *);
 
@@ -168,7 +167,7 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *,
 				   struct bch_devs_list *,
 				   unsigned, unsigned,
 				   enum bch_watermark,
-				   enum bch_write_flags,
+				   unsigned,
 				   struct closure *,
 				   struct write_point **);
 
@@ -223,8 +222,7 @@ static inline struct write_point_specifier writepoint_ptr(struct write_point *wp
 
 void bch2_fs_allocator_foreground_init(struct bch_fs *);
 
-void bch2_open_bucket_to_text(struct printbuf *, struct bch_fs *, struct open_bucket *);
-void bch2_open_buckets_to_text(struct printbuf *, struct bch_fs *, struct bch_dev *);
+void bch2_open_buckets_to_text(struct printbuf *, struct bch_fs *);
 void bch2_open_buckets_partial_to_text(struct printbuf *, struct bch_fs *);
 
 void bch2_write_points_to_text(struct printbuf *, struct bch_fs *);
@@ -232,11 +230,6 @@ void bch2_write_points_to_text(struct printbuf *, struct bch_fs *);
 void bch2_fs_alloc_debug_to_text(struct printbuf *, struct bch_fs *);
 void bch2_dev_alloc_debug_to_text(struct printbuf *, struct bch_dev *);
 
-void __bch2_wait_on_allocator(struct bch_fs *, struct closure *);
-static inline void bch2_wait_on_allocator(struct bch_fs *c, struct closure *cl)
-{
-	if (cl->closure_get_happened)
-		__bch2_wait_on_allocator(c, cl);
-}
+void bch2_print_allocator_stuck(struct bch_fs *);
 
 #endif /* _BCACHEFS_ALLOC_FOREGROUND_H */

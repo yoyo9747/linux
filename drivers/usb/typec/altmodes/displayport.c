@@ -746,7 +746,7 @@ int dp_altmode_probe(struct typec_altmode *alt)
 	dp->alt = alt;
 
 	alt->desc = "DisplayPort";
-	typec_altmode_set_ops(alt, &dp_altmode_ops);
+	alt->ops = &dp_altmode_ops;
 
 	if (plug) {
 		plug->desc = "Displayport";

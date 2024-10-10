@@ -1540,5 +1540,4 @@ static void __exit exit_ufs_fs(void)
 
 module_init(init_ufs_fs)
 module_exit(exit_ufs_fs)
-MODULE_DESCRIPTION("UFS Filesystem");
 MODULE_LICENSE("GPL");

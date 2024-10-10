@@ -14,13 +14,13 @@
 #include "mpi-internal.h"
 #include "longlong.h"
 
-int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den);
+void mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den);
+void mpi_fdiv_qr(MPI quot, MPI rem, MPI dividend, MPI divisor);
 
-int mpi_fdiv_r(MPI rem, MPI dividend, MPI divisor)
+void mpi_fdiv_r(MPI rem, MPI dividend, MPI divisor)
 {
 	int divisor_sign = divisor->sign;
 	MPI temp_divisor = NULL;
-	int err;
 
 	/* We need the original value of the divisor after the remainder has been
 	 * preliminary calculated.	We have to copy it to temporary space if it's
@@ -28,22 +28,44 @@ int mpi_fdiv_r(MPI rem, MPI dividend, MPI divisor)
 	 */
 	if (rem == divisor) {
 		temp_divisor = mpi_copy(divisor);
-		if (!temp_divisor)
-			return -ENOMEM;
 		divisor = temp_divisor;
 	}
 
-	err = mpi_tdiv_r(rem, dividend, divisor);
-	if (err)
-		goto free_temp_divisor;
+	mpi_tdiv_r(rem, dividend, divisor);
 
 	if (((divisor_sign?1:0) ^ (dividend->sign?1:0)) && rem->nlimbs)
-		err = mpi_add(rem, rem, divisor);
+		mpi_add(rem, rem, divisor);
 
-free_temp_divisor:
-	mpi_free(temp_divisor);
+	if (temp_divisor)
+		mpi_free(temp_divisor);
+}
 
-	return err;
+void mpi_fdiv_q(MPI quot, MPI dividend, MPI divisor)
+{
+	MPI tmp = mpi_alloc(mpi_get_nlimbs(quot));
+	mpi_fdiv_qr(quot, tmp, dividend, divisor);
+	mpi_free(tmp);
+}
+
+void mpi_fdiv_qr(MPI quot, MPI rem, MPI dividend, MPI divisor)
+{
+	int divisor_sign = divisor->sign;
+	MPI temp_divisor = NULL;
+
+	if (quot == divisor || rem == divisor) {
+		temp_divisor = mpi_copy(divisor);
+		divisor = temp_divisor;
+	}
+
+	mpi_tdiv_qr(quot, rem, dividend, divisor);
+
+	if ((divisor_sign ^ dividend->sign) && rem->nlimbs) {
+		mpi_sub_ui(quot, quot, 1);
+		mpi_add(rem, rem, divisor);
+	}
+
+	if (temp_divisor)
+		mpi_free(temp_divisor);
 }
 
 /* If den == quot, den needs temporary storage.
@@ -53,12 +75,12 @@ free_temp_divisor:
  *   i.e no extra storage should be allocated.
  */
 
-int mpi_tdiv_r(MPI rem, MPI num, MPI den)
+void mpi_tdiv_r(MPI rem, MPI num, MPI den)
 {
-	return mpi_tdiv_qr(NULL, rem, num, den);
+	mpi_tdiv_qr(NULL, rem, num, den);
 }
 
-int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
+void mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
 {
 	mpi_ptr_t np, dp;
 	mpi_ptr_t qp, rp;
@@ -71,16 +93,13 @@ int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
 	mpi_limb_t q_limb;
 	mpi_ptr_t marker[5];
 	int markidx = 0;
-	int err;
 
 	/* Ensure space is enough for quotient and remainder.
 	 * We need space for an extra limb in the remainder, because it's
 	 * up-shifted (normalized) below.
 	 */
 	rsize = nsize + 1;
-	err = mpi_resize(rem, rsize);
-	if (err)
-		return err;
+	mpi_resize(rem, rsize);
 
 	qsize = rsize - dsize;	  /* qsize cannot be bigger than this.	*/
 	if (qsize <= 0) {
@@ -96,14 +115,11 @@ int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
 			quot->nlimbs = 0;
 			quot->sign = 0;
 		}
-		return 0;
+		return;
 	}
 
-	if (quot) {
-		err = mpi_resize(quot, qsize);
-		if (err)
-			return err;
-	}
+	if (quot)
+		mpi_resize(quot, qsize);
 
 	/* Read pointers here, when reallocation is finished.  */
 	np = num->d;
@@ -125,10 +141,10 @@ int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
 		rsize = rlimb != 0?1:0;
 		rem->nlimbs = rsize;
 		rem->sign = sign_remainder;
-		return 0;
+		return;
 	}
 
-	err = -ENOMEM;
+
 	if (quot) {
 		qp = quot->d;
 		/* Make sure QP and NP point to different objects.  Otherwise the
@@ -136,8 +152,6 @@ int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
 		 */
 		if (qp == np) { /* Copy NP object to temporary space.  */
 			np = marker[markidx++] = mpi_alloc_limb_space(nsize);
-			if (!np)
-				goto out_free_marker;
 			MPN_COPY(np, qp, nsize);
 		}
 	} else /* Put quotient at top of remainder. */
@@ -158,8 +172,6 @@ int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
 		 * the original contents of the denominator.
 		 */
 		tp = marker[markidx++] = mpi_alloc_limb_space(dsize);
-		if (!tp)
-			goto out_free_marker;
 		mpihelp_lshift(tp, dp, dsize, normalization_steps);
 		dp = tp;
 
@@ -181,8 +193,6 @@ int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
 			mpi_ptr_t tp;
 
 			tp = marker[markidx++] = mpi_alloc_limb_space(dsize);
-			if (!tp)
-				goto out_free_marker;
 			MPN_COPY(tp, dp, dsize);
 			dp = tp;
 		}
@@ -217,14 +227,8 @@ int mpi_tdiv_qr(MPI quot, MPI rem, MPI num, MPI den)
 
 	rem->nlimbs = rsize;
 	rem->sign	= sign_remainder;
-
-	err = 0;
-
-out_free_marker:
 	while (markidx) {
 		markidx--;
 		mpi_free_limb_space(marker[markidx]);
 	}
-
-	return err;
 }

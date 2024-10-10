@@ -153,5 +153,4 @@ static struct kunit_suite cmdline_test_suite = {
 };
 kunit_test_suite(cmdline_test_suite);
 
-MODULE_DESCRIPTION("Test cases for API provided by cmdline.c");
 MODULE_LICENSE("GPL");

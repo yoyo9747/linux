@@ -32,7 +32,7 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_fbdev_dma.h>
+#include <drm/drm_fbdev_generic.h>
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
@@ -121,19 +121,19 @@ struct ili9341_config {
 	const struct drm_display_mode mode;
 	/* ca: TODO: need comments for this register */
 	u8 ca[ILI9341_CA_LEN];
-	/* power_b: Power control B (CFh) */
+	/* power_b: TODO: need comments for this register */
 	u8 power_b[ILI9341_POWER_B_LEN];
-	/* power_seq: Power on sequence control (EDh) */
+	/* power_seq: TODO: need comments for this register */
 	u8 power_seq[ILI9341_POWER_SEQ_LEN];
-	/* dtca: Driver timing control A (E8h) */
+	/* dtca: TODO: need comments for this register */
 	u8 dtca[ILI9341_DTCA_LEN];
-	/* dtcb: Driver timing control B (EAh) */
+	/* dtcb: TODO: need comments for this register */
 	u8 dtcb[ILI9341_DTCB_LEN];
-	/* power_a: Power control A (CBh) */
+	/* power_a: TODO: need comments for this register */
 	u8 power_a[ILI9341_POWER_A_LEN];
 	/* frc: Frame Rate Control (In Normal Mode/Full Colors) (B1h) */
 	u8 frc[ILI9341_FRC_LEN];
-	/* prc: Pump ratio control (F7h) */
+	/* prc: TODO: need comments for this register */
 	u8 prc;
 	/* dfc_1: B6h DISCTRL (Display Function Control) */
 	u8 dfc_1[ILI9341_DFC_1_LEN];
@@ -147,7 +147,7 @@ struct ili9341_config {
 	u8 vcom_2;
 	/* address_mode: Memory Access Control (36h) */
 	u8 address_mode;
-	/* g3amma_en: Enable 3G (F2h) */
+	/* g3amma_en: TODO: need comments for this register */
 	u8 g3amma_en;
 	/* rgb_interface: RGB Interface Signal Control (B0h) */
 	u8 rgb_interface;
@@ -651,7 +651,7 @@ static int ili9341_dbi_probe(struct spi_device *spi, struct gpio_desc *dc,
 
 	spi_set_drvdata(spi, drm);
 
-	drm_fbdev_dma_setup(drm, 0);
+	drm_fbdev_generic_setup(drm, 0);
 
 	return 0;
 }
@@ -723,8 +723,7 @@ static int ili9341_probe(struct spi_device *spi)
 
 	if (!strcmp(id->name, "sf-tc240t-9370-t"))
 		return ili9341_dpi_probe(spi, dc, reset);
-
-	if (!strcmp(id->name, "yx240qv29"))
+	else if (!strcmp(id->name, "yx240qv29"))
 		return ili9341_dbi_probe(spi, dc, reset);
 
 	return -ENODEV;

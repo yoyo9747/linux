@@ -485,9 +485,7 @@ int pciehp_set_raw_indicator_status(struct hotplug_slot *hotplug_slot,
 	struct pci_dev *pdev = ctrl_dev(ctrl);
 
 	pci_config_pm_runtime_get(pdev);
-
-	/* Attention and Power Indicator Control bits are supported */
-	pcie_write_cmd_nowait(ctrl, FIELD_PREP(PCI_EXP_SLTCTL_AIC | PCI_EXP_SLTCTL_PIC, status),
+	pcie_write_cmd_nowait(ctrl, FIELD_PREP(PCI_EXP_SLTCTL_AIC, status),
 			      PCI_EXP_SLTCTL_AIC | PCI_EXP_SLTCTL_PIC);
 	pci_config_pm_runtime_put(pdev);
 	return 0;
@@ -1056,11 +1054,6 @@ struct controller *pcie_init(struct pcie_device *dev)
 			pciehp_power_off_slot(ctrl);
 		}
 	}
-
-	pdev = pci_get_slot(subordinate, PCI_DEVFN(0, 0));
-	if (pdev)
-		ctrl->dsn = pci_get_dsn(pdev);
-	pci_dev_put(pdev);
 
 	return ctrl;
 }

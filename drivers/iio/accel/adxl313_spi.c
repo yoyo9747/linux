@@ -72,7 +72,13 @@ static int adxl313_spi_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	chip_data = spi_get_device_match_data(spi);
+	/*
+	 * Retrieves device specific data as a pointer to a
+	 * adxl313_chip_info structure
+	 */
+	chip_data = device_get_match_data(&spi->dev);
+	if (!chip_data)
+		chip_data = (const struct adxl313_chip_info *)spi_get_device_id(spi)->driver_data;
 
 	regmap = devm_regmap_init_spi(spi,
 				      &adxl31x_spi_regmap_config[chip_data->type]);

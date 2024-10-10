@@ -375,9 +375,9 @@ static int atmel_qspi_set_cfg(struct atmel_qspi *aq,
 	 * If the QSPI controller is set in regular SPI mode, set it in
 	 * Serial Memory Mode (SMM).
 	 */
-	if (!(aq->mr & QSPI_MR_SMM)) {
-		aq->mr |= QSPI_MR_SMM;
-		atmel_qspi_write(aq->mr, aq, QSPI_MR);
+	if (aq->mr != QSPI_MR_SMM) {
+		atmel_qspi_write(QSPI_MR_SMM, aq, QSPI_MR);
+		aq->mr = QSPI_MR_SMM;
 	}
 
 	/* Clear pending interrupts */
@@ -501,8 +501,7 @@ static int atmel_qspi_setup(struct spi_device *spi)
 	if (ret < 0)
 		return ret;
 
-	aq->scr &= ~QSPI_SCR_SCBR_MASK;
-	aq->scr |= QSPI_SCR_SCBR(scbr);
+	aq->scr = QSPI_SCR_SCBR(scbr);
 	atmel_qspi_write(aq->scr, aq, QSPI_SCR);
 
 	pm_runtime_mark_last_busy(ctrl->dev.parent);
@@ -535,7 +534,6 @@ static int atmel_qspi_set_cs_timing(struct spi_device *spi)
 	if (ret < 0)
 		return ret;
 
-	aq->scr &= ~QSPI_SCR_DLYBS_MASK;
 	aq->scr |= QSPI_SCR_DLYBS(cs_setup);
 	atmel_qspi_write(aq->scr, aq, QSPI_SCR);
 
@@ -551,8 +549,8 @@ static void atmel_qspi_init(struct atmel_qspi *aq)
 	atmel_qspi_write(QSPI_CR_SWRST, aq, QSPI_CR);
 
 	/* Set the QSPI controller by default in Serial Memory Mode */
-	aq->mr |= QSPI_MR_SMM;
-	atmel_qspi_write(aq->mr, aq, QSPI_MR);
+	atmel_qspi_write(QSPI_MR_SMM, aq, QSPI_MR);
+	aq->mr = QSPI_MR_SMM;
 
 	/* Enable the QSPI controller */
 	atmel_qspi_write(QSPI_CR_QSPIEN, aq, QSPI_CR);
@@ -603,17 +601,20 @@ static int atmel_qspi_probe(struct platform_device *pdev)
 	aq->pdev = pdev;
 
 	/* Map the registers */
-	aq->regs = devm_platform_ioremap_resource_byname(pdev, "qspi_base");
-	if (IS_ERR(aq->regs))
-		return dev_err_probe(&pdev->dev, PTR_ERR(aq->regs),
-				     "missing registers\n");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "qspi_base");
+	aq->regs = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(aq->regs)) {
+		dev_err(&pdev->dev, "missing registers\n");
+		return PTR_ERR(aq->regs);
+	}
 
 	/* Map the AHB memory */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "qspi_mmap");
 	aq->mem = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(aq->mem))
-		return dev_err_probe(&pdev->dev, PTR_ERR(aq->mem),
-				     "missing AHB memory\n");
+	if (IS_ERR(aq->mem)) {
+		dev_err(&pdev->dev, "missing AHB memory\n");
+		return PTR_ERR(aq->mem);
+	}
 
 	aq->mmap_size = resource_size(res);
 
@@ -622,15 +623,17 @@ static int atmel_qspi_probe(struct platform_device *pdev)
 	if (IS_ERR(aq->pclk))
 		aq->pclk = devm_clk_get(&pdev->dev, NULL);
 
-	if (IS_ERR(aq->pclk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(aq->pclk),
-				     "missing peripheral clock\n");
+	if (IS_ERR(aq->pclk)) {
+		dev_err(&pdev->dev, "missing peripheral clock\n");
+		return PTR_ERR(aq->pclk);
+	}
 
 	/* Enable the peripheral clock */
 	err = clk_prepare_enable(aq->pclk);
-	if (err)
-		return dev_err_probe(&pdev->dev, err,
-				     "failed to enable the peripheral clock\n");
+	if (err) {
+		dev_err(&pdev->dev, "failed to enable the peripheral clock\n");
+		return err;
+	}
 
 	aq->caps = of_device_get_match_data(&pdev->dev);
 	if (!aq->caps) {
@@ -723,7 +726,6 @@ static void atmel_qspi_remove(struct platform_device *pdev)
 	clk_unprepare(aq->pclk);
 
 	pm_runtime_disable(&pdev->dev);
-	pm_runtime_dont_use_autosuspend(&pdev->dev);
 	pm_runtime_put_noidle(&pdev->dev);
 }
 
@@ -754,15 +756,8 @@ static int __maybe_unused atmel_qspi_resume(struct device *dev)
 	struct atmel_qspi *aq = spi_controller_get_devdata(ctrl);
 	int ret;
 
-	ret = clk_prepare(aq->pclk);
-	if (ret)
-		return ret;
-
-	ret = clk_prepare(aq->qspick);
-	if (ret) {
-		clk_unprepare(aq->pclk);
-		return ret;
-	}
+	clk_prepare(aq->pclk);
+	clk_prepare(aq->qspick);
 
 	ret = pm_runtime_force_resume(dev);
 	if (ret < 0)

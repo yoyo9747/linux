@@ -275,8 +275,8 @@ static u32 tegra_bpmp_i2c_func(struct i2c_adapter *adapter)
 }
 
 static const struct i2c_algorithm tegra_bpmp_i2c_algo = {
-	.xfer = tegra_bpmp_i2c_xfer,
-	.xfer_atomic = tegra_bpmp_i2c_xfer_atomic,
+	.master_xfer = tegra_bpmp_i2c_xfer,
+	.master_xfer_atomic = tegra_bpmp_i2c_xfer_atomic,
 	.functionality = tegra_bpmp_i2c_func,
 };
 

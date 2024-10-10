@@ -15,19 +15,10 @@
 #define ARCH_FUNC_PREFIX "."
 #endif
 
-#ifdef CONFIG_KFENCE
-extern bool kfence_disabled;
-
-static inline void disable_kfence(void)
-{
-	kfence_disabled = true;
-}
-
 static inline bool arch_kfence_init_pool(void)
 {
-	return !kfence_disabled;
+	return true;
 }
-#endif
 
 #ifdef CONFIG_PPC64
 static inline bool kfence_protect_page(unsigned long addr, bool protect)

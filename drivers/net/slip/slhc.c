@@ -77,7 +77,7 @@
 #include <linux/timer.h>
 #include <linux/uaccess.h>
 #include <net/checksum.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 static unsigned char *encode(unsigned char *cp, unsigned short n);
 static long decode(unsigned char **cpp);

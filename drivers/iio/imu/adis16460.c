@@ -69,6 +69,8 @@ struct adis16460 {
 	struct adis adis;
 };
 
+#ifdef CONFIG_DEBUG_FS
+
 static int adis16460_show_serial_number(void *arg, u64 *val)
 {
 	struct adis16460 *adis16460 = arg;
@@ -123,13 +125,10 @@ static int adis16460_show_flash_count(void *arg, u64 *val)
 DEFINE_DEBUGFS_ATTRIBUTE(adis16460_flash_count_fops,
 		adis16460_show_flash_count, NULL, "%lld\n");
 
-static void adis16460_debugfs_init(struct iio_dev *indio_dev)
+static int adis16460_debugfs_init(struct iio_dev *indio_dev)
 {
 	struct adis16460 *adis16460 = iio_priv(indio_dev);
 	struct dentry *d = iio_get_debugfs_dentry(indio_dev);
-
-	if (!IS_ENABLED(CONFIG_DEBUG_FS))
-		return;
 
 	debugfs_create_file_unsafe("serial_number", 0400,
 			d, adis16460, &adis16460_serial_number_fops);
@@ -137,7 +136,18 @@ static void adis16460_debugfs_init(struct iio_dev *indio_dev)
 			d, adis16460, &adis16460_product_id_fops);
 	debugfs_create_file_unsafe("flash_count", 0400,
 			d, adis16460, &adis16460_flash_count_fops);
+
+	return 0;
 }
+
+#else
+
+static int adis16460_debugfs_init(struct iio_dev *indio_dev)
+{
+	return 0;
+}
+
+#endif
 
 static int adis16460_set_freq(struct iio_dev *indio_dev, int val, int val2)
 {

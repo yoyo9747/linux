@@ -36,7 +36,7 @@
 
 #include <asm/byteorder.h>
 #include <asm/irq.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "fotg210.h"
 

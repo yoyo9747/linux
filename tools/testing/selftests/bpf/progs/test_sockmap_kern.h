@@ -92,7 +92,7 @@ struct {
 	__uint(value_size, sizeof(int));
 } tls_sock_map SEC(".maps");
 
-SEC("sk_skb/stream_parser")
+SEC("sk_skb1")
 int bpf_prog1(struct __sk_buff *skb)
 {
 	int *f, two = 2;
@@ -104,7 +104,7 @@ int bpf_prog1(struct __sk_buff *skb)
 	return skb->len;
 }
 
-SEC("sk_skb/stream_verdict")
+SEC("sk_skb2")
 int bpf_prog2(struct __sk_buff *skb)
 {
 	__u32 lport = skb->local_port;
@@ -151,7 +151,7 @@ static inline void bpf_write_pass(struct __sk_buff *skb, int offset)
 		memcpy(c + offset, "PASS", 4);
 }
 
-SEC("sk_skb/stream_verdict")
+SEC("sk_skb3")
 int bpf_prog3(struct __sk_buff *skb)
 {
 	int err, *f, ret = SK_PASS;
@@ -177,6 +177,9 @@ int bpf_prog3(struct __sk_buff *skb)
 		return bpf_sk_redirect_hash(skb, &tls_sock_map, &ret, flags);
 #endif
 	}
+	f = bpf_map_lookup_elem(&sock_skb_opts, &one);
+	if (f && *f)
+		ret = SK_DROP;
 	err = bpf_skb_adjust_room(skb, 4, 0, 0);
 	if (err)
 		return SK_DROP;
@@ -230,7 +233,7 @@ int bpf_sockmap(struct bpf_sock_ops *skops)
 	return 0;
 }
 
-SEC("sk_msg")
+SEC("sk_msg1")
 int bpf_prog4(struct sk_msg_md *msg)
 {
 	int *bytes, zero = 0, one = 1, two = 2, three = 3, four = 4, five = 5;
@@ -260,7 +263,7 @@ int bpf_prog4(struct sk_msg_md *msg)
 	return SK_PASS;
 }
 
-SEC("sk_msg")
+SEC("sk_msg2")
 int bpf_prog6(struct sk_msg_md *msg)
 {
 	int zero = 0, one = 1, two = 2, three = 3, four = 4, five = 5, key = 0;
@@ -305,7 +308,7 @@ int bpf_prog6(struct sk_msg_md *msg)
 #endif
 }
 
-SEC("sk_msg")
+SEC("sk_msg3")
 int bpf_prog8(struct sk_msg_md *msg)
 {
 	void *data_end = (void *)(long) msg->data_end;
@@ -326,8 +329,7 @@ int bpf_prog8(struct sk_msg_md *msg)
 
 	return SK_PASS;
 }
-
-SEC("sk_msg")
+SEC("sk_msg4")
 int bpf_prog9(struct sk_msg_md *msg)
 {
 	void *data_end = (void *)(long) msg->data_end;
@@ -345,7 +347,7 @@ int bpf_prog9(struct sk_msg_md *msg)
 	return SK_PASS;
 }
 
-SEC("sk_msg")
+SEC("sk_msg5")
 int bpf_prog10(struct sk_msg_md *msg)
 {
 	int *bytes, *start, *end, *start_push, *end_push, *start_pop, *pop;

@@ -410,7 +410,7 @@ static int uniphier_pcie_ep_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	pci_epc_init_notify(priv->pci.ep.epc);
+	dw_pcie_ep_init_notify(&priv->pci.ep);
 
 	return 0;
 }

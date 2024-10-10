@@ -42,8 +42,7 @@ enum {
 	INTEL_TLV_SBE_TYPE,
 	INTEL_TLV_OTP_BDADDR,
 	INTEL_TLV_UNLOCKED_STATE,
-	INTEL_TLV_GIT_SHA1,
-	INTEL_TLV_FW_ID = 0x50
+	INTEL_TLV_GIT_SHA1
 };
 
 struct intel_tlv {
@@ -57,8 +56,6 @@ struct intel_tlv {
 #define BTINTEL_IMG_BOOTLOADER		0x01	/* Bootloader image */
 #define BTINTEL_IMG_IML			0x02	/* Intermediate image */
 #define BTINTEL_IMG_OP			0x03	/* Operational image */
-
-#define BTINTEL_FWID_MAXLEN 64
 
 struct intel_version_tlv {
 	u32	cnvi_top;
@@ -80,7 +77,6 @@ struct intel_version_tlv {
 	u8	limited_cce;
 	u8	sbe_type;
 	u32	git_sha1;
-	u8	fw_id[BTINTEL_FWID_MAXLEN];
 	bdaddr_t otp_bd_addr;
 };
 
@@ -248,7 +244,6 @@ int btintel_bootloader_setup_tlv(struct hci_dev *hdev,
 				 struct intel_version_tlv *ver);
 int btintel_shutdown_combined(struct hci_dev *hdev);
 void btintel_hw_error(struct hci_dev *hdev, u8 code);
-void btintel_print_fseq_info(struct hci_dev *hdev);
 #else
 
 static inline int btintel_check_bdaddr(struct hci_dev *hdev)
@@ -376,10 +371,6 @@ static inline int btintel_shutdown_combined(struct hci_dev *hdev)
 }
 
 static inline void btintel_hw_error(struct hci_dev *hdev, u8 code)
-{
-}
-
-static inline void btintel_print_fseq_info(struct hci_dev *hdev)
 {
 }
 #endif

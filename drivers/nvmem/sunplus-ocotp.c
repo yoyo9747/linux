@@ -159,6 +159,7 @@ static int sp_ocotp_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct nvmem_device *nvmem;
 	struct sp_ocotp_priv *otp;
+	struct resource *res;
 	int ret;
 
 	otp = devm_kzalloc(dev, sizeof(*otp), GFP_KERNEL);
@@ -167,11 +168,13 @@ static int sp_ocotp_probe(struct platform_device *pdev)
 
 	otp->dev = dev;
 
-	otp->base[HB_GPIO] = devm_platform_ioremap_resource_byname(pdev, "hb_gpio");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "hb_gpio");
+	otp->base[HB_GPIO] = devm_ioremap_resource(dev, res);
 	if (IS_ERR(otp->base[HB_GPIO]))
 		return PTR_ERR(otp->base[HB_GPIO]);
 
-	otp->base[OTPRX] = devm_platform_ioremap_resource_byname(pdev, "otprx");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "otprx");
+	otp->base[OTPRX] = devm_ioremap_resource(dev, res);
 	if (IS_ERR(otp->base[OTPRX]))
 		return PTR_ERR(otp->base[OTPRX]);
 

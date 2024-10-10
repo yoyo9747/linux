@@ -21,7 +21,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "elan_i2c.h"
 

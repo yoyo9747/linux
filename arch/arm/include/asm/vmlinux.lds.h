@@ -42,7 +42,7 @@
 #define PROC_INFO							\
 		. = ALIGN(4);						\
 		__proc_info_begin = .;					\
-		KEEP(*(.proc.info.init))				\
+		*(.proc.info.init)					\
 		__proc_info_end = .;
 
 #define IDMAP_TEXT							\

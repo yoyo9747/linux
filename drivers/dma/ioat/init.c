@@ -23,7 +23,6 @@
 #include "../dmaengine.h"
 
 MODULE_VERSION(IOAT_DMA_VERSION);
-MODULE_DESCRIPTION("Intel I/OAT DMA Linux driver");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Intel Corporation");
 
@@ -905,7 +904,7 @@ static int ioat_xor_val_self_test(struct ioatdma_device *ioat_dma)
 
 	op = IOAT_OP_XOR_VAL;
 
-	/* validate the sources with the destination page */
+	/* validate the sources with the destintation page */
 	for (i = 0; i < IOAT_NUM_SRC_TEST; i++)
 		xor_val_srcs[i] = xor_srcs[i];
 	xor_val_srcs[i] = dest;

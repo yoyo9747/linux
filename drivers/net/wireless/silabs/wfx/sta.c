@@ -352,11 +352,8 @@ static int wfx_set_mfp_ap(struct wfx_vif *wvif)
 
 	ptr = (u16 *)cfg80211_find_ie(WLAN_EID_RSN, skb->data + ieoffset,
 				      skb->len - ieoffset);
-	if (!ptr) {
-		/* No RSN IE is fine in open networks */
-		ret = 0;
+	if (unlikely(!ptr))
 		goto free_skb;
-	}
 
 	ptr += pairwise_cipher_suite_count_offset;
 	if (WARN_ON(ptr > (u16 *)skb_tail_pointer(skb)))
@@ -808,7 +805,7 @@ int wfx_start(struct ieee80211_hw *hw)
 	return 0;
 }
 
-void wfx_stop(struct ieee80211_hw *hw, bool suspend)
+void wfx_stop(struct ieee80211_hw *hw)
 {
 	struct wfx_dev *wdev = hw->priv;
 

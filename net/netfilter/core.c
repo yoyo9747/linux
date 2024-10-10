@@ -655,8 +655,10 @@ void nf_hook_slow_list(struct list_head *head, struct nf_hook_state *state,
 		       const struct nf_hook_entries *e)
 {
 	struct sk_buff *skb, *next;
-	LIST_HEAD(sublist);
+	struct list_head sublist;
 	int ret;
+
+	INIT_LIST_HEAD(&sublist);
 
 	list_for_each_entry_safe(skb, next, head, list) {
 		skb_list_del_init(skb);

@@ -10,6 +10,7 @@
 #include <linux/platform_device.h>
 
 #include <linux/backlight.h>
+#include <linux/fb.h>
 
 #include <linux/mfd/pcf50633/core.h>
 #include <linux/mfd/pcf50633/backlight.h>
@@ -52,7 +53,7 @@ static int pcf50633_bl_update_status(struct backlight_device *bl)
 
 
 	if (bl->props.state & (BL_CORE_SUSPENDED | BL_CORE_FBBLANK) ||
-		bl->props.power != BACKLIGHT_POWER_ON)
+		bl->props.power != FB_BLANK_UNBLANK)
 		new_brightness = 0;
 	else if (bl->props.brightness < pcf_bl->brightness_limit)
 		new_brightness = bl->props.brightness;
@@ -105,7 +106,7 @@ static int pcf50633_bl_probe(struct platform_device *pdev)
 	memset(&bl_props, 0, sizeof(bl_props));
 	bl_props.type = BACKLIGHT_RAW;
 	bl_props.max_brightness = 0x3f;
-	bl_props.power = BACKLIGHT_POWER_ON;
+	bl_props.power = FB_BLANK_UNBLANK;
 
 	if (pdata) {
 		bl_props.brightness = pdata->default_brightness;

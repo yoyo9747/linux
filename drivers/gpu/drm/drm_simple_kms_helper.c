@@ -453,5 +453,4 @@ int drm_simple_display_pipe_init(struct drm_device *dev,
 }
 EXPORT_SYMBOL(drm_simple_display_pipe_init);
 
-MODULE_DESCRIPTION("Helpers for drivers for simple display hardware");
 MODULE_LICENSE("GPL");

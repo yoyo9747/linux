@@ -30,6 +30,10 @@
 #include "util/evsel_config.h"
 #include <regex.h>
 
+struct perf_pmu perf_pmu__fake = {
+	.name = "fake",
+};
+
 #define UNIT_MAX_LEN	31 /* max length for event unit name */
 
 enum event_source {
@@ -363,8 +367,8 @@ error:
 	return -1;
 }
 
-static bool perf_pmu__parse_event_source_bool(const char *pmu_name, const char *event_name,
-					      const char *suffix)
+static int
+perf_pmu__parse_per_pkg(struct perf_pmu *pmu, struct perf_pmu_alias *alias)
 {
 	char path[PATH_MAX];
 	size_t len;
@@ -372,36 +376,37 @@ static bool perf_pmu__parse_event_source_bool(const char *pmu_name, const char *
 
 	len = perf_pmu__event_source_devices_scnprintf(path, sizeof(path));
 	if (!len)
-		return false;
-
-	scnprintf(path + len, sizeof(path) - len, "%s/events/%s.%s", pmu_name, event_name, suffix);
+		return 0;
+	scnprintf(path + len, sizeof(path) - len, "%s/events/%s.per-pkg", pmu->name, alias->name);
 
 	fd = open(path, O_RDONLY);
 	if (fd == -1)
-		return false;
-
-#ifndef NDEBUG
-	{
-		char buf[8];
-
-		len = read(fd, buf, sizeof(buf));
-		assert(len == 1 || len == 2);
-		assert(buf[0] == '1');
-	}
-#endif
+		return -1;
 
 	close(fd);
-	return true;
+
+	alias->per_pkg = true;
+	return 0;
 }
 
-static void perf_pmu__parse_per_pkg(struct perf_pmu *pmu, struct perf_pmu_alias *alias)
+static int perf_pmu__parse_snapshot(struct perf_pmu *pmu, struct perf_pmu_alias *alias)
 {
-	alias->per_pkg = perf_pmu__parse_event_source_bool(pmu->name, alias->name, "per-pkg");
-}
+	char path[PATH_MAX];
+	size_t len;
+	int fd;
 
-static void perf_pmu__parse_snapshot(struct perf_pmu *pmu, struct perf_pmu_alias *alias)
-{
-	alias->snapshot = perf_pmu__parse_event_source_bool(pmu->name, alias->name, "snapshot");
+	len = perf_pmu__event_source_devices_scnprintf(path, sizeof(path));
+	if (!len)
+		return 0;
+	scnprintf(path + len, sizeof(path) - len, "%s/events/%s.snapshot", pmu->name, alias->name);
+
+	fd = open(path, O_RDONLY);
+	if (fd == -1)
+		return -1;
+
+	alias->snapshot = true;
+	close(fd);
+	return 0;
 }
 
 /* Delete an alias entry. */
@@ -843,23 +848,6 @@ __weak const struct pmu_metrics_table *pmu_metrics_table__find(void)
 }
 
 /**
- * Return the length of the PMU name not including the suffix for uncore PMUs.
- *
- * We want to deduplicate many similar uncore PMUs by stripping their suffixes,
- * but there are never going to be too many core PMUs and the suffixes might be
- * interesting. "arm_cortex_a53" vs "arm_cortex_a57" or "cpum_cf" for example.
- *
- * @skip_duplicate_pmus: False in verbose mode so all uncore PMUs are visible
- */
-static size_t pmu_deduped_name_len(const struct perf_pmu *pmu, const char *name,
-				   bool skip_duplicate_pmus)
-{
-	return skip_duplicate_pmus && !pmu->is_core
-		? pmu_name_len_no_suffix(name)
-		: strlen(name);
-}
-
-/**
  * perf_pmu__match_ignoring_suffix - Does the pmu_name match tok ignoring any
  *                                   trailing suffix? The Suffix must be in form
  *                                   tok_{digits}, or tok{digits}.
@@ -868,33 +856,25 @@ static size_t pmu_deduped_name_len(const struct perf_pmu *pmu, const char *name,
  */
 static bool perf_pmu__match_ignoring_suffix(const char *pmu_name, const char *tok)
 {
-	const char *p, *suffix;
-	bool has_hex = false;
+	const char *p;
 
 	if (strncmp(pmu_name, tok, strlen(tok)))
 		return false;
 
-	suffix = p = pmu_name + strlen(tok);
+	p = pmu_name + strlen(tok);
 	if (*p == 0)
 		return true;
 
-	if (*p == '_') {
+	if (*p == '_')
 		++p;
-		++suffix;
-	}
 
 	/* Ensure we end in a number */
 	while (1) {
-		if (!isxdigit(*p))
+		if (!isdigit(*p))
 			return false;
-		if (!has_hex)
-			has_hex = !isdigit(*p);
 		if (*(++p) == 0)
 			break;
 	}
-
-	if (has_hex)
-		return (p - suffix) > 2;
 
 	return true;
 }
@@ -1168,11 +1148,6 @@ struct perf_pmu *perf_pmu__create_placeholder_core_pmu(struct list_head *core_pm
 	return pmu;
 }
 
-static bool perf_pmu__is_fake(const struct perf_pmu *pmu)
-{
-	return pmu->type == PERF_PMU_TYPE_FAKE;
-}
-
 void perf_pmu__warn_invalid_formats(struct perf_pmu *pmu)
 {
 	struct perf_pmu_format *format;
@@ -1183,7 +1158,7 @@ void perf_pmu__warn_invalid_formats(struct perf_pmu *pmu)
 	pmu->formats_checked = true;
 
 	/* fake pmu doesn't have format list */
-	if (perf_pmu__is_fake(pmu))
+	if (pmu == &perf_pmu__fake)
 		return;
 
 	list_for_each_entry(format, &pmu->format, list) {
@@ -1199,12 +1174,8 @@ void perf_pmu__warn_invalid_formats(struct perf_pmu *pmu)
 
 bool evsel__is_aux_event(const struct evsel *evsel)
 {
-	struct perf_pmu *pmu;
+	struct perf_pmu *pmu = evsel__find_pmu(evsel);
 
-	if (evsel->needs_auxtrace_mmap)
-		return true;
-
-	pmu = evsel__find_pmu(evsel);
 	return pmu && pmu->auxtrace;
 }
 
@@ -1511,10 +1482,6 @@ int perf_pmu__config(struct perf_pmu *pmu, struct perf_event_attr *attr,
 {
 	bool zero = !!pmu->perf_event_attr_init_default;
 
-	/* Fake PMU doesn't have proper terms so nothing to configure in attr. */
-	if (perf_pmu__is_fake(pmu))
-		return 0;
-
 	return perf_pmu__config_terms(pmu, attr, head_terms, zero, err);
 }
 
@@ -1623,10 +1590,6 @@ int perf_pmu__check_alias(struct perf_pmu *pmu, struct parse_events_terms *head_
 	info->scale    = 0.0;
 	info->snapshot = false;
 
-	/* Fake PMU doesn't rewrite terms. */
-	if (perf_pmu__is_fake(pmu))
-		goto out;
-
 	list_for_each_entry_safe(term, h, &head_terms->terms, list) {
 		alias = pmu_find_alias(pmu, term);
 		if (!alias)
@@ -1649,7 +1612,7 @@ int perf_pmu__check_alias(struct perf_pmu *pmu, struct parse_events_terms *head_
 		list_del_init(&term->list);
 		parse_events_term__delete(term);
 	}
-out:
+
 	/*
 	 * if no unit or scale found in aliases, then
 	 * set defaults as for evsel
@@ -1802,7 +1765,7 @@ size_t perf_pmu__num_events(struct perf_pmu *pmu)
 	size_t nr;
 
 	pmu_aliases_parse(pmu);
-	nr = pmu->sysfs_aliases + pmu->sys_json_aliases;
+	nr = pmu->sysfs_aliases + pmu->sys_json_aliases;;
 
 	if (pmu->cpu_aliases_added)
 		 nr += pmu->cpu_json_aliases;
@@ -1825,9 +1788,10 @@ static char *format_alias(char *buf, int len, const struct perf_pmu *pmu,
 			  const struct perf_pmu_alias *alias, bool skip_duplicate_pmus)
 {
 	struct parse_events_term *term;
-	size_t pmu_name_len = pmu_deduped_name_len(pmu, pmu->name,
-						   skip_duplicate_pmus);
-	int used = snprintf(buf, len, "%.*s/%s", (int)pmu_name_len, pmu->name, alias->name);
+	int pmu_name_len = skip_duplicate_pmus
+		? pmu_name_len_no_suffix(pmu->name, /*num=*/NULL)
+		: (int)strlen(pmu->name);
+	int used = snprintf(buf, len, "%.*s/%s", pmu_name_len, pmu->name, alias->name);
 
 	list_for_each_entry(term, &alias->terms.terms, list) {
 		if (term->type_val == PARSE_EVENTS__TERM_TYPE_STR)
@@ -1856,7 +1820,6 @@ int perf_pmu__for_each_event(struct perf_pmu *pmu, bool skip_duplicate_pmus,
 	struct perf_pmu_alias *event;
 	struct pmu_event_info info = {
 		.pmu = pmu,
-		.event_type_desc = "Kernel PMU event",
 	};
 	int ret = 0;
 	struct strbuf sb;
@@ -1865,11 +1828,13 @@ int perf_pmu__for_each_event(struct perf_pmu *pmu, bool skip_duplicate_pmus,
 	pmu_aliases_parse(pmu);
 	pmu_add_cpu_aliases(pmu);
 	list_for_each_entry(event, &pmu->aliases, list) {
-		size_t buf_used, pmu_name_len;
+		size_t buf_used;
+		int pmu_name_len;
 
 		info.pmu_name = event->pmu_name ?: pmu->name;
-		pmu_name_len = pmu_deduped_name_len(pmu, info.pmu_name,
-						    skip_duplicate_pmus);
+		pmu_name_len = skip_duplicate_pmus
+			? pmu_name_len_no_suffix(info.pmu_name, /*num=*/NULL)
+			: (int)strlen(info.pmu_name);
 		info.alias = NULL;
 		if (event->desc) {
 			info.name = event->name;
@@ -1894,7 +1859,7 @@ int perf_pmu__for_each_event(struct perf_pmu *pmu, bool skip_duplicate_pmus,
 		info.encoding_desc = buf + buf_used;
 		parse_events_terms__to_strbuf(&event->terms, &sb);
 		buf_used += snprintf(buf + buf_used, sizeof(buf) - buf_used,
-				"%.*s/%s/", (int)pmu_name_len, info.pmu_name, sb.buf) + 1;
+				"%.*s/%s/", pmu_name_len, info.pmu_name, sb.buf) + 1;
 		info.topic = event->topic;
 		info.str = sb.buf;
 		info.deprecated = event->deprecated;
@@ -2178,7 +2143,7 @@ void perf_pmu__warn_invalid_config(struct perf_pmu *pmu, __u64 config,
 bool perf_pmu__match(const struct perf_pmu *pmu, const char *tok)
 {
 	const char *name = pmu->name;
-	bool need_fnmatch = strisglob(tok);
+	bool need_fnmatch = strchr(tok, '*') != NULL;
 
 	if (!strncmp(tok, "uncore_", 7))
 		tok += 7;

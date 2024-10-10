@@ -5,14 +5,13 @@
 
 #include <linux/kernel.h>
 #include <linux/bitops.h>
-#include <linux/cleanup.h>
+#include <linux/cpumask.h>
 #include <linux/irqreturn.h>
 #include <linux/irqnr.h>
 #include <linux/hardirq.h>
 #include <linux/irqflags.h>
 #include <linux/hrtimer.h>
 #include <linux/kref.h>
-#include <linux/cpumask_types.h>
 #include <linux/workqueue.h>
 #include <linux/jump_label.h>
 
@@ -169,7 +168,7 @@ static inline int __must_check
 request_irq(unsigned int irq, irq_handler_t handler, unsigned long flags,
 	    const char *name, void *dev)
 {
-	return request_threaded_irq(irq, handler, NULL, flags | IRQF_COND_ONESHOT, name, dev);
+	return request_threaded_irq(irq, handler, NULL, flags, name, dev);
 }
 
 extern int __must_check
@@ -236,9 +235,6 @@ extern void enable_percpu_irq(unsigned int irq, unsigned int type);
 extern bool irq_percpu_is_enabled(unsigned int irq);
 extern void irq_wake_thread(unsigned int irq, void *dev_id);
 
-DEFINE_LOCK_GUARD_1(disable_irq, int,
-		    disable_irq(*_T->lock), enable_irq(*_T->lock))
-
 extern void disable_nmi_nosync(unsigned int irq);
 extern void disable_percpu_nmi(unsigned int irq);
 extern void enable_nmi(unsigned int irq);
@@ -276,7 +272,7 @@ struct irq_affinity_notify {
 #define	IRQ_AFFINITY_MAX_SETS  4
 
 /**
- * struct irq_affinity - Description for automatic irq affinity assignments
+ * struct irq_affinity - Description for automatic irq affinity assignements
  * @pre_vectors:	Don't apply affinity to @pre_vectors at beginning of
  *			the MSI(-X) vector space
  * @post_vectors:	Don't apply affinity to @post_vectors at end of
@@ -594,7 +590,7 @@ extern const char * const softirq_to_name[NR_SOFTIRQS];
 
 struct softirq_action
 {
-	void	(*action)(void);
+	void	(*action)(struct softirq_action *);
 };
 
 asmlinkage void do_softirq(void);
@@ -609,7 +605,7 @@ static inline void do_softirq_post_smp_call_flush(unsigned int unused)
 }
 #endif
 
-extern void open_softirq(int nr, void (*action)(void));
+extern void open_softirq(int nr, void (*action)(struct softirq_action *));
 extern void softirq_init(void);
 extern void __raise_softirq_irqoff(unsigned int nr);
 

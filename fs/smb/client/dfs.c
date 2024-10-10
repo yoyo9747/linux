@@ -69,7 +69,7 @@ static int get_session(struct cifs_mount_ctx *mnt_ctx, const char *full_path)
  * Get an active reference of @ses so that next call to cifs_put_tcon() won't
  * release it as any new DFS referrals must go through its IPC tcon.
  */
-static void set_root_smb_session(struct cifs_mount_ctx *mnt_ctx)
+static void add_root_smb_session(struct cifs_mount_ctx *mnt_ctx)
 {
 	struct smb3_fs_context *ctx = mnt_ctx->fs_ctx;
 	struct cifs_ses *ses = mnt_ctx->ses;
@@ -95,7 +95,7 @@ static inline int parse_dfs_target(struct smb3_fs_context *ctx,
 	return rc;
 }
 
-static int setup_dfs_ref(struct cifs_mount_ctx *mnt_ctx,
+static int set_ref_paths(struct cifs_mount_ctx *mnt_ctx,
 			 struct dfs_info3_param *tgt,
 			 struct dfs_ref_walk *rw)
 {
@@ -120,7 +120,6 @@ static int setup_dfs_ref(struct cifs_mount_ctx *mnt_ctx,
 	}
 	ref_walk_path(rw) = ref_path;
 	ref_walk_fpath(rw) = full_path;
-	ref_walk_ses(rw) = ctx->dfs_root_ses;
 	return 0;
 }
 
@@ -129,11 +128,11 @@ static int __dfs_referral_walk(struct cifs_mount_ctx *mnt_ctx,
 {
 	struct smb3_fs_context *ctx = mnt_ctx->fs_ctx;
 	struct dfs_info3_param tgt = {};
+	bool is_refsrv;
 	int rc = -ENOENT;
 
 again:
 	do {
-		ctx->dfs_root_ses = ref_walk_ses(rw);
 		if (ref_walk_empty(rw)) {
 			rc = dfs_get_referral(mnt_ctx, ref_walk_path(rw) + 1,
 					      NULL, ref_walk_tl(rw));
@@ -159,7 +158,10 @@ again:
 			if (rc)
 				continue;
 
+			is_refsrv = tgt.server_type == DFS_TYPE_ROOT ||
+				DFS_INTERLINK(tgt.flags);
 			ref_walk_set_tgt_hint(rw);
+
 			if (tgt.flags & DFSREF_STORAGE_SERVER) {
 				rc = cifs_mount_get_tcon(mnt_ctx);
 				if (!rc)
@@ -170,10 +172,12 @@ again:
 					continue;
 			}
 
-			set_root_smb_session(mnt_ctx);
+			if (is_refsrv)
+				add_root_smb_session(mnt_ctx);
+
 			rc = ref_walk_advance(rw);
 			if (!rc) {
-				rc = setup_dfs_ref(mnt_ctx, &tgt, rw);
+				rc = set_ref_paths(mnt_ctx, &tgt, rw);
 				if (!rc) {
 					rc = -EREMOTE;
 					goto again;
@@ -189,22 +193,20 @@ out:
 	return rc;
 }
 
-static int dfs_referral_walk(struct cifs_mount_ctx *mnt_ctx,
-			     struct dfs_ref_walk **rw)
+static int dfs_referral_walk(struct cifs_mount_ctx *mnt_ctx)
 {
+	struct dfs_ref_walk *rw;
 	int rc;
 
-	*rw = ref_walk_alloc();
-	if (IS_ERR(*rw)) {
-		rc = PTR_ERR(*rw);
-		*rw = NULL;
-		return rc;
-	}
+	rw = ref_walk_alloc();
+	if (IS_ERR(rw))
+		return PTR_ERR(rw);
 
-	ref_walk_init(*rw);
-	rc = setup_dfs_ref(mnt_ctx, NULL, *rw);
+	ref_walk_init(rw);
+	rc = set_ref_paths(mnt_ctx, NULL, rw);
 	if (!rc)
-		rc = __dfs_referral_walk(mnt_ctx, *rw);
+		rc = __dfs_referral_walk(mnt_ctx, rw);
+	ref_walk_free(rw);
 	return rc;
 }
 
@@ -212,16 +214,16 @@ static int __dfs_mount_share(struct cifs_mount_ctx *mnt_ctx)
 {
 	struct cifs_sb_info *cifs_sb = mnt_ctx->cifs_sb;
 	struct smb3_fs_context *ctx = mnt_ctx->fs_ctx;
-	struct dfs_ref_walk *rw = NULL;
 	struct cifs_tcon *tcon;
 	char *origin_fullpath;
+	bool new_tcon = true;
 	int rc;
 
 	origin_fullpath = dfs_get_path(cifs_sb, ctx->source);
 	if (IS_ERR(origin_fullpath))
 		return PTR_ERR(origin_fullpath);
 
-	rc = dfs_referral_walk(mnt_ctx, &rw);
+	rc = dfs_referral_walk(mnt_ctx);
 	if (!rc) {
 		/*
 		 * Prevent superblock from being created with any missing
@@ -239,16 +241,21 @@ static int __dfs_mount_share(struct cifs_mount_ctx *mnt_ctx)
 
 	tcon = mnt_ctx->tcon;
 	spin_lock(&tcon->tc_lock);
-	tcon->origin_fullpath = origin_fullpath;
-	origin_fullpath = NULL;
-	ref_walk_set_tcon(rw, tcon);
+	if (!tcon->origin_fullpath) {
+		tcon->origin_fullpath = origin_fullpath;
+		origin_fullpath = NULL;
+	} else {
+		new_tcon = false;
+	}
 	spin_unlock(&tcon->tc_lock);
-	queue_delayed_work(dfscache_wq, &tcon->dfs_cache_work,
-			   dfs_cache_get_ttl() * HZ);
+
+	if (new_tcon) {
+		queue_delayed_work(dfscache_wq, &tcon->dfs_cache_work,
+				   dfs_cache_get_ttl() * HZ);
+	}
 
 out:
 	kfree(origin_fullpath);
-	ref_walk_free(rw);
 	return rc;
 }
 
@@ -272,7 +279,7 @@ static int update_fs_context_dstaddr(struct smb3_fs_context *ctx)
 	return rc;
 }
 
-int dfs_mount_share(struct cifs_mount_ctx *mnt_ctx)
+int dfs_mount_share(struct cifs_mount_ctx *mnt_ctx, bool *isdfs)
 {
 	struct smb3_fs_context *ctx = mnt_ctx->fs_ctx;
 	bool nodfs = ctx->nodfs;
@@ -282,6 +289,7 @@ int dfs_mount_share(struct cifs_mount_ctx *mnt_ctx)
 	if (rc)
 		return rc;
 
+	*isdfs = false;
 	rc = get_session(mnt_ctx, NULL);
 	if (rc)
 		return rc;
@@ -309,15 +317,10 @@ int dfs_mount_share(struct cifs_mount_ctx *mnt_ctx)
 		return rc;
 	}
 
-	if (!ctx->dfs_conn) {
-		ctx->dfs_conn = true;
-		cifs_mount_put_conns(mnt_ctx);
-		rc = get_session(mnt_ctx, NULL);
-	}
-	if (!rc) {
-		set_root_smb_session(mnt_ctx);
-		rc = __dfs_mount_share(mnt_ctx);
-	}
+	*isdfs = true;
+	add_root_smb_session(mnt_ctx);
+	rc = __dfs_mount_share(mnt_ctx);
+	dfs_put_root_smb_sessions(mnt_ctx);
 	return rc;
 }
 

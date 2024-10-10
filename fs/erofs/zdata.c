@@ -19,7 +19,10 @@
 typedef void *z_erofs_next_pcluster_t;
 
 struct z_erofs_bvec {
-	struct page *page;
+	union {
+		struct page *page;
+		struct folio *folio;
+	};
 	int offset;
 	unsigned int end;
 };
@@ -122,6 +125,42 @@ static bool erofs_folio_is_managed(struct erofs_sb_info *sbi, struct folio *fo)
 	return fo->mapping == MNGD_MAPPING(sbi);
 }
 
+/*
+ * bit 30: I/O error occurred on this folio
+ * bit 0 - 29: remaining parts to complete this folio
+ */
+#define Z_EROFS_FOLIO_EIO			(1 << 30)
+
+static void z_erofs_onlinefolio_init(struct folio *folio)
+{
+	union {
+		atomic_t o;
+		void *v;
+	} u = { .o = ATOMIC_INIT(1) };
+
+	folio->private = u.v;	/* valid only if file-backed folio is locked */
+}
+
+static void z_erofs_onlinefolio_split(struct folio *folio)
+{
+	atomic_inc((atomic_t *)&folio->private);
+}
+
+static void z_erofs_onlinefolio_end(struct folio *folio, int err)
+{
+	int orig, v;
+
+	do {
+		orig = atomic_read((atomic_t *)&folio->private);
+		v = (orig - 1) | (err ? Z_EROFS_FOLIO_EIO : 0);
+	} while (atomic_cmpxchg((atomic_t *)&folio->private, orig, v) != orig);
+
+	if (v & ~Z_EROFS_FOLIO_EIO)
+		return;
+	folio->private = 0;
+	folio_end_read(folio, !(v & Z_EROFS_FOLIO_EIO));
+}
+
 #define Z_EROFS_ONSTACK_PAGES		32
 
 /*
@@ -196,8 +235,7 @@ static int z_erofs_bvec_enqueue(struct z_erofs_bvec_iter *iter,
 		struct page *nextpage = *candidate_bvpage;
 
 		if (!nextpage) {
-			nextpage = __erofs_allocpage(pagepool, GFP_KERNEL,
-					true);
+			nextpage = erofs_allocpage(pagepool, GFP_KERNEL);
 			if (!nextpage)
 				return -ENOMEM;
 			set_page_private(nextpage, Z_EROFS_SHORTLIVED_PAGE);
@@ -411,51 +449,44 @@ static inline int erofs_cpu_hotplug_init(void) { return 0; }
 static inline void erofs_cpu_hotplug_destroy(void) {}
 #endif
 
-void z_erofs_exit_subsystem(void)
+void z_erofs_exit_zip_subsystem(void)
 {
 	erofs_cpu_hotplug_destroy();
 	erofs_destroy_percpu_workers();
 	destroy_workqueue(z_erofs_workqueue);
 	z_erofs_destroy_pcluster_pool();
-	z_erofs_exit_decompressor();
 }
 
-int __init z_erofs_init_subsystem(void)
+int __init z_erofs_init_zip_subsystem(void)
 {
-	int err = z_erofs_init_decompressor();
+	int err = z_erofs_create_pcluster_pool();
 
 	if (err)
-		goto err_decompressor;
-
-	err = z_erofs_create_pcluster_pool();
-	if (err)
-		goto err_pcluster_pool;
+		goto out_error_pcluster_pool;
 
 	z_erofs_workqueue = alloc_workqueue("erofs_worker",
 			WQ_UNBOUND | WQ_HIGHPRI, num_possible_cpus());
 	if (!z_erofs_workqueue) {
 		err = -ENOMEM;
-		goto err_workqueue_init;
+		goto out_error_workqueue_init;
 	}
 
 	err = erofs_init_percpu_workers();
 	if (err)
-		goto err_pcpu_worker;
+		goto out_error_pcpu_worker;
 
 	err = erofs_cpu_hotplug_init();
 	if (err < 0)
-		goto err_cpuhp_init;
+		goto out_error_cpuhp_init;
 	return err;
 
-err_cpuhp_init:
+out_error_cpuhp_init:
 	erofs_destroy_percpu_workers();
-err_pcpu_worker:
+out_error_pcpu_worker:
 	destroy_workqueue(z_erofs_workqueue);
-err_workqueue_init:
+out_error_workqueue_init:
 	z_erofs_destroy_pcluster_pool();
-err_pcluster_pool:
-	z_erofs_exit_decompressor();
-err_decompressor:
+out_error_pcluster_pool:
 	return err;
 }
 
@@ -586,31 +617,32 @@ static void z_erofs_bind_cache(struct z_erofs_decompress_frontend *fe)
 		fe->mode = Z_EROFS_PCLUSTER_FOLLOWED_NOINPLACE;
 }
 
-/* (erofs_shrinker) disconnect cached encoded data with pclusters */
+/* called by erofs_shrinker to get rid of all cached compressed bvecs */
 int erofs_try_to_free_all_cached_folios(struct erofs_sb_info *sbi,
 					struct erofs_workgroup *grp)
 {
 	struct z_erofs_pcluster *const pcl =
 		container_of(grp, struct z_erofs_pcluster, obj);
 	unsigned int pclusterpages = z_erofs_pclusterpages(pcl);
-	struct folio *folio;
 	int i;
 
 	DBG_BUGON(z_erofs_is_inline_pcluster(pcl));
-	/* Each cached folio contains one page unless bs > ps is supported */
+	/* There is no actice user since the pcluster is now freezed */
 	for (i = 0; i < pclusterpages; ++i) {
-		if (pcl->compressed_bvecs[i].page) {
-			folio = page_folio(pcl->compressed_bvecs[i].page);
-			/* Avoid reclaiming or migrating this folio */
-			if (!folio_trylock(folio))
-				return -EBUSY;
+		struct folio *folio = pcl->compressed_bvecs[i].folio;
 
-			if (!erofs_folio_is_managed(sbi, folio))
-				continue;
-			pcl->compressed_bvecs[i].page = NULL;
-			folio_detach_private(folio);
-			folio_unlock(folio);
-		}
+		if (!folio)
+			continue;
+
+		/* Avoid reclaiming or migrating this folio */
+		if (!folio_trylock(folio))
+			return -EBUSY;
+
+		if (!erofs_folio_is_managed(sbi, folio))
+			continue;
+		pcl->compressed_bvecs[i].folio = NULL;
+		folio_detach_private(folio);
+		folio_unlock(folio);
 	}
 	return 0;
 }
@@ -618,9 +650,9 @@ int erofs_try_to_free_all_cached_folios(struct erofs_sb_info *sbi,
 static bool z_erofs_cache_release_folio(struct folio *folio, gfp_t gfp)
 {
 	struct z_erofs_pcluster *pcl = folio_get_private(folio);
-	struct z_erofs_bvec *bvec = pcl->compressed_bvecs;
-	struct z_erofs_bvec *end = bvec + z_erofs_pclusterpages(pcl);
+	unsigned int pclusterpages = z_erofs_pclusterpages(pcl);
 	bool ret;
+	int i;
 
 	if (!folio_test_private(folio))
 		return true;
@@ -629,9 +661,9 @@ static bool z_erofs_cache_release_folio(struct folio *folio, gfp_t gfp)
 	spin_lock(&pcl->obj.lockref.lock);
 	if (pcl->obj.lockref.count <= 0) {
 		DBG_BUGON(z_erofs_is_inline_pcluster(pcl));
-		for (; bvec < end; ++bvec) {
-			if (bvec->page && page_folio(bvec->page) == folio) {
-				bvec->page = NULL;
+		for (i = 0; i < pclusterpages; ++i) {
+			if (pcl->compressed_bvecs[i].folio == folio) {
+				pcl->compressed_bvecs[i].folio = NULL;
 				folio_detach_private(folio);
 				ret = true;
 				break;
@@ -893,7 +925,7 @@ static void z_erofs_pcluster_end(struct z_erofs_decompress_frontend *fe)
 	fe->pcl = NULL;
 }
 
-static int z_erofs_read_fragment(struct super_block *sb, struct folio *folio,
+static int z_erofs_read_fragment(struct super_block *sb, struct page *page,
 			unsigned int cur, unsigned int end, erofs_off_t pos)
 {
 	struct inode *packed_inode = EROFS_SB(sb)->packed_inode;
@@ -906,110 +938,114 @@ static int z_erofs_read_fragment(struct super_block *sb, struct folio *folio,
 
 	buf.mapping = packed_inode->i_mapping;
 	for (; cur < end; cur += cnt, pos += cnt) {
-		cnt = min(end - cur, sb->s_blocksize - erofs_blkoff(sb, pos));
+		cnt = min_t(unsigned int, end - cur,
+			    sb->s_blocksize - erofs_blkoff(sb, pos));
 		src = erofs_bread(&buf, pos, EROFS_KMAP);
 		if (IS_ERR(src)) {
 			erofs_put_metabuf(&buf);
 			return PTR_ERR(src);
 		}
-		memcpy_to_folio(folio, cur, src, cnt);
+		memcpy_to_page(page, cur, src, cnt);
 	}
 	erofs_put_metabuf(&buf);
 	return 0;
 }
 
-static int z_erofs_scan_folio(struct z_erofs_decompress_frontend *f,
+static int z_erofs_scan_folio(struct z_erofs_decompress_frontend *fe,
 			      struct folio *folio, bool ra)
 {
-	struct inode *const inode = f->inode;
-	struct erofs_map_blocks *const map = &f->map;
+	struct inode *const inode = fe->inode;
+	struct erofs_map_blocks *const map = &fe->map;
 	const loff_t offset = folio_pos(folio);
-	const unsigned int bs = i_blocksize(inode);
-	unsigned int end = folio_size(folio), split = 0, cur, pgs;
-	bool tight, excl;
+	const unsigned int bs = i_blocksize(inode), fs = folio_size(folio);
+	bool tight = true, exclusive;
+	unsigned int cur, end, len, split;
 	int err = 0;
 
-	tight = (bs == PAGE_SIZE);
-	erofs_onlinefolio_init(folio);
-	do {
-		if (offset + end - 1 < map->m_la ||
-		    offset + end - 1 >= map->m_la + map->m_llen) {
-			z_erofs_pcluster_end(f);
-			map->m_la = offset + end - 1;
-			map->m_llen = 0;
-			err = z_erofs_map_blocks_iter(inode, map, 0);
-			if (err)
-				break;
-		}
+	z_erofs_onlinefolio_init(folio);
+	split = 0;
+	end = fs;
+repeat:
+	if (offset + end - 1 < map->m_la ||
+	    offset + end - 1 >= map->m_la + map->m_llen) {
+		z_erofs_pcluster_end(fe);
+		map->m_la = offset + end - 1;
+		map->m_llen = 0;
+		err = z_erofs_map_blocks_iter(inode, map, 0);
+		if (err)
+			goto out;
+	}
 
-		cur = offset > map->m_la ? 0 : map->m_la - offset;
-		pgs = round_down(cur, PAGE_SIZE);
-		/* bump split parts first to avoid several separate cases */
-		++split;
+	cur = offset > map->m_la ? 0 : map->m_la - offset;
+	/* bump split parts first to avoid several separate cases */
+	++split;
 
-		if (!(map->m_flags & EROFS_MAP_MAPPED)) {
-			folio_zero_segment(folio, cur, end);
-			tight = false;
-		} else if (map->m_flags & EROFS_MAP_FRAGMENT) {
-			erofs_off_t fpos = offset + cur - map->m_la;
+	if (!(map->m_flags & EROFS_MAP_MAPPED)) {
+		folio_zero_segment(folio, cur, end);
+		tight = false;
+		goto next_part;
+	}
 
-			err = z_erofs_read_fragment(inode->i_sb, folio, cur,
-					cur + min(map->m_llen - fpos, end - cur),
-					EROFS_I(inode)->z_fragmentoff + fpos);
-			if (err)
-				break;
-			tight = false;
-		} else {
-			if (!f->pcl) {
-				err = z_erofs_pcluster_begin(f);
-				if (err)
-					break;
-				f->pcl->besteffort |= !ra;
-			}
+	if (map->m_flags & EROFS_MAP_FRAGMENT) {
+		erofs_off_t fpos = offset + cur - map->m_la;
 
-			pgs = round_down(end - 1, PAGE_SIZE);
-			/*
-			 * Ensure this partial page belongs to this submit chain
-			 * rather than other concurrent submit chains or
-			 * noio(bypass) chains since those chains are handled
-			 * asynchronously thus it cannot be used for inplace I/O
-			 * or bvpage (should be processed in the strict order.)
-			 */
-			tight &= (f->mode >= Z_EROFS_PCLUSTER_FOLLOWED);
-			excl = false;
-			if (cur <= pgs) {
-				excl = (split <= 1) || tight;
-				cur = pgs;
-			}
+		len = min_t(unsigned int, map->m_llen - fpos, end - cur);
+		err = z_erofs_read_fragment(inode->i_sb, &folio->page, cur,
+			cur + len, EROFS_I(inode)->z_fragmentoff + fpos);
+		if (err)
+			goto out;
+		tight = false;
+		goto next_part;
+	}
 
-			err = z_erofs_attach_page(f, &((struct z_erofs_bvec) {
-				.page = folio_page(folio, pgs >> PAGE_SHIFT),
-				.offset = offset + pgs - map->m_la,
-				.end = end - pgs, }), excl);
-			if (err)
-				break;
+	if (!fe->pcl) {
+		err = z_erofs_pcluster_begin(fe);
+		if (err)
+			goto out;
+		fe->pcl->besteffort |= !ra;
+	}
 
-			erofs_onlinefolio_split(folio);
-			if (f->pcl->pageofs_out != (map->m_la & ~PAGE_MASK))
-				f->pcl->multibases = true;
-			if (f->pcl->length < offset + end - map->m_la) {
-				f->pcl->length = offset + end - map->m_la;
-				f->pcl->pageofs_out = map->m_la & ~PAGE_MASK;
-			}
-			if ((map->m_flags & EROFS_MAP_FULL_MAPPED) &&
-			    !(map->m_flags & EROFS_MAP_PARTIAL_REF) &&
-			    f->pcl->length == map->m_llen)
-				f->pcl->partial = false;
-		}
-		/* shorten the remaining extent to update progress */
-		map->m_llen = offset + cur - map->m_la;
-		map->m_flags &= ~EROFS_MAP_FULL_MAPPED;
-		if (cur <= pgs) {
-			split = cur < pgs;
-			tight = (bs == PAGE_SIZE);
-		}
-	} while ((end = cur) > 0);
-	erofs_onlinefolio_end(folio, err);
+	/*
+	 * Ensure the current partial folio belongs to this submit chain rather
+	 * than other concurrent submit chains or the noio(bypass) chain since
+	 * those chains are handled asynchronously thus the folio cannot be used
+	 * for inplace I/O or bvpage (should be processed in a strict order.)
+	 */
+	tight &= (fe->mode > Z_EROFS_PCLUSTER_FOLLOWED_NOINPLACE);
+	exclusive = (!cur && ((split <= 1) || (tight && bs == fs)));
+	if (cur)
+		tight &= (fe->mode >= Z_EROFS_PCLUSTER_FOLLOWED);
+
+	err = z_erofs_attach_page(fe, &((struct z_erofs_bvec) {
+					.page = &folio->page,
+					.offset = offset - map->m_la,
+					.end = end,
+				  }), exclusive);
+	if (err)
+		goto out;
+
+	z_erofs_onlinefolio_split(folio);
+	if (fe->pcl->pageofs_out != (map->m_la & ~PAGE_MASK))
+		fe->pcl->multibases = true;
+	if (fe->pcl->length < offset + end - map->m_la) {
+		fe->pcl->length = offset + end - map->m_la;
+		fe->pcl->pageofs_out = map->m_la & ~PAGE_MASK;
+	}
+	if ((map->m_flags & EROFS_MAP_FULL_MAPPED) &&
+	    !(map->m_flags & EROFS_MAP_PARTIAL_REF) &&
+	    fe->pcl->length == map->m_llen)
+		fe->pcl->partial = false;
+next_part:
+	/* shorten the remaining extent to update progress */
+	map->m_llen = offset + cur - map->m_la;
+	map->m_flags &= ~EROFS_MAP_FULL_MAPPED;
+
+	end = cur;
+	if (end > 0)
+		goto repeat;
+
+out:
+	z_erofs_onlinefolio_end(folio, err);
 	return err;
 }
 
@@ -1030,7 +1066,7 @@ static bool z_erofs_is_sync_decompress(struct erofs_sb_info *sbi,
 
 static bool z_erofs_page_is_invalidated(struct page *page)
 {
-	return !page_folio(page)->mapping && !z_erofs_is_shortlived_page(page);
+	return !page->mapping && !z_erofs_is_shortlived_page(page);
 }
 
 struct z_erofs_decompress_backend {
@@ -1112,7 +1148,7 @@ static void z_erofs_fill_other_copies(struct z_erofs_decompress_backend *be,
 			cur += len;
 		}
 		kunmap_local(dst);
-		erofs_onlinefolio_end(page_folio(bvi->bvec.page), err);
+		z_erofs_onlinefolio_end(page_folio(bvi->bvec.page), err);
 		list_del(p);
 		kfree(bvi);
 	}
@@ -1155,10 +1191,9 @@ static int z_erofs_parse_in_bvecs(struct z_erofs_decompress_backend *be,
 		struct z_erofs_bvec *bvec = &pcl->compressed_bvecs[i];
 		struct page *page = bvec->page;
 
-		/* compressed data ought to be valid when decompressing */
-		if (IS_ERR(page) || !page) {
-			bvec->page = NULL;	/* clear the failure reason */
-			err = page ? PTR_ERR(page) : -EIO;
+		/* compressed data ought to be valid before decompressing */
+		if (!page) {
+			err = -EIO;
 			continue;
 		}
 		be->compressed_pages[i] = page;
@@ -1186,8 +1221,8 @@ static int z_erofs_decompress_pcluster(struct z_erofs_decompress_backend *be,
 	struct z_erofs_pcluster *pcl = be->pcl;
 	unsigned int pclusterpages = z_erofs_pclusterpages(pcl);
 	const struct z_erofs_decompressor *decomp =
-				z_erofs_decomp[pcl->algorithmformat];
-	int i, j, jtop, err2;
+				&erofs_decompressors[pcl->algorithmformat];
+	int i, err2;
 	struct page *page;
 	bool overlapped;
 
@@ -1234,7 +1269,8 @@ static int z_erofs_decompress_pcluster(struct z_erofs_decompress_backend *be,
 					.inplace_io = overlapped,
 					.partial_decoding = pcl->partial,
 					.fillgaps = pcl->multibases,
-					.gfp = pcl->besteffort ? GFP_KERNEL :
+					.gfp = pcl->besteffort ?
+						GFP_KERNEL | __GFP_NOFAIL :
 						GFP_NOWAIT | __GFP_NORETRY
 				 }, be->pagepool);
 
@@ -1244,9 +1280,10 @@ static int z_erofs_decompress_pcluster(struct z_erofs_decompress_backend *be,
 		WRITE_ONCE(pcl->compressed_bvecs[0].page, NULL);
 		put_page(page);
 	} else {
-		/* managed folios are still left in compressed_bvecs[] */
 		for (i = 0; i < pclusterpages; ++i) {
+			/* consider shortlived pages added when decompressing */
 			page = be->compressed_pages[i];
+
 			if (!page ||
 			    erofs_folio_is_managed(sbi, page_folio(page)))
 				continue;
@@ -1257,31 +1294,21 @@ static int z_erofs_decompress_pcluster(struct z_erofs_decompress_backend *be,
 	if (be->compressed_pages < be->onstack_pages ||
 	    be->compressed_pages >= be->onstack_pages + Z_EROFS_ONSTACK_PAGES)
 		kvfree(be->compressed_pages);
-
-	jtop = 0;
 	z_erofs_fill_other_copies(be, err);
+
 	for (i = 0; i < be->nr_pages; ++i) {
 		page = be->decompressed_pages[i];
 		if (!page)
 			continue;
 
 		DBG_BUGON(z_erofs_page_is_invalidated(page));
-		if (!z_erofs_is_shortlived_page(page)) {
-			erofs_onlinefolio_end(page_folio(page), err);
+
+		/* recycle all individual short-lived pages */
+		if (z_erofs_put_shortlivedpage(be->pagepool, page))
 			continue;
-		}
-		if (pcl->algorithmformat != Z_EROFS_COMPRESSION_LZ4) {
-			erofs_pagepool_add(be->pagepool, page);
-			continue;
-		}
-		for (j = 0; j < jtop && be->decompressed_pages[j] != page; ++j)
-			;
-		if (j >= jtop)	/* this bounce page is newly detected */
-			be->decompressed_pages[jtop++] = page;
+		z_erofs_onlinefolio_end(page_folio(page), err);
 	}
-	while (jtop)
-		erofs_pagepool_add(be->pagepool,
-				   be->decompressed_pages[--jtop]);
+
 	if (be->decompressed_pages != be->onstack_pages)
 		kvfree(be->decompressed_pages);
 
@@ -1298,8 +1325,8 @@ static int z_erofs_decompress_pcluster(struct z_erofs_decompress_backend *be,
 	return err;
 }
 
-static int z_erofs_decompress_queue(const struct z_erofs_decompressqueue *io,
-				    struct page **pagepool)
+static void z_erofs_decompress_queue(const struct z_erofs_decompressqueue *io,
+				     struct page **pagepool)
 {
 	struct z_erofs_decompress_backend be = {
 		.sb = io->sb,
@@ -1308,7 +1335,6 @@ static int z_erofs_decompress_queue(const struct z_erofs_decompressqueue *io,
 			LIST_HEAD_INIT(be.decompressed_secondary_bvecs),
 	};
 	z_erofs_next_pcluster_t owned = io->head;
-	int err = io->eio ? -EIO : 0;
 
 	while (owned != Z_EROFS_PCLUSTER_TAIL) {
 		DBG_BUGON(owned == Z_EROFS_PCLUSTER_NIL);
@@ -1316,13 +1342,12 @@ static int z_erofs_decompress_queue(const struct z_erofs_decompressqueue *io,
 		be.pcl = container_of(owned, struct z_erofs_pcluster, next);
 		owned = READ_ONCE(be.pcl->next);
 
-		err = z_erofs_decompress_pcluster(&be, err) ?: err;
+		z_erofs_decompress_pcluster(&be, io->eio ? -EIO : 0);
 		if (z_erofs_is_inline_pcluster(be.pcl))
 			z_erofs_free_pcluster(be.pcl);
 		else
 			erofs_workgroup_put(&be.pcl->obj);
 	}
-	return err;
 }
 
 static void z_erofs_decompressqueue_work(struct work_struct *work)
@@ -1394,7 +1419,6 @@ static void z_erofs_fill_bio_vec(struct bio_vec *bvec,
 	bool tocache = false;
 	struct z_erofs_bvec zbv;
 	struct address_space *mapping;
-	struct folio *folio;
 	struct page *page;
 	int bs = i_blocksize(f->inode);
 
@@ -1405,24 +1429,23 @@ repeat:
 	spin_lock(&pcl->obj.lockref.lock);
 	zbv = pcl->compressed_bvecs[nr];
 	spin_unlock(&pcl->obj.lockref.lock);
-	if (!zbv.page)
+	if (!zbv.folio)
 		goto out_allocfolio;
 
-	bvec->bv_page = zbv.page;
+	bvec->bv_page = &zbv.folio->page;
 	DBG_BUGON(z_erofs_is_shortlived_page(bvec->bv_page));
-
-	folio = page_folio(zbv.page);
 	/*
 	 * Handle preallocated cached folios.  We tried to allocate such folios
 	 * without triggering direct reclaim.  If allocation failed, inplace
 	 * file-backed folios will be used instead.
 	 */
-	if (folio->private == (void *)Z_EROFS_PREALLOCATED_PAGE) {
+	if (zbv.folio->private == (void *)Z_EROFS_PREALLOCATED_PAGE) {
+		zbv.folio->private = 0;
 		tocache = true;
 		goto out_tocache;
 	}
 
-	mapping = READ_ONCE(folio->mapping);
+	mapping = READ_ONCE(zbv.folio->mapping);
 	/*
 	 * File-backed folios for inplace I/Os are all locked steady,
 	 * therefore it is impossible for `mapping` to be NULL.
@@ -1434,62 +1457,56 @@ repeat:
 		return;
 	}
 
-	folio_lock(folio);
-	if (likely(folio->mapping == mc)) {
+	folio_lock(zbv.folio);
+	if (zbv.folio->mapping == mc) {
 		/*
 		 * The cached folio is still in managed cache but without
 		 * a valid `->private` pcluster hint.  Let's reconnect them.
 		 */
-		if (!folio_test_private(folio)) {
-			folio_attach_private(folio, pcl);
+		if (!folio_test_private(zbv.folio)) {
+			folio_attach_private(zbv.folio, pcl);
 			/* compressed_bvecs[] already takes a ref before */
-			folio_put(folio);
+			folio_put(zbv.folio);
 		}
-		if (likely(folio->private == pcl))  {
-			/* don't submit cache I/Os again if already uptodate */
-			if (folio_test_uptodate(folio)) {
-				folio_unlock(folio);
-				bvec->bv_page = NULL;
-			}
-			return;
+
+		/* no need to submit if it is already up-to-date */
+		if (folio_test_uptodate(zbv.folio)) {
+			folio_unlock(zbv.folio);
+			bvec->bv_page = NULL;
 		}
-		/*
-		 * Already linked with another pcluster, which only appears in
-		 * crafted images by fuzzers for now.  But handle this anyway.
-		 */
-		tocache = false;	/* use temporary short-lived pages */
-	} else {
-		DBG_BUGON(1); /* referenced managed folios can't be truncated */
-		tocache = true;
+		return;
 	}
-	folio_unlock(folio);
-	folio_put(folio);
+
+	/*
+	 * It has been truncated, so it's unsafe to reuse this one. Let's
+	 * allocate a new page for compressed data.
+	 */
+	DBG_BUGON(zbv.folio->mapping);
+	tocache = true;
+	folio_unlock(zbv.folio);
+	folio_put(zbv.folio);
 out_allocfolio:
-	page = __erofs_allocpage(&f->pagepool, gfp, true);
+	page = erofs_allocpage(&f->pagepool, gfp | __GFP_NOFAIL);
 	spin_lock(&pcl->obj.lockref.lock);
-	if (unlikely(pcl->compressed_bvecs[nr].page != zbv.page)) {
-		if (page)
-			erofs_pagepool_add(&f->pagepool, page);
+	if (pcl->compressed_bvecs[nr].folio) {
+		erofs_pagepool_add(&f->pagepool, page);
 		spin_unlock(&pcl->obj.lockref.lock);
 		cond_resched();
 		goto repeat;
 	}
-	pcl->compressed_bvecs[nr].page = page ? page : ERR_PTR(-ENOMEM);
+	pcl->compressed_bvecs[nr].folio = zbv.folio = page_folio(page);
 	spin_unlock(&pcl->obj.lockref.lock);
 	bvec->bv_page = page;
-	if (!page)
-		return;
-	folio = page_folio(page);
 out_tocache:
 	if (!tocache || bs != PAGE_SIZE ||
-	    filemap_add_folio(mc, folio, pcl->obj.index + nr, gfp)) {
+	    filemap_add_folio(mc, zbv.folio, pcl->obj.index + nr, gfp)) {
 		/* turn into a temporary shortlived folio (1 ref) */
-		folio->private = (void *)Z_EROFS_SHORTLIVED_PAGE;
+		zbv.folio->private = (void *)Z_EROFS_SHORTLIVED_PAGE;
 		return;
 	}
-	folio_attach_private(folio, pcl);
+	folio_attach_private(zbv.folio, pcl);
 	/* drop a refcount added by allocpage (then 2 refs in total here) */
-	folio_put(folio);
+	folio_put(zbv.folio);
 }
 
 static struct z_erofs_decompressqueue *jobqueue_init(struct super_block *sb,
@@ -1621,31 +1638,23 @@ static void z_erofs_submit_queue(struct z_erofs_decompress_frontend *f,
 		cur = mdev.m_pa;
 		end = cur + pcl->pclustersize;
 		do {
-			bvec.bv_page = NULL;
+			z_erofs_fill_bio_vec(&bvec, f, pcl, i++, mc);
+			if (!bvec.bv_page)
+				continue;
+
 			if (bio && (cur != last_pa ||
 				    bio->bi_bdev != mdev.m_bdev)) {
-drain_io:
-				if (erofs_is_fileio_mode(EROFS_SB(sb)))
-					erofs_fileio_submit_bio(bio);
-				else if (erofs_is_fscache_mode(sb))
-					erofs_fscache_submit_bio(bio);
-				else
+io_retry:
+				if (!erofs_is_fscache_mode(sb))
 					submit_bio(bio);
+				else
+					erofs_fscache_submit_bio(bio);
 
 				if (memstall) {
 					psi_memstall_leave(&pflags);
 					memstall = 0;
 				}
 				bio = NULL;
-			}
-
-			if (!bvec.bv_page) {
-				z_erofs_fill_bio_vec(&bvec, f, pcl, i++, mc);
-				if (!bvec.bv_page)
-					continue;
-				if (cur + bvec.bv_len > end)
-					bvec.bv_len = end - cur;
-				DBG_BUGON(bvec.bv_len < sb->s_blocksize);
 			}
 
 			if (unlikely(PageWorkingset(bvec.bv_page)) &&
@@ -1655,13 +1664,10 @@ drain_io:
 			}
 
 			if (!bio) {
-				if (erofs_is_fileio_mode(EROFS_SB(sb)))
-					bio = erofs_fileio_bio_alloc(&mdev);
-				else if (erofs_is_fscache_mode(sb))
-					bio = erofs_fscache_bio_alloc(&mdev);
-				else
-					bio = bio_alloc(mdev.m_bdev, BIO_MAX_VECS,
-							REQ_OP_READ, GFP_NOIO);
+				bio = erofs_is_fscache_mode(sb) ?
+					erofs_fscache_bio_alloc(&mdev) :
+					bio_alloc(mdev.m_bdev, BIO_MAX_VECS,
+						  REQ_OP_READ, GFP_NOIO);
 				bio->bi_end_io = z_erofs_endio;
 				bio->bi_iter.bi_sector = cur >> 9;
 				bio->bi_private = q[JQ_SUBMIT];
@@ -1670,9 +1676,13 @@ drain_io:
 				++nr_bios;
 			}
 
+			if (cur + bvec.bv_len > end)
+				bvec.bv_len = end - cur;
+			DBG_BUGON(bvec.bv_len < sb->s_blocksize);
 			if (!bio_add_page(bio, bvec.bv_page, bvec.bv_len,
 					  bvec.bv_offset))
-				goto drain_io;
+				goto io_retry;
+
 			last_pa = cur + bvec.bv_len;
 			bypass = false;
 		} while ((cur += bvec.bv_len) < end);
@@ -1684,12 +1694,10 @@ drain_io:
 	} while (owned_head != Z_EROFS_PCLUSTER_TAIL);
 
 	if (bio) {
-		if (erofs_is_fileio_mode(EROFS_SB(sb)))
-			erofs_fileio_submit_bio(bio);
-		else if (erofs_is_fscache_mode(sb))
-			erofs_fscache_submit_bio(bio);
-		else
+		if (!erofs_is_fscache_mode(sb))
 			submit_bio(bio);
+		else
+			erofs_fscache_submit_bio(bio);
 		if (memstall)
 			psi_memstall_leave(&pflags);
 	}
@@ -1705,28 +1713,26 @@ drain_io:
 	z_erofs_decompress_kickoff(q[JQ_SUBMIT], nr_bios);
 }
 
-static int z_erofs_runqueue(struct z_erofs_decompress_frontend *f,
-			    unsigned int ra_folios)
+static void z_erofs_runqueue(struct z_erofs_decompress_frontend *f,
+			     bool force_fg, bool ra)
 {
 	struct z_erofs_decompressqueue io[NR_JOBQUEUES];
-	struct erofs_sb_info *sbi = EROFS_I_SB(f->inode);
-	bool force_fg = z_erofs_is_sync_decompress(sbi, ra_folios);
-	int err;
 
 	if (f->owned_head == Z_EROFS_PCLUSTER_TAIL)
-		return 0;
-	z_erofs_submit_queue(f, io, &force_fg, !!ra_folios);
+		return;
+	z_erofs_submit_queue(f, io, &force_fg, ra);
 
 	/* handle bypass queue (no i/o pclusters) immediately */
-	err = z_erofs_decompress_queue(&io[JQ_BYPASS], &f->pagepool);
+	z_erofs_decompress_queue(&io[JQ_BYPASS], &f->pagepool);
+
 	if (!force_fg)
-		return err;
+		return;
 
 	/* wait until all bios are completed */
 	wait_for_completion_io(&io[JQ_SUBMIT].u.done);
 
 	/* handle synchronous decompress queue in the caller context */
-	return z_erofs_decompress_queue(&io[JQ_SUBMIT], &f->pagepool) ?: err;
+	z_erofs_decompress_queue(&io[JQ_SUBMIT], &f->pagepool);
 }
 
 /*
@@ -1761,6 +1767,7 @@ static void z_erofs_pcluster_readmore(struct z_erofs_decompress_frontend *f,
 		end = round_up(end, PAGE_SIZE);
 	} else {
 		end = round_up(map->m_la, PAGE_SIZE);
+
 		if (!map->m_llen)
 			return;
 	}
@@ -1768,15 +1775,15 @@ static void z_erofs_pcluster_readmore(struct z_erofs_decompress_frontend *f,
 	cur = map->m_la + map->m_llen - 1;
 	while ((cur >= end) && (cur < i_size_read(inode))) {
 		pgoff_t index = cur >> PAGE_SHIFT;
-		struct folio *folio;
+		struct page *page;
 
-		folio = erofs_grab_folio_nowait(inode->i_mapping, index);
-		if (!IS_ERR_OR_NULL(folio)) {
-			if (folio_test_uptodate(folio))
-				folio_unlock(folio);
+		page = erofs_grab_cache_page_nowait(inode->i_mapping, index);
+		if (page) {
+			if (PageUptodate(page))
+				unlock_page(page);
 			else
-				z_erofs_scan_folio(f, folio, !!rac);
-			folio_put(folio);
+				z_erofs_scan_folio(f, page_folio(page), !!rac);
+			put_page(page);
 		}
 
 		if (cur < PAGE_SIZE)
@@ -1788,6 +1795,7 @@ static void z_erofs_pcluster_readmore(struct z_erofs_decompress_frontend *f,
 static int z_erofs_read_folio(struct file *file, struct folio *folio)
 {
 	struct inode *const inode = folio->mapping->host;
+	struct erofs_sb_info *const sbi = EROFS_I_SB(inode);
 	struct z_erofs_decompress_frontend f = DECOMPRESS_FRONTEND_INIT(inode);
 	int err;
 
@@ -1799,8 +1807,9 @@ static int z_erofs_read_folio(struct file *file, struct folio *folio)
 	z_erofs_pcluster_readmore(&f, NULL, false);
 	z_erofs_pcluster_end(&f);
 
-	/* if some pclusters are ready, need submit them anyway */
-	err = z_erofs_runqueue(&f, 0) ?: err;
+	/* if some compressed cluster ready, need submit them anyway */
+	z_erofs_runqueue(&f, z_erofs_is_sync_decompress(sbi, 0), false);
+
 	if (err && err != -EINTR)
 		erofs_err(inode->i_sb, "read error %d @ %lu of nid %llu",
 			  err, folio->index, EROFS_I(inode)->nid);
@@ -1813,6 +1822,7 @@ static int z_erofs_read_folio(struct file *file, struct folio *folio)
 static void z_erofs_readahead(struct readahead_control *rac)
 {
 	struct inode *const inode = rac->mapping->host;
+	struct erofs_sb_info *const sbi = EROFS_I_SB(inode);
 	struct z_erofs_decompress_frontend f = DECOMPRESS_FRONTEND_INIT(inode);
 	struct folio *head = NULL, *folio;
 	unsigned int nr_folios;
@@ -1842,7 +1852,7 @@ static void z_erofs_readahead(struct readahead_control *rac)
 	z_erofs_pcluster_readmore(&f, rac, false);
 	z_erofs_pcluster_end(&f);
 
-	(void)z_erofs_runqueue(&f, nr_folios);
+	z_erofs_runqueue(&f, z_erofs_is_sync_decompress(sbi, nr_folios), true);
 	erofs_put_metabuf(&f.map.buf);
 	erofs_release_pages(&f.pagepool);
 }

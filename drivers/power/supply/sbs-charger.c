@@ -234,7 +234,7 @@ MODULE_DEVICE_TABLE(of, sbs_dt_ids);
 #endif
 
 static const struct i2c_device_id sbs_id[] = {
-	{ "sbs-charger" },
+	{ "sbs-charger", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, sbs_id);

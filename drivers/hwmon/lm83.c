@@ -417,6 +417,13 @@ static int lm83_detect(struct i2c_client *client,
 	return 0;
 }
 
+static const struct i2c_device_id lm83_id[] = {
+	{ "lm83", lm83 },
+	{ "lm82", lm82 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, lm83_id);
+
 static int lm83_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
@@ -431,7 +438,7 @@ static int lm83_probe(struct i2c_client *client)
 	if (IS_ERR(data->regmap))
 		return PTR_ERR(data->regmap);
 
-	data->type = (uintptr_t)i2c_get_match_data(client);
+	data->type = i2c_match_id(lm83_id, client)->driver_data;
 
 	hwmon_dev = devm_hwmon_device_register_with_info(dev, client->name,
 							 data, &lm83_chip_info, NULL);
@@ -441,13 +448,6 @@ static int lm83_probe(struct i2c_client *client)
 /*
  * Driver data (common to all clients)
  */
-
-static const struct i2c_device_id lm83_id[] = {
-	{ "lm83", lm83 },
-	{ "lm82", lm82 },
-	{ }
-};
-MODULE_DEVICE_TABLE(i2c, lm83_id);
 
 static struct i2c_driver lm83_driver = {
 	.class		= I2C_CLASS_HWMON,

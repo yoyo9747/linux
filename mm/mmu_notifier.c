@@ -19,8 +19,6 @@
 #include <linux/sched/mm.h>
 #include <linux/slab.h>
 
-#include "vma.h"
-
 /* global SRCU for all MMs */
 DEFINE_STATIC_SRCU(srcu);
 

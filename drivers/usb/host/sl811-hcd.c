@@ -54,7 +54,7 @@
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/byteorder.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "sl811.h"
 

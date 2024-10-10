@@ -456,9 +456,6 @@ int taskset_restore(pid_t bm_pid, cpu_set_t *old_affinity)
  * @grp:	Full path and name of the group
  * @parent_grp:	Full path and name of the parent group
  *
- * Creates a group @grp_name if it does not exist yet. If @grp_name is NULL,
- * it is interpreted as the root group which always results in success.
- *
  * Return: 0 on success, < 0 on error.
  */
 static int create_grp(const char *grp_name, char *grp, const char *parent_grp)
@@ -467,7 +464,12 @@ static int create_grp(const char *grp_name, char *grp, const char *parent_grp)
 	struct dirent *ep;
 	DIR *dp;
 
-	if (!grp_name)
+	/*
+	 * At this point, we are guaranteed to have resctrl FS mounted and if
+	 * length of grp_name == 0, it means, user wants to use root con_mon
+	 * grp, so do nothing
+	 */
+	if (strlen(grp_name) == 0)
 		return 0;
 
 	/* Check if requested grp exists or not */
@@ -506,7 +508,7 @@ static int write_pid_to_tasks(char *tasks, pid_t pid)
 
 		return -1;
 	}
-	if (fprintf(fp, "%d\n", (int)pid) < 0) {
+	if (fprintf(fp, "%d\n", pid) < 0) {
 		ksft_print_msg("Failed to write pid to tasks file\n");
 		fclose(fp);
 
@@ -522,6 +524,7 @@ static int write_pid_to_tasks(char *tasks, pid_t pid)
  * @bm_pid:		PID that should be written
  * @ctrlgrp:		Name of the control monitor group (con_mon grp)
  * @mongrp:		Name of the monitor group (mon grp)
+ * @resctrl_val:	Resctrl feature (Eg: mbm, mba.. etc)
  *
  * If a con_mon grp is requested, create it and write pid to it, otherwise
  * write pid to root con_mon grp.
@@ -531,13 +534,14 @@ static int write_pid_to_tasks(char *tasks, pid_t pid)
  *
  * Return: 0 on success, < 0 on error.
  */
-int write_bm_pid_to_resctrl(pid_t bm_pid, const char *ctrlgrp, const char *mongrp)
+int write_bm_pid_to_resctrl(pid_t bm_pid, char *ctrlgrp, char *mongrp,
+			    char *resctrl_val)
 {
 	char controlgroup[128], monitorgroup[512], monitorgroup_p[256];
 	char tasks[1024];
 	int ret = 0;
 
-	if (ctrlgrp)
+	if (strlen(ctrlgrp))
 		sprintf(controlgroup, "%s/%s", RESCTRL_PATH, ctrlgrp);
 	else
 		sprintf(controlgroup, "%s", RESCTRL_PATH);
@@ -551,19 +555,22 @@ int write_bm_pid_to_resctrl(pid_t bm_pid, const char *ctrlgrp, const char *mongr
 	if (ret)
 		goto out;
 
-	/* Create monitor group and write pid into if it is used */
-	if (mongrp) {
-		sprintf(monitorgroup_p, "%s/mon_groups", controlgroup);
-		sprintf(monitorgroup, "%s/%s", monitorgroup_p, mongrp);
-		ret = create_grp(mongrp, monitorgroup, monitorgroup_p);
-		if (ret)
-			goto out;
+	/* Create mon grp and write pid into it for "mbm" and "cmt" test */
+	if (!strncmp(resctrl_val, CMT_STR, sizeof(CMT_STR)) ||
+	    !strncmp(resctrl_val, MBM_STR, sizeof(MBM_STR))) {
+		if (strlen(mongrp)) {
+			sprintf(monitorgroup_p, "%s/mon_groups", controlgroup);
+			sprintf(monitorgroup, "%s/%s", monitorgroup_p, mongrp);
+			ret = create_grp(mongrp, monitorgroup, monitorgroup_p);
+			if (ret)
+				goto out;
 
-		sprintf(tasks, "%s/mon_groups/%s/tasks",
-			controlgroup, mongrp);
-		ret = write_pid_to_tasks(tasks, bm_pid);
-		if (ret)
-			goto out;
+			sprintf(tasks, "%s/mon_groups/%s/tasks",
+				controlgroup, mongrp);
+			ret = write_pid_to_tasks(tasks, bm_pid);
+			if (ret)
+				goto out;
+		}
 	}
 
 out:
@@ -586,8 +593,7 @@ out:
  *
  * Return: 0 on success, < 0 on error.
  */
-int write_schemata(const char *ctrlgrp, char *schemata, int cpu_no,
-		   const char *resource)
+int write_schemata(char *ctrlgrp, char *schemata, int cpu_no, const char *resource)
 {
 	char controlgroup[1024], reason[128], schema[1024] = {};
 	int domain_id, fd, schema_len, ret = 0;
@@ -605,7 +611,7 @@ int write_schemata(const char *ctrlgrp, char *schemata, int cpu_no,
 		goto out;
 	}
 
-	if (ctrlgrp)
+	if (strlen(ctrlgrp) != 0)
 		sprintf(controlgroup, "%s/%s/schemata", RESCTRL_PATH, ctrlgrp);
 	else
 		sprintf(controlgroup, "%s/schemata", RESCTRL_PATH);
@@ -831,21 +837,22 @@ int filter_dmesg(void)
 	return 0;
 }
 
-const char *get_bw_report_type(const char *bw_report)
+int validate_bw_report_request(char *bw_report)
 {
 	if (strcmp(bw_report, "reads") == 0)
-		return bw_report;
+		return 0;
 	if (strcmp(bw_report, "writes") == 0)
-		return bw_report;
+		return 0;
 	if (strcmp(bw_report, "nt-writes") == 0) {
-		return "writes";
+		strcpy(bw_report, "writes");
+		return 0;
 	}
 	if (strcmp(bw_report, "total") == 0)
-		return bw_report;
+		return 0;
 
-	fprintf(stderr, "Requested iMC bandwidth report type unavailable\n");
+	fprintf(stderr, "Requested iMC B/W report type unavailable\n");
 
-	return NULL;
+	return -1;
 }
 
 int perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu,

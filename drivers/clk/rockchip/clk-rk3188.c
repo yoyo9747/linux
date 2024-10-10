@@ -757,11 +757,9 @@ static const char *const rk3188_critical_clocks[] __initconst = {
 	"sclk_mac_lbtest",
 };
 
-static struct rockchip_clk_provider *__init rk3188_common_clk_init(struct device_node *np,
-								   unsigned long soc_nr_clks)
+static struct rockchip_clk_provider *__init rk3188_common_clk_init(struct device_node *np)
 {
 	struct rockchip_clk_provider *ctx;
-	unsigned long common_nr_clks;
 	void __iomem *reg_base;
 
 	reg_base = of_iomap(np, 0);
@@ -770,9 +768,7 @@ static struct rockchip_clk_provider *__init rk3188_common_clk_init(struct device
 		return ERR_PTR(-ENOMEM);
 	}
 
-	common_nr_clks = rockchip_clk_find_max_clk_id(common_clk_branches,
-						      ARRAY_SIZE(common_clk_branches)) + 1;
-	ctx = rockchip_clk_init(np, reg_base, max(common_nr_clks, soc_nr_clks));
+	ctx = rockchip_clk_init(np, reg_base, CLK_NR_CLKS);
 	if (IS_ERR(ctx)) {
 		pr_err("%s: rockchip clk init failed\n", __func__);
 		iounmap(reg_base);
@@ -793,11 +789,8 @@ static struct rockchip_clk_provider *__init rk3188_common_clk_init(struct device
 static void __init rk3066a_clk_init(struct device_node *np)
 {
 	struct rockchip_clk_provider *ctx;
-	unsigned long soc_nr_clks;
 
-	soc_nr_clks = rockchip_clk_find_max_clk_id(rk3066a_clk_branches,
-						   ARRAY_SIZE(rk3066a_clk_branches)) + 1;
-	ctx = rk3188_common_clk_init(np, soc_nr_clks);
+	ctx = rk3188_common_clk_init(np);
 	if (IS_ERR(ctx))
 		return;
 
@@ -819,14 +812,11 @@ CLK_OF_DECLARE(rk3066a_cru, "rockchip,rk3066a-cru", rk3066a_clk_init);
 static void __init rk3188a_clk_init(struct device_node *np)
 {
 	struct rockchip_clk_provider *ctx;
-	unsigned long soc_nr_clks;
 	struct clk *clk1, *clk2;
 	unsigned long rate;
 	int ret;
 
-	soc_nr_clks = rockchip_clk_find_max_clk_id(rk3188_clk_branches,
-						   ARRAY_SIZE(rk3188_clk_branches)) + 1;
-	ctx = rk3188_common_clk_init(np, soc_nr_clks);
+	ctx = rk3188_common_clk_init(np);
 	if (IS_ERR(ctx))
 		return;
 

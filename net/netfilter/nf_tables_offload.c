@@ -513,38 +513,38 @@ static void nft_flow_rule_offload_abort(struct net *net,
 	int err = 0;
 
 	list_for_each_entry_continue_reverse(trans, &nft_net->commit_list, list) {
-		if (trans->table->family != NFPROTO_NETDEV)
+		if (trans->ctx.family != NFPROTO_NETDEV)
 			continue;
 
 		switch (trans->msg_type) {
 		case NFT_MSG_NEWCHAIN:
-			if (!(nft_trans_chain(trans)->flags & NFT_CHAIN_HW_OFFLOAD) ||
+			if (!(trans->ctx.chain->flags & NFT_CHAIN_HW_OFFLOAD) ||
 			    nft_trans_chain_update(trans))
 				continue;
 
-			err = nft_flow_offload_chain(nft_trans_chain(trans), NULL,
+			err = nft_flow_offload_chain(trans->ctx.chain, NULL,
 						     FLOW_BLOCK_UNBIND);
 			break;
 		case NFT_MSG_DELCHAIN:
-			if (!(nft_trans_chain(trans)->flags & NFT_CHAIN_HW_OFFLOAD))
+			if (!(trans->ctx.chain->flags & NFT_CHAIN_HW_OFFLOAD))
 				continue;
 
-			err = nft_flow_offload_chain(nft_trans_chain(trans), NULL,
+			err = nft_flow_offload_chain(trans->ctx.chain, NULL,
 						     FLOW_BLOCK_BIND);
 			break;
 		case NFT_MSG_NEWRULE:
-			if (!(nft_trans_rule_chain(trans)->flags & NFT_CHAIN_HW_OFFLOAD))
+			if (!(trans->ctx.chain->flags & NFT_CHAIN_HW_OFFLOAD))
 				continue;
 
-			err = nft_flow_offload_rule(nft_trans_rule_chain(trans),
+			err = nft_flow_offload_rule(trans->ctx.chain,
 						    nft_trans_rule(trans),
 						    NULL, FLOW_CLS_DESTROY);
 			break;
 		case NFT_MSG_DELRULE:
-			if (!(nft_trans_rule_chain(trans)->flags & NFT_CHAIN_HW_OFFLOAD))
+			if (!(trans->ctx.chain->flags & NFT_CHAIN_HW_OFFLOAD))
 				continue;
 
-			err = nft_flow_offload_rule(nft_trans_rule_chain(trans),
+			err = nft_flow_offload_rule(trans->ctx.chain,
 						    nft_trans_rule(trans),
 						    nft_trans_flow_rule(trans),
 						    FLOW_CLS_REPLACE);
@@ -564,46 +564,46 @@ int nft_flow_rule_offload_commit(struct net *net)
 	u8 policy;
 
 	list_for_each_entry(trans, &nft_net->commit_list, list) {
-		if (trans->table->family != NFPROTO_NETDEV)
+		if (trans->ctx.family != NFPROTO_NETDEV)
 			continue;
 
 		switch (trans->msg_type) {
 		case NFT_MSG_NEWCHAIN:
-			if (!(nft_trans_chain(trans)->flags & NFT_CHAIN_HW_OFFLOAD) ||
+			if (!(trans->ctx.chain->flags & NFT_CHAIN_HW_OFFLOAD) ||
 			    nft_trans_chain_update(trans))
 				continue;
 
 			policy = nft_trans_chain_policy(trans);
-			err = nft_flow_offload_chain(nft_trans_chain(trans), &policy,
+			err = nft_flow_offload_chain(trans->ctx.chain, &policy,
 						     FLOW_BLOCK_BIND);
 			break;
 		case NFT_MSG_DELCHAIN:
-			if (!(nft_trans_chain(trans)->flags & NFT_CHAIN_HW_OFFLOAD))
+			if (!(trans->ctx.chain->flags & NFT_CHAIN_HW_OFFLOAD))
 				continue;
 
 			policy = nft_trans_chain_policy(trans);
-			err = nft_flow_offload_chain(nft_trans_chain(trans), &policy,
+			err = nft_flow_offload_chain(trans->ctx.chain, &policy,
 						     FLOW_BLOCK_UNBIND);
 			break;
 		case NFT_MSG_NEWRULE:
-			if (!(nft_trans_rule_chain(trans)->flags & NFT_CHAIN_HW_OFFLOAD))
+			if (!(trans->ctx.chain->flags & NFT_CHAIN_HW_OFFLOAD))
 				continue;
 
-			if (trans->flags & NLM_F_REPLACE ||
-			    !(trans->flags & NLM_F_APPEND)) {
+			if (trans->ctx.flags & NLM_F_REPLACE ||
+			    !(trans->ctx.flags & NLM_F_APPEND)) {
 				err = -EOPNOTSUPP;
 				break;
 			}
-			err = nft_flow_offload_rule(nft_trans_rule_chain(trans),
+			err = nft_flow_offload_rule(trans->ctx.chain,
 						    nft_trans_rule(trans),
 						    nft_trans_flow_rule(trans),
 						    FLOW_CLS_REPLACE);
 			break;
 		case NFT_MSG_DELRULE:
-			if (!(nft_trans_rule_chain(trans)->flags & NFT_CHAIN_HW_OFFLOAD))
+			if (!(trans->ctx.chain->flags & NFT_CHAIN_HW_OFFLOAD))
 				continue;
 
-			err = nft_flow_offload_rule(nft_trans_rule_chain(trans),
+			err = nft_flow_offload_rule(trans->ctx.chain,
 						    nft_trans_rule(trans),
 						    NULL, FLOW_CLS_DESTROY);
 			break;

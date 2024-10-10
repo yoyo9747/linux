@@ -34,7 +34,6 @@ algorithms work.
    seq_file
    sharedsubtree
    idmappings
-   iomap/index
 
    automount-support
 

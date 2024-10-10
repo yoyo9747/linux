@@ -132,15 +132,11 @@ xfs_sb_validate_fsb_count(
 	xfs_sb_t	*sbp,
 	uint64_t	nblocks)
 {
-	uint64_t		max_bytes;
-
+	ASSERT(PAGE_SHIFT >= sbp->sb_blocklog);
 	ASSERT(sbp->sb_blocklog >= BBSHIFT);
 
-	if (check_shl_overflow(nblocks, sbp->sb_blocklog, &max_bytes))
-		return -EFBIG;
-
 	/* Limited by ULONG_MAX of page cache index */
-	if (max_bytes >> PAGE_SHIFT > ULONG_MAX)
+	if (nblocks >> (PAGE_SHIFT - sbp->sb_blocklog) > ULONG_MAX)
 		return -EFBIG;
 	return 0;
 }
@@ -599,7 +595,7 @@ xfs_unmount_flush_inodes(
 	xfs_extent_busy_wait_all(mp);
 	flush_workqueue(xfs_discard_wq);
 
-	xfs_set_unmounting(mp);
+	set_bit(XFS_OPSTATE_UNMOUNTING, &mp->m_opstate);
 
 	xfs_ail_push_all_sync(mp->m_ail);
 	xfs_inodegc_stop(mp);

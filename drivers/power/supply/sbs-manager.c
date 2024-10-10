@@ -389,8 +389,8 @@ static int sbsm_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id sbsm_ids[] = {
-	{ "sbs-manager" },
-	{ "ltc1760" },
+	{ "sbs-manager", 0 },
+	{ "ltc1760",     0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, sbsm_ids);

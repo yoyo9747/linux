@@ -142,5 +142,4 @@ struct regmap *__regmap_init_raw_ram(struct device *dev,
 }
 EXPORT_SYMBOL_GPL(__regmap_init_raw_ram);
 
-MODULE_DESCRIPTION("Register map access API - Memory region with raw access");
 MODULE_LICENSE("GPL v2");

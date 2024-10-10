@@ -28,12 +28,11 @@
 #include <linux/sched/signal.h>
 #include <linux/uio.h>
 #include <linux/vmalloc.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <linux/usb/ccid.h>
 #include <linux/usb/composite.h>
 #include <linux/usb/functionfs.h>
-#include <linux/usb/func_utils.h>
 
 #include <linux/aio.h>
 #include <linux/kthread.h>
@@ -41,6 +40,7 @@
 #include <linux/eventfd.h>
 
 #include "u_fs.h"
+#include "u_f.h"
 #include "u_os_desc.h"
 #include "configfs.h"
 
@@ -722,6 +722,7 @@ static __poll_t ffs_ep0_poll(struct file *file, poll_table *wait)
 }
 
 static const struct file_operations ffs_ep0_operations = {
+	.llseek =	no_llseek,
 
 	.open =		ffs_ep0_open,
 	.write =	ffs_ep0_write,
@@ -1829,6 +1830,7 @@ static long ffs_epfile_ioctl(struct file *file, unsigned code,
 }
 
 static const struct file_operations ffs_epfile_operations = {
+	.llseek =	no_llseek,
 
 	.open =		ffs_epfile_open,
 	.write_iter =	ffs_epfile_write_iter,
@@ -2476,7 +2478,7 @@ typedef int (*ffs_os_desc_callback)(enum ffs_os_desc_type entity,
 
 static int __must_check ffs_do_single_desc(char *data, unsigned len,
 					   ffs_entity_callback entity,
-					   void *priv, int *current_class, int *current_subclass)
+					   void *priv, int *current_class)
 {
 	struct usb_descriptor_header *_ds = (void *)data;
 	u8 length;
@@ -2533,7 +2535,6 @@ static int __must_check ffs_do_single_desc(char *data, unsigned len,
 		if (ds->iInterface)
 			__entity(STRING, ds->iInterface);
 		*current_class = ds->bInterfaceClass;
-		*current_subclass = ds->bInterfaceSubClass;
 	}
 		break;
 
@@ -2556,12 +2557,6 @@ static int __must_check ffs_do_single_desc(char *data, unsigned len,
 		} else if (*current_class == USB_INTERFACE_CLASS_CCID) {
 			pr_vdebug("ccid descriptor\n");
 			if (length != sizeof(struct ccid_descriptor))
-				goto inv_length;
-			break;
-		} else if (*current_class == USB_CLASS_APP_SPEC &&
-			   *current_subclass == USB_SUBCLASS_DFU) {
-			pr_vdebug("dfu functional descriptor\n");
-			if (length != sizeof(struct usb_dfu_functional_descriptor))
 				goto inv_length;
 			break;
 		} else {
@@ -2626,7 +2621,6 @@ static int __must_check ffs_do_descs(unsigned count, char *data, unsigned len,
 	const unsigned _len = len;
 	unsigned long num = 0;
 	int current_class = -1;
-	int current_subclass = -1;
 
 	for (;;) {
 		int ret;
@@ -2646,7 +2640,7 @@ static int __must_check ffs_do_descs(unsigned count, char *data, unsigned len,
 			return _len - len;
 
 		ret = ffs_do_single_desc(data, len, entity, priv,
-			&current_class, &current_subclass);
+			&current_class);
 		if (ret < 0) {
 			pr_debug("%s returns %d\n", __func__, ret);
 			return ret;
@@ -3740,9 +3734,11 @@ static int ffs_func_set_alt(struct usb_function *f,
 	if (alt > MAX_ALT_SETTINGS)
 		return -EINVAL;
 
-	intf = ffs_func_revmap_intf(func, interface);
-	if (intf < 0)
-		return intf;
+	if (alt != (unsigned)-1) {
+		intf = ffs_func_revmap_intf(func, interface);
+		if (intf < 0)
+			return intf;
+	}
 
 	if (ffs->func)
 		ffs_func_eps_disable(ffs->func);
@@ -3757,6 +3753,12 @@ static int ffs_func_set_alt(struct usb_function *f,
 	if (ffs->state != FFS_ACTIVE)
 		return -ENODEV;
 
+	if (alt == (unsigned)-1) {
+		ffs->func = NULL;
+		ffs_event_add(ffs, FUNCTIONFS_DISABLE);
+		return 0;
+	}
+
 	ffs->func = func;
 	ret = ffs_func_eps_enable(func);
 	if (ret >= 0) {
@@ -3768,23 +3770,7 @@ static int ffs_func_set_alt(struct usb_function *f,
 
 static void ffs_func_disable(struct usb_function *f)
 {
-	struct ffs_function *func = ffs_func_from_usb(f);
-	struct ffs_data *ffs = func->ffs;
-
-	if (ffs->func)
-		ffs_func_eps_disable(ffs->func);
-
-	if (ffs->state == FFS_DEACTIVATED) {
-		ffs->state = FFS_CLOSING;
-		INIT_WORK(&ffs->reset_work, ffs_reset_work);
-		schedule_work(&ffs->reset_work);
-		return;
-	}
-
-	if (ffs->state == FFS_ACTIVE) {
-		ffs->func = NULL;
-		ffs_event_add(ffs, FUNCTIONFS_DISABLE);
-	}
+	ffs_func_set_alt(f, 0, (unsigned)-1);
 }
 
 static int ffs_func_setup(struct usb_function *f,
@@ -4330,6 +4316,5 @@ static char *ffs_prepare_buffer(const char __user *buf, size_t len)
 }
 
 DECLARE_USB_FUNCTION_INIT(ffs, ffs_alloc_inst, ffs_alloc);
-MODULE_DESCRIPTION("user mode file system API for USB composite function controllers");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Michal Nazarewicz");

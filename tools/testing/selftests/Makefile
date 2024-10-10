@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0
-TARGETS += acct
 TARGETS += alsa
 TARGETS += amd-pstate
 TARGETS += arm64
@@ -14,8 +13,7 @@ TARGETS += core
 TARGETS += cpufreq
 TARGETS += cpu-hotplug
 TARGETS += damon
-TARGETS += devices/error_logs
-TARGETS += devices/probe
+TARGETS += devices
 TARGETS += dmabuf-heaps
 TARGETS += drivers/dma-buf
 TARGETS += drivers/s390x/uvdevice
@@ -23,7 +21,6 @@ TARGETS += drivers/net
 TARGETS += drivers/net/bonding
 TARGETS += drivers/net/team
 TARGETS += drivers/net/virtio_net
-TARGETS += drivers/platform/x86/intel/ifs
 TARGETS += dt
 TARGETS += efivarfs
 TARGETS += exec
@@ -66,11 +63,9 @@ TARGETS += net/af_unix
 TARGETS += net/forwarding
 TARGETS += net/hsr
 TARGETS += net/mptcp
-TARGETS += net/netfilter
 TARGETS += net/openvswitch
-TARGETS += net/packetdrill
-TARGETS += net/rds
 TARGETS += net/tcp_ao
+TARGETS += net/netfilter
 TARGETS += nsfs
 TARGETS += perf_events
 TARGETS += pidfd
@@ -110,6 +105,7 @@ TARGETS += tmpfs
 TARGETS += tpm2
 TARGETS += tty
 TARGETS += uevent
+TARGETS += user
 TARGETS += user_events
 TARGETS += vDSO
 TARGETS += mm
@@ -255,7 +251,6 @@ ifdef INSTALL_PATH
 	install -m 744 kselftest/runner.sh $(INSTALL_PATH)/kselftest/
 	install -m 744 kselftest/prefix.pl $(INSTALL_PATH)/kselftest/
 	install -m 744 kselftest/ktap_helpers.sh $(INSTALL_PATH)/kselftest/
-	install -m 744 kselftest/ksft.py $(INSTALL_PATH)/kselftest/
 	install -m 744 run_kselftest.sh $(INSTALL_PATH)/
 	rm -f $(TEST_LIST)
 	@ret=1;	\

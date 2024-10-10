@@ -204,6 +204,7 @@ static const struct file_operations media_devnode_fops = {
 #endif /* CONFIG_COMPAT */
 	.release = media_release,
 	.poll = media_poll,
+	.llseek = no_llseek,
 };
 
 int __must_check media_devnode_register(struct media_device *mdev,

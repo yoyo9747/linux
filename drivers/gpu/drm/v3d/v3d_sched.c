@@ -73,46 +73,24 @@ v3d_sched_job_free(struct drm_sched_job *sched_job)
 	v3d_job_cleanup(job);
 }
 
-void
-v3d_timestamp_query_info_free(struct v3d_timestamp_query_info *query_info,
-			      unsigned int count)
-{
-	if (query_info->queries) {
-		unsigned int i;
-
-		for (i = 0; i < count; i++)
-			drm_syncobj_put(query_info->queries[i].syncobj);
-
-		kvfree(query_info->queries);
-	}
-}
-
-void
-v3d_performance_query_info_free(struct v3d_performance_query_info *query_info,
-				unsigned int count)
-{
-	if (query_info->queries) {
-		unsigned int i;
-
-		for (i = 0; i < count; i++) {
-			drm_syncobj_put(query_info->queries[i].syncobj);
-			kvfree(query_info->queries[i].kperfmon_ids);
-		}
-
-		kvfree(query_info->queries);
-	}
-}
-
 static void
 v3d_cpu_job_free(struct drm_sched_job *sched_job)
 {
 	struct v3d_cpu_job *job = to_cpu_job(sched_job);
+	struct v3d_timestamp_query_info *timestamp_query = &job->timestamp_query;
+	struct v3d_performance_query_info *performance_query = &job->performance_query;
 
-	v3d_timestamp_query_info_free(&job->timestamp_query,
-				      job->timestamp_query.count);
+	if (timestamp_query->queries) {
+		for (int i = 0; i < timestamp_query->count; i++)
+			drm_syncobj_put(timestamp_query->queries[i].syncobj);
+		kvfree(timestamp_query->queries);
+	}
 
-	v3d_performance_query_info_free(&job->performance_query,
-					job->performance_query.count);
+	if (performance_query->queries) {
+		for (int i = 0; i < performance_query->count; i++)
+			drm_syncobj_put(performance_query->queries[i].syncobj);
+		kvfree(performance_query->queries);
+	}
 
 	v3d_job_cleanup(&job->base);
 }
@@ -136,8 +114,6 @@ v3d_job_start_stats(struct v3d_job *job, enum v3d_queue queue)
 	struct v3d_stats *local_stats = &file->stats[queue];
 	u64 now = local_clock();
 
-	preempt_disable();
-
 	write_seqcount_begin(&local_stats->lock);
 	local_stats->start_ns = now;
 	write_seqcount_end(&local_stats->lock);
@@ -145,8 +121,6 @@ v3d_job_start_stats(struct v3d_job *job, enum v3d_queue queue)
 	write_seqcount_begin(&global_stats->lock);
 	global_stats->start_ns = now;
 	write_seqcount_end(&global_stats->lock);
-
-	preempt_enable();
 }
 
 static void
@@ -168,10 +142,8 @@ v3d_job_update_stats(struct v3d_job *job, enum v3d_queue queue)
 	struct v3d_stats *local_stats = &file->stats[queue];
 	u64 now = local_clock();
 
-	preempt_disable();
 	v3d_stats_update(local_stats, now);
 	v3d_stats_update(global_stats, now);
-	preempt_enable();
 }
 
 static struct dma_fence *v3d_bin_job_run(struct drm_sched_job *sched_job)
@@ -323,7 +295,7 @@ v3d_csd_job_run(struct drm_sched_job *sched_job)
 	struct v3d_dev *v3d = job->base.v3d;
 	struct drm_device *dev = &v3d->drm;
 	struct dma_fence *fence;
-	int i, csd_cfg0_reg;
+	int i, csd_cfg0_reg, csd_cfg_reg_count;
 
 	v3d->csd_job = job;
 
@@ -343,17 +315,9 @@ v3d_csd_job_run(struct drm_sched_job *sched_job)
 	v3d_switch_perfmon(v3d, &job->base);
 
 	csd_cfg0_reg = V3D_CSD_QUEUED_CFG0(v3d->ver);
-	for (i = 1; i <= 6; i++)
+	csd_cfg_reg_count = v3d->ver < 71 ? 6 : 7;
+	for (i = 1; i <= csd_cfg_reg_count; i++)
 		V3D_CORE_WRITE(0, csd_cfg0_reg + 4 * i, job->args.cfg[i]);
-
-	/* Although V3D 7.1 has an eighth configuration register, we are not
-	 * using it. Therefore, make sure it remains unused.
-	 *
-	 * XXX: Set the CFG7 register
-	 */
-	if (v3d->ver >= 71)
-		V3D_CORE_WRITE(0, V3D_V7_CSD_QUEUED_CFG7, 0);
-
 	/* CFG0 write kicks off the job. */
 	V3D_CORE_WRITE(0, csd_cfg0_reg, job->args.cfg[0]);
 
@@ -435,23 +399,18 @@ v3d_reset_timestamp_queries(struct v3d_cpu_job *job)
 	v3d_put_bo_vaddr(bo);
 }
 
-static void write_to_buffer_32(u32 *dst, unsigned int idx, u32 value)
-{
-	dst[idx] = value;
-}
-
-static void write_to_buffer_64(u64 *dst, unsigned int idx, u64 value)
-{
-	dst[idx] = value;
-}
-
 static void
-write_to_buffer(void *dst, unsigned int idx, bool do_64bit, u64 value)
+write_to_buffer(void *dst, u32 idx, bool do_64bit, u64 value)
 {
-	if (do_64bit)
-		write_to_buffer_64(dst, idx, value);
-	else
-		write_to_buffer_32(dst, idx, value);
+	if (do_64bit) {
+		u64 *dst64 = (u64 *)dst;
+
+		dst64[idx] = value;
+	} else {
+		u32 *dst32 = (u32 *)dst;
+
+		dst32[idx] = (u32)value;
+	}
 }
 
 static void
@@ -524,24 +483,18 @@ v3d_reset_performance_queries(struct v3d_cpu_job *job)
 }
 
 static void
-v3d_write_performance_query_result(struct v3d_cpu_job *job, void *data,
-				   unsigned int query)
+v3d_write_performance_query_result(struct v3d_cpu_job *job, void *data, u32 query)
 {
-	struct v3d_performance_query_info *performance_query =
-						&job->performance_query;
+	struct v3d_performance_query_info *performance_query = &job->performance_query;
+	struct v3d_copy_query_results_info *copy = &job->copy;
 	struct v3d_file_priv *v3d_priv = job->base.file->driver_priv;
-	struct v3d_performance_query *perf_query =
-			&performance_query->queries[query];
 	struct v3d_dev *v3d = job->base.v3d;
-	unsigned int i, j, offset;
+	struct v3d_perfmon *perfmon;
+	u64 counter_values[V3D_PERFCNT_NUM];
 
-	for (i = 0, offset = 0;
-	     i < performance_query->nperfmons;
-	     i++, offset += DRM_V3D_MAX_PERF_COUNTERS) {
-		struct v3d_perfmon *perfmon;
-
+	for (int i = 0; i < performance_query->nperfmons; i++) {
 		perfmon = v3d_perfmon_find(v3d_priv,
-					   perf_query->kperfmon_ids[i]);
+					   performance_query->queries[query].kperfmon_ids[i]);
 		if (!perfmon) {
 			DRM_DEBUG("Failed to find perfmon.");
 			continue;
@@ -549,18 +502,14 @@ v3d_write_performance_query_result(struct v3d_cpu_job *job, void *data,
 
 		v3d_perfmon_stop(v3d, perfmon, true);
 
-		if (job->copy.do_64bit) {
-			for (j = 0; j < perfmon->ncounters; j++)
-				write_to_buffer_64(data, offset + j,
-						   perfmon->values[j]);
-		} else {
-			for (j = 0; j < perfmon->ncounters; j++)
-				write_to_buffer_32(data, offset + j,
-						   perfmon->values[j]);
-		}
+		memcpy(&counter_values[i * DRM_V3D_MAX_PERF_COUNTERS], perfmon->values,
+		       perfmon->ncounters * sizeof(u64));
 
 		v3d_perfmon_put(perfmon);
 	}
+
+	for (int i = 0; i < performance_query->ncounters; i++)
+		write_to_buffer(data, i, copy->do_64bit, counter_values[i]);
 }
 
 static void
@@ -667,7 +616,7 @@ v3d_gpu_reset_for_timeout(struct v3d_dev *v3d, struct drm_sched_job *sched_job)
 
 	/* Unblock schedulers and restart their jobs. */
 	for (q = 0; q < V3D_MAX_QUEUES; q++) {
-		drm_sched_start(&v3d->queue[q].sched);
+		drm_sched_start(&v3d->queue[q].sched, true);
 	}
 
 	mutex_unlock(&v3d->reset_lock);

@@ -674,11 +674,13 @@ EXPORT_SYMBOL(drm_sched_stop);
  * drm_sched_start - recover jobs after a reset
  *
  * @sched: scheduler instance
+ * @full_recovery: proceed with complete sched restart
  *
  */
-void drm_sched_start(struct drm_gpu_scheduler *sched)
+void drm_sched_start(struct drm_gpu_scheduler *sched, bool full_recovery)
 {
 	struct drm_sched_job *s_job, *tmp;
+	int r;
 
 	/*
 	 * Locking the list is not required here as the sched thread is parked
@@ -690,17 +692,24 @@ void drm_sched_start(struct drm_gpu_scheduler *sched)
 
 		atomic_add(s_job->credits, &sched->credit_count);
 
-		if (!fence) {
-			drm_sched_job_done(s_job, -ECANCELED);
+		if (!full_recovery)
 			continue;
-		}
 
-		if (dma_fence_add_callback(fence, &s_job->cb,
-					   drm_sched_job_done_cb))
-			drm_sched_job_done(s_job, fence->error);
+		if (fence) {
+			r = dma_fence_add_callback(fence, &s_job->cb,
+						   drm_sched_job_done_cb);
+			if (r == -ENOENT)
+				drm_sched_job_done(s_job, fence->error);
+			else if (r)
+				DRM_DEV_ERROR(sched->dev, "fence add callback failed (%d)\n",
+					  r);
+		} else
+			drm_sched_job_done(s_job, -ECANCELED);
 	}
 
-	drm_sched_start_timeout_unlocked(sched);
+	if (full_recovery)
+		drm_sched_start_timeout_unlocked(sched);
+
 	drm_sched_wqueue_start(sched);
 }
 EXPORT_SYMBOL(drm_sched_start);
@@ -1013,12 +1022,15 @@ EXPORT_SYMBOL(drm_sched_job_cleanup);
 /**
  * drm_sched_wakeup - Wake up the scheduler if it is ready to queue
  * @sched: scheduler instance
+ * @entity: the scheduler entity
  *
  * Wake up the scheduler if we can queue jobs.
  */
-void drm_sched_wakeup(struct drm_gpu_scheduler *sched)
+void drm_sched_wakeup(struct drm_gpu_scheduler *sched,
+		      struct drm_sched_entity *entity)
 {
-	drm_sched_run_job_queue(sched);
+	if (drm_sched_can_queue(sched, entity))
+		drm_sched_run_job_queue(sched);
 }
 
 /**

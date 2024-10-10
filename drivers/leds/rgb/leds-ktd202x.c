@@ -99,7 +99,7 @@ struct ktd202x {
 	struct device *dev;
 	struct regmap *regmap;
 	bool enabled;
-	unsigned long num_leds;
+	int num_leds;
 	struct ktd202x_led leds[] __counted_by(num_leds);
 };
 
@@ -381,19 +381,16 @@ static int ktd202x_blink_mc_set(struct led_classdev *cdev,
 				 mc->num_colors);
 }
 
-static int ktd202x_setup_led_rgb(struct ktd202x *chip, struct fwnode_handle *fwnode,
+static int ktd202x_setup_led_rgb(struct ktd202x *chip, struct device_node *np,
 				 struct ktd202x_led *led, struct led_init_data *init_data)
 {
-	struct fwnode_handle *child;
 	struct led_classdev *cdev;
+	struct device_node *child;
 	struct mc_subled *info;
 	int num_channels;
 	int i = 0;
 
-	num_channels = 0;
-	fwnode_for_each_available_child_node(fwnode, child)
-		num_channels++;
-
+	num_channels = of_get_available_child_count(np);
 	if (!num_channels || num_channels > chip->num_leds)
 		return -EINVAL;
 
@@ -401,22 +398,22 @@ static int ktd202x_setup_led_rgb(struct ktd202x *chip, struct fwnode_handle *fwn
 	if (!info)
 		return -ENOMEM;
 
-	fwnode_for_each_available_child_node(fwnode, child) {
+	for_each_available_child_of_node(np, child) {
 		u32 mono_color;
 		u32 reg;
 		int ret;
 
-		ret = fwnode_property_read_u32(child, "reg", &reg);
+		ret = of_property_read_u32(child, "reg", &reg);
 		if (ret != 0 || reg >= chip->num_leds) {
-			dev_err(chip->dev, "invalid 'reg' of %pfw\n", child);
-			fwnode_handle_put(child);
-			return ret;
+			dev_err(chip->dev, "invalid 'reg' of %pOFn\n", child);
+			of_node_put(child);
+			return -EINVAL;
 		}
 
-		ret = fwnode_property_read_u32(child, "color", &mono_color);
+		ret = of_property_read_u32(child, "color", &mono_color);
 		if (ret < 0 && ret != -EINVAL) {
-			dev_err(chip->dev, "failed to parse 'color' of %pfw\n", child);
-			fwnode_handle_put(child);
+			dev_err(chip->dev, "failed to parse 'color' of %pOF\n", child);
+			of_node_put(child);
 			return ret;
 		}
 
@@ -436,16 +433,16 @@ static int ktd202x_setup_led_rgb(struct ktd202x *chip, struct fwnode_handle *fwn
 	return devm_led_classdev_multicolor_register_ext(chip->dev, &led->mcdev, init_data);
 }
 
-static int ktd202x_setup_led_single(struct ktd202x *chip, struct fwnode_handle *fwnode,
+static int ktd202x_setup_led_single(struct ktd202x *chip, struct device_node *np,
 				    struct ktd202x_led *led, struct led_init_data *init_data)
 {
 	struct led_classdev *cdev;
 	u32 reg;
 	int ret;
 
-	ret = fwnode_property_read_u32(fwnode, "reg", &reg);
+	ret = of_property_read_u32(np, "reg", &reg);
 	if (ret != 0 || reg >= chip->num_leds) {
-		dev_err(chip->dev, "invalid 'reg' of %pfw\n", fwnode);
+		dev_err(chip->dev, "invalid 'reg' of %pOFn\n", np);
 		return -EINVAL;
 	}
 	led->index = reg;
@@ -457,7 +454,7 @@ static int ktd202x_setup_led_single(struct ktd202x *chip, struct fwnode_handle *
 	return devm_led_classdev_register_ext(chip->dev, &led->cdev, init_data);
 }
 
-static int ktd202x_add_led(struct ktd202x *chip, struct fwnode_handle *fwnode, unsigned int index)
+static int ktd202x_add_led(struct ktd202x *chip, struct device_node *np, unsigned int index)
 {
 	struct ktd202x_led *led = &chip->leds[index];
 	struct led_init_data init_data = {};
@@ -466,21 +463,21 @@ static int ktd202x_add_led(struct ktd202x *chip, struct fwnode_handle *fwnode, u
 	int ret;
 
 	/* Color property is optional in single color case */
-	ret = fwnode_property_read_u32(fwnode, "color", &color);
+	ret = of_property_read_u32(np, "color", &color);
 	if (ret < 0 && ret != -EINVAL) {
-		dev_err(chip->dev, "failed to parse 'color' of %pfw\n", fwnode);
+		dev_err(chip->dev, "failed to parse 'color' of %pOF\n", np);
 		return ret;
 	}
 
 	led->chip = chip;
-	init_data.fwnode = fwnode;
+	init_data.fwnode = of_fwnode_handle(np);
 
 	if (color == LED_COLOR_ID_RGB) {
 		cdev = &led->mcdev.led_cdev;
-		ret = ktd202x_setup_led_rgb(chip, fwnode, led, &init_data);
+		ret = ktd202x_setup_led_rgb(chip, np, led, &init_data);
 	} else {
 		cdev = &led->cdev;
-		ret = ktd202x_setup_led_single(chip, fwnode, led, &init_data);
+		ret = ktd202x_setup_led_single(chip, np, led, &init_data);
 	}
 
 	if (ret) {
@@ -493,14 +490,15 @@ static int ktd202x_add_led(struct ktd202x *chip, struct fwnode_handle *fwnode, u
 	return 0;
 }
 
-static int ktd202x_probe_fw(struct ktd202x *chip)
+static int ktd202x_probe_dt(struct ktd202x *chip)
 {
-	struct fwnode_handle *child;
-	struct device *dev = chip->dev;
+	struct device_node *np = dev_of_node(chip->dev), *child;
 	int count;
 	int i = 0;
 
-	count = device_get_child_node_count(dev);
+	chip->num_leds = (int)(unsigned long)of_device_get_match_data(chip->dev);
+
+	count = of_get_available_child_count(np);
 	if (!count || count > chip->num_leds)
 		return -EINVAL;
 
@@ -509,11 +507,11 @@ static int ktd202x_probe_fw(struct ktd202x *chip)
 	/* Allow the device to execute the complete reset */
 	usleep_range(200, 300);
 
-	device_for_each_child_node(dev, child) {
+	for_each_available_child_of_node(np, child) {
 		int ret = ktd202x_add_led(chip, child, i);
 
 		if (ret) {
-			fwnode_handle_put(child);
+			of_node_put(child);
 			return ret;
 		}
 		i++;
@@ -556,12 +554,6 @@ static int ktd202x_probe(struct i2c_client *client)
 		return ret;
 	}
 
-	ret = devm_mutex_init(dev, &chip->mutex);
-	if (ret)
-		return ret;
-
-	chip->num_leds = (unsigned long)i2c_get_match_data(client);
-
 	chip->regulators[0].supply = "vin";
 	chip->regulators[1].supply = "vio";
 	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(chip->regulators), chip->regulators);
@@ -576,7 +568,7 @@ static int ktd202x_probe(struct i2c_client *client)
 		return ret;
 	}
 
-	ret = ktd202x_probe_fw(chip);
+	ret = ktd202x_probe_dt(chip);
 	if (ret < 0) {
 		regulator_bulk_disable(ARRAY_SIZE(chip->regulators), chip->regulators);
 		return ret;
@@ -588,6 +580,8 @@ static int ktd202x_probe(struct i2c_client *client)
 		return ret;
 	}
 
+	mutex_init(&chip->mutex);
+
 	return 0;
 }
 
@@ -596,6 +590,8 @@ static void ktd202x_remove(struct i2c_client *client)
 	struct ktd202x *chip = i2c_get_clientdata(client);
 
 	ktd202x_chip_disable(chip);
+
+	mutex_destroy(&chip->mutex);
 }
 
 static void ktd202x_shutdown(struct i2c_client *client)
@@ -606,17 +602,10 @@ static void ktd202x_shutdown(struct i2c_client *client)
 	regmap_write(chip->regmap, KTD202X_REG_RESET_CONTROL, KTD202X_RSTR_RESET);
 }
 
-static const struct i2c_device_id ktd202x_id[] = {
-	{"ktd2026", KTD2026_NUM_LEDS},
-	{"ktd2027", KTD2027_NUM_LEDS},
-	{}
-};
-MODULE_DEVICE_TABLE(i2c, ktd202x_id);
-
 static const struct of_device_id ktd202x_match_table[] = {
 	{ .compatible = "kinetic,ktd2026", .data = (void *)KTD2026_NUM_LEDS },
 	{ .compatible = "kinetic,ktd2027", .data = (void *)KTD2027_NUM_LEDS },
-	{}
+	{},
 };
 MODULE_DEVICE_TABLE(of, ktd202x_match_table);
 
@@ -628,7 +617,6 @@ static struct i2c_driver ktd202x_driver = {
 	.probe = ktd202x_probe,
 	.remove = ktd202x_remove,
 	.shutdown = ktd202x_shutdown,
-	.id_table = ktd202x_id,
 };
 module_i2c_driver(ktd202x_driver);
 

@@ -72,9 +72,7 @@ struct rtw8822bs_efuse {
 
 struct rtw8822b_efuse {
 	__le16 rtl_id;
-	u8 res0[4];
-	u8 usb_mode;
-	u8 res1[0x09];
+	u8 res0[0x0e];
 
 	/* power index for four RF paths */
 	struct rtw_txpwr_idx txpwr_idx_table[4];

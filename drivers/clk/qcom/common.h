@@ -19,12 +19,6 @@ struct clk_hw;
 #define PLL_VOTE_FSM_ENA	BIT(20)
 #define PLL_VOTE_FSM_RESET	BIT(21)
 
-struct qcom_icc_hws_data {
-	int master_id;
-	int slave_id;
-	int clk_id;
-};
-
 struct qcom_cc_desc {
 	const struct regmap_config *config;
 	struct clk_regmap **clks;
@@ -35,9 +29,6 @@ struct qcom_cc_desc {
 	size_t num_gdscs;
 	struct clk_hw **clk_hws;
 	size_t num_clk_hws;
-	struct qcom_icc_hws_data *icc_hws;
-	size_t num_icc_hws;
-	unsigned int icc_first_node_id;
 };
 
 /**
@@ -69,7 +60,7 @@ extern int qcom_cc_register_sleep_clk(struct device *dev);
 
 extern struct regmap *qcom_cc_map(struct platform_device *pdev,
 				  const struct qcom_cc_desc *desc);
-extern int qcom_cc_really_probe(struct device *dev,
+extern int qcom_cc_really_probe(struct platform_device *pdev,
 				const struct qcom_cc_desc *desc,
 				struct regmap *regmap);
 extern int qcom_cc_probe(struct platform_device *pdev,

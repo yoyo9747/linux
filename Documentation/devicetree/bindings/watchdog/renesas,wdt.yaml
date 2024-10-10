@@ -29,7 +29,6 @@ properties:
               - renesas,r9a07g043-wdt    # RZ/G2UL and RZ/Five
               - renesas,r9a07g044-wdt    # RZ/G2{L,LC}
               - renesas,r9a07g054-wdt    # RZ/V2L
-              - renesas,r9a08g045-wdt    # RZ/G3S
           - const: renesas,rzg2l-wdt
 
       - items:
@@ -75,8 +74,6 @@ properties:
               - renesas,r8a779h0-wdt     # R-Car V4M
           - const: renesas,rcar-gen4-wdt # R-Car Gen4
 
-      - const: renesas,r9a09g057-wdt       # RZ/V2H(P)
-
   reg:
     maxItems: 1
 
@@ -115,6 +112,7 @@ properties:
 required:
   - compatible
   - reg
+  - interrupts
   - clocks
 
 allOf:
@@ -138,7 +136,6 @@ allOf:
         compatible:
           contains:
             enum:
-              - renesas,r9a09g057-wdt
               - renesas,rzg2l-wdt
               - renesas,rzv2m-wdt
     then:
@@ -172,19 +169,6 @@ allOf:
       properties:
         interrupts:
           maxItems: 1
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            const: renesas,r9a09g057-wdt
-    then:
-      properties:
-        interrupts: false
-        interrupt-names: false
-    else:
-      required:
-        - interrupts
 
 additionalProperties: false
 

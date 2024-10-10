@@ -267,7 +267,7 @@ static int lbtf_op_start(struct ieee80211_hw *hw)
 	return 0;
 }
 
-static void lbtf_op_stop(struct ieee80211_hw *hw, bool suspend)
+static void lbtf_op_stop(struct ieee80211_hw *hw)
 {
 	struct lbtf_private *priv = hw->priv;
 	unsigned long flags;

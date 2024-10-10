@@ -42,7 +42,6 @@ struct osnoise_top_params {
 	int			hk_cpus;
 	int			warmup;
 	int			buffer_size;
-	int			pretty_output;
 	cpu_set_t		hk_cpu_set;
 	struct sched_attr	sched_param;
 	struct trace_events	*events;
@@ -164,9 +163,7 @@ static void osnoise_top_header(struct osnoise_tool *top)
 
 	get_duration(top->start_time, duration, sizeof(duration));
 
-	if (params->pretty_output)
-		trace_seq_printf(s, "\033[2;37;40m");
-
+	trace_seq_printf(s, "\033[2;37;40m");
 	trace_seq_printf(s, "                                          ");
 
 	if (params->mode == MODE_OSNOISE) {
@@ -177,16 +174,12 @@ static void osnoise_top_header(struct osnoise_tool *top)
 	}
 
 	trace_seq_printf(s, "                                   ");
-
-	if (params->pretty_output)
-		trace_seq_printf(s, "\033[0;0;0m");
+	trace_seq_printf(s, "\033[0;0;0m");
 	trace_seq_printf(s, "\n");
 
 	trace_seq_printf(s, "duration: %9s | time is in us\n", duration);
 
-	if (params->pretty_output)
-		trace_seq_printf(s, "\033[2;30;47m");
-
+	trace_seq_printf(s, "\033[2;30;47m");
 	trace_seq_printf(s, "CPU Period       Runtime ");
 	trace_seq_printf(s, "       Noise ");
 	trace_seq_printf(s, " %% CPU Aval ");
@@ -199,8 +192,7 @@ static void osnoise_top_header(struct osnoise_tool *top)
 	trace_seq_printf(s, "          IRQ      Softirq       Thread");
 
 eol:
-	if (params->pretty_output)
-		trace_seq_printf(s, "\033[0;0;0m");
+	trace_seq_printf(s, "\033[0;0;0m");
 	trace_seq_printf(s, "\n");
 }
 
@@ -442,7 +434,7 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 		case 'd':
 			params->duration = parse_seconds_duration(optarg);
 			if (!params->duration)
-				osnoise_top_usage(params, "Invalid -d duration\n");
+				osnoise_top_usage(params, "Invalid -D duration\n");
 			break;
 		case 'e':
 			tevent = trace_event_alloc(optarg);
@@ -627,9 +619,6 @@ osnoise_top_apply_config(struct osnoise_tool *tool, struct osnoise_top_params *p
 		auto_house_keeping(&params->monitored_cpus);
 	}
 
-	if (isatty(1) && !params->quiet)
-		params->pretty_output = 1;
-
 	return 0;
 
 out_err:
@@ -651,10 +640,8 @@ struct osnoise_tool *osnoise_init_top(struct osnoise_top_params *params)
 		return NULL;
 
 	tool->data = osnoise_alloc_top(nr_cpus);
-	if (!tool->data) {
-		osnoise_destroy_tool(tool);
-		return NULL;
-	}
+	if (!tool->data)
+		goto out_err;
 
 	tool->params = params;
 
@@ -662,6 +649,11 @@ struct osnoise_tool *osnoise_init_top(struct osnoise_top_params *params)
 				   osnoise_top_handler, NULL);
 
 	return tool;
+
+out_err:
+	osnoise_free_top(tool->data);
+	osnoise_destroy_tool(tool);
+	return NULL;
 }
 
 static int stop_tracing;

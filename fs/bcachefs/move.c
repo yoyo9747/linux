@@ -692,7 +692,7 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 	a = bch2_alloc_to_v4(k, &a_convert);
 	dirty_sectors = bch2_bucket_sectors_dirty(*a);
 	bucket_size = ca->mi.bucket_size;
-	fragmentation = alloc_lru_idx_fragmentation(*a, ca);
+	fragmentation = a->fragmentation_lru;
 
 	ret = bch2_btree_write_buffer_tryflush(trans);
 	bch_err_msg(c, ret, "flushing btree write buffer");
@@ -780,7 +780,7 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 			if (!b)
 				goto next;
 
-			unsigned sectors = btree_ptr_sectors_written(bkey_i_to_s_c(&b->key));
+			unsigned sectors = btree_ptr_sectors_written(&b->key);
 
 			ret = bch2_btree_node_rewrite(trans, &iter, b, 0);
 			bch2_trans_iter_exit(trans, &iter);

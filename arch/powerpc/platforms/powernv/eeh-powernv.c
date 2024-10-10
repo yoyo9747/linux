@@ -99,6 +99,7 @@ static ssize_t pnv_eeh_ei_write(struct file *filp,
 
 static const struct file_operations pnv_eeh_ei_fops = {
 	.open	= simple_open,
+	.llseek	= no_llseek,
 	.write	= pnv_eeh_ei_write,
 };
 
@@ -859,7 +860,7 @@ static int pnv_eeh_bridge_reset(struct pci_dev *pdev, int option)
 	int64_t rc;
 
 	/* Hot reset to the bus if firmware cannot handle */
-	if (!dn || !of_property_present(dn, "ibm,reset-by-firmware"))
+	if (!dn || !of_get_property(dn, "ibm,reset-by-firmware", NULL))
 		return __pnv_eeh_bridge_reset(pdev, option);
 
 	pr_debug("%s: FW reset PCI bus %04x:%02x with option %d\n",

@@ -365,7 +365,8 @@ int hp_populate_secure_platform_data(struct kobject *attr_name_kobj)
 	/* Populate data for Secure Platform Management */
 	bioscfg_drv.spm_data.attr_name_kobj = attr_name_kobj;
 
-	strscpy(bioscfg_drv.spm_data.attribute_name, SPM_STR);
+	strscpy(bioscfg_drv.spm_data.attribute_name, SPM_STR,
+		sizeof(bioscfg_drv.spm_data.attribute_name));
 
 	bioscfg_drv.spm_data.is_enabled = 0;
 	bioscfg_drv.spm_data.mechanism = 0;

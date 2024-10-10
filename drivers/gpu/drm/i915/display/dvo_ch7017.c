@@ -170,13 +170,13 @@ static bool ch7017_read(struct intel_dvo_device *dvo, u8 addr, u8 *val)
 {
 	struct i2c_msg msgs[] = {
 		{
-			.addr = dvo->target_addr,
+			.addr = dvo->slave_addr,
 			.flags = 0,
 			.len = 1,
 			.buf = &addr,
 		},
 		{
-			.addr = dvo->target_addr,
+			.addr = dvo->slave_addr,
 			.flags = I2C_M_RD,
 			.len = 1,
 			.buf = val,
@@ -189,7 +189,7 @@ static bool ch7017_write(struct intel_dvo_device *dvo, u8 addr, u8 val)
 {
 	u8 buf[2] = { addr, val };
 	struct i2c_msg msg = {
-		.addr = dvo->target_addr,
+		.addr = dvo->slave_addr,
 		.flags = 0,
 		.len = 2,
 		.buf = buf,
@@ -197,7 +197,7 @@ static bool ch7017_write(struct intel_dvo_device *dvo, u8 addr, u8 val)
 	return i2c_transfer(dvo->i2c_bus, &msg, 1) == 1;
 }
 
-/** Probes for a CH7017 on the given bus and target address. */
+/** Probes for a CH7017 on the given bus and slave address. */
 static bool ch7017_init(struct intel_dvo_device *dvo,
 			struct i2c_adapter *adapter)
 {
@@ -227,13 +227,13 @@ static bool ch7017_init(struct intel_dvo_device *dvo,
 		break;
 	default:
 		DRM_DEBUG_KMS("ch701x not detected, got %d: from %s "
-			      "target %d.\n",
-			      val, adapter->name, dvo->target_addr);
+			      "slave %d.\n",
+			      val, adapter->name, dvo->slave_addr);
 		goto fail;
 	}
 
 	DRM_DEBUG_KMS("%s detected on %s, addr %d\n",
-		      str, adapter->name, dvo->target_addr);
+		      str, adapter->name, dvo->slave_addr);
 	return true;
 
 fail:

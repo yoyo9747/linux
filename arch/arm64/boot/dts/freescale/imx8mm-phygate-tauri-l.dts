@@ -7,7 +7,6 @@
 
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/leds/common.h>
-#include <dt-bindings/phy/phy-imx8-pcie.h>
 #include "imx8mm-phycore-som.dtsi"
 
 / {
@@ -186,15 +185,6 @@
 	status = "okay";
 };
 
-&pcie_phy {
-	clocks = <&clk IMX8MM_CLK_PCIE1_PHY>;
-	fsl,clkreq-unsupported;
-	fsl,refclk-pad-mode = <IMX8_PCIE_REFCLK_PAD_OUTPUT>;
-	fsl,tx-deemph-gen1 = <0x2d>;
-	fsl,tx-deemph-gen2 = <0xf>;
-	status = "okay";
-};
-
 &pwm1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pwm1>;
@@ -215,7 +205,6 @@
 
 /* RTC */
 &rv3028 {
-	aux-voltage-chargeable = <1>;
 	trickle-resistor-ohms = <3000>;
 };
 

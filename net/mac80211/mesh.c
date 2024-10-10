@@ -7,7 +7,7 @@
  */
 
 #include <linux/slab.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include "ieee80211_i.h"
 #include "mesh.h"
 #include "wme.h"
@@ -1312,7 +1312,7 @@ ieee80211_mesh_process_chnswitch(struct ieee80211_sub_if_data *sdata,
 	memset(&params, 0, sizeof(params));
 	err = ieee80211_parse_ch_switch_ie(sdata, elems, sband->band,
 					   vht_cap_info, &conn,
-					   sdata->vif.addr, false,
+					   sdata->vif.addr,
 					   &csa_ie);
 	if (err < 0)
 		return false;

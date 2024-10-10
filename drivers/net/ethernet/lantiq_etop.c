@@ -95,6 +95,7 @@ struct ltq_etop_priv {
 	struct mii_bus *mii_bus;
 
 	struct ltq_etop_chan ch[MAX_DMA_CHAN];
+	int tx_free[MAX_DMA_CHAN >> 1];
 
 	int tx_burst_len;
 	int rx_burst_len;
@@ -481,9 +482,7 @@ ltq_etop_tx(struct sk_buff *skb, struct net_device *dev)
 	unsigned long flags;
 	u32 byte_offset;
 
-	if (skb_put_padto(skb, ETH_ZLEN))
-		return NETDEV_TX_OK;
-	len = skb->len;
+	len = skb->len < ETH_ZLEN ? ETH_ZLEN : skb->len;
 
 	if ((desc->ctl & (LTQ_DMA_OWN | LTQ_DMA_C)) || ch->skb[ch->dma.desc]) {
 		netdev_err(dev, "tx ring full\n");
@@ -676,6 +675,7 @@ ltq_etop_probe(struct platform_device *pdev)
 		err = -ENOMEM;
 		goto err_out;
 	}
+	strcpy(dev->name, "eth%d");
 	dev->netdev_ops = &ltq_eth_netdev_ops;
 	dev->ethtool_ops = &ltq_etop_ethtool_ops;
 	priv = netdev_priv(dev);

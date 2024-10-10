@@ -22,8 +22,6 @@
 #include <asm/loongson.h>
 #endif
 
-#include "irq-loongson.h"
-
 #define LIOINTC_CHIP_IRQ	32
 #define LIOINTC_NUM_PARENT	4
 #define LIOINTC_NUM_CORES	4

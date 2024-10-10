@@ -56,7 +56,6 @@ enum platform_end_point {
 	REMBRANDT,
 	ACP63,
 	ACP70,
-	ACP71,
 };
 
 struct acp_mach_ops {

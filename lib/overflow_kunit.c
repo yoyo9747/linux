@@ -668,6 +668,7 @@ DEFINE_TEST_ALLOC(devm_kzalloc,  devm_kfree, 1, 1, 0);
 
 static void overflow_allocation_test(struct kunit *test)
 {
+	const char device_name[] = "overflow-test";
 	struct device *dev;
 	int count = 0;
 
@@ -677,7 +678,7 @@ static void overflow_allocation_test(struct kunit *test)
 } while (0)
 
 	/* Create dummy device for devm_kmalloc()-family tests. */
-	dev = kunit_device_register(test, "overflow-test");
+	dev = kunit_device_register(test, device_name);
 	KUNIT_ASSERT_FALSE_MSG(test, IS_ERR(dev),
 			       "Cannot register test device\n");
 
@@ -1236,5 +1237,4 @@ static struct kunit_suite overflow_test_suite = {
 
 kunit_test_suite(overflow_test_suite);
 
-MODULE_DESCRIPTION("Test cases for arithmetic overflow checks");
 MODULE_LICENSE("Dual MIT/GPL");

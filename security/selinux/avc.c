@@ -134,10 +134,18 @@ static inline u32 avc_hash(u32 ssid, u32 tsid, u16 tclass)
  */
 void __init avc_init(void)
 {
-	avc_node_cachep = KMEM_CACHE(avc_node, SLAB_PANIC);
-	avc_xperms_cachep = KMEM_CACHE(avc_xperms_node, SLAB_PANIC);
-	avc_xperms_decision_cachep = KMEM_CACHE(avc_xperms_decision_node, SLAB_PANIC);
-	avc_xperms_data_cachep = KMEM_CACHE(extended_perms_data, SLAB_PANIC);
+	avc_node_cachep = kmem_cache_create("avc_node", sizeof(struct avc_node),
+					0, SLAB_PANIC, NULL);
+	avc_xperms_cachep = kmem_cache_create("avc_xperms_node",
+					sizeof(struct avc_xperms_node),
+					0, SLAB_PANIC, NULL);
+	avc_xperms_decision_cachep = kmem_cache_create(
+					"avc_xperms_decision_node",
+					sizeof(struct avc_xperms_decision_node),
+					0, SLAB_PANIC, NULL);
+	avc_xperms_data_cachep = kmem_cache_create("avc_xperms_data",
+					sizeof(struct extended_perms_data),
+					0, SLAB_PANIC, NULL);
 }
 
 int avc_get_hash_stats(char *page)
@@ -322,12 +330,12 @@ static int avc_add_xperms_decision(struct avc_node *node,
 {
 	struct avc_xperms_decision_node *dest_xpd;
 
+	node->ae.xp_node->xp.len++;
 	dest_xpd = avc_xperms_decision_alloc(src->used);
 	if (!dest_xpd)
 		return -ENOMEM;
 	avc_copy_xperms_decision(&dest_xpd->xpd, src);
 	list_add(&dest_xpd->xpd_list, &node->ae.xp_node->xpd_head);
-	node->ae.xp_node->xp.len++;
 	return 0;
 }
 
@@ -388,7 +396,7 @@ static inline u32 avc_xperms_audit_required(u32 requested,
 		audited = denied & avd->auditdeny;
 		if (audited && xpd) {
 			if (avc_xperms_has_perm(xpd, perm, XPERMS_DONTAUDIT))
-				audited = 0;
+				audited &= ~requested;
 		}
 	} else if (result) {
 		audited = denied = requested;
@@ -396,7 +404,7 @@ static inline u32 avc_xperms_audit_required(u32 requested,
 		audited = requested & avd->auditallow;
 		if (audited && xpd) {
 			if (!avc_xperms_has_perm(xpd, perm, XPERMS_AUDITALLOW))
-				audited = 0;
+				audited &= ~requested;
 		}
 	}
 
@@ -899,11 +907,7 @@ static int avc_update_node(u32 event, u32 perms, u8 driver, u8 xperm, u32 ssid,
 		node->ae.avd.auditdeny &= ~perms;
 		break;
 	case AVC_CALLBACK_ADD_XPERMS:
-		rc = avc_add_xperms_decision(node, xpd);
-		if (rc) {
-			avc_node_kill(node);
-			goto out_unlock;
-		}
+		avc_add_xperms_decision(node, xpd);
 		break;
 	}
 	avc_node_replace(node, orig);

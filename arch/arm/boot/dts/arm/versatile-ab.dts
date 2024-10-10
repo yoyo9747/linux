@@ -24,7 +24,7 @@
 		reg = <0x0 0x08000000>;
 	};
 
-	xtal24mhz: clock-24000000 {
+	xtal24mhz: xtal24mhz@24M {
 		#clock-cells = <0>;
 		compatible = "fixed-clock";
 		clock-frequency = <24000000>;
@@ -142,14 +142,14 @@
 		};
 
 		/* OSC1 on AB, OSC4 on PB */
-		osc1: clock-osc {
+		osc1: cm_aux_osc@24M {
 			#clock-cells = <0>;
 			compatible = "arm,versatile-cm-auxosc";
 			clocks = <&xtal24mhz>;
 		};
 
 		/* The timer clock is the 24 MHz oscillator divided to 1MHz */
-		timclk: clock-1000000 {
+		timclk: timclk@1M {
 			#clock-cells = <0>;
 			compatible = "fixed-factor-clock";
 			clock-div = <24>;
@@ -157,7 +157,7 @@
 			clocks = <&xtal24mhz>;
 		};
 
-		pclk: clock-pclk {
+		pclk: pclk@24M {
 			#clock-cells = <0>;
 			compatible = "fixed-factor-clock";
 			clock-div = <1>;

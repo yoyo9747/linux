@@ -775,5 +775,4 @@ module_init(esp32_uart_init);
 module_exit(esp32_uart_exit);
 
 MODULE_AUTHOR("Max Filippov <jcmvbkbc@gmail.com>");
-MODULE_DESCRIPTION("Espressif ESP32 UART support");
 MODULE_LICENSE("GPL");

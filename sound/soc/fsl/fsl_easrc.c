@@ -1988,7 +1988,7 @@ static void fsl_easrc_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 }
 
-static int fsl_easrc_runtime_suspend(struct device *dev)
+static __maybe_unused int fsl_easrc_runtime_suspend(struct device *dev)
 {
 	struct fsl_asrc *easrc = dev_get_drvdata(dev);
 	struct fsl_easrc_priv *easrc_priv = easrc->private;
@@ -2005,7 +2005,7 @@ static int fsl_easrc_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int fsl_easrc_runtime_resume(struct device *dev)
+static __maybe_unused int fsl_easrc_runtime_resume(struct device *dev)
 {
 	struct fsl_asrc *easrc = dev_get_drvdata(dev);
 	struct fsl_easrc_priv *easrc_priv = easrc->private;
@@ -2086,17 +2086,19 @@ disable_mem_clk:
 }
 
 static const struct dev_pm_ops fsl_easrc_pm_ops = {
-	RUNTIME_PM_OPS(fsl_easrc_runtime_suspend, fsl_easrc_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(fsl_easrc_runtime_suspend,
+			   fsl_easrc_runtime_resume,
+			   NULL)
 	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
 				pm_runtime_force_resume)
 };
 
 static struct platform_driver fsl_easrc_driver = {
 	.probe = fsl_easrc_probe,
-	.remove = fsl_easrc_remove,
+	.remove_new = fsl_easrc_remove,
 	.driver = {
 		.name = "fsl-easrc",
-		.pm = pm_ptr(&fsl_easrc_pm_ops),
+		.pm = &fsl_easrc_pm_ops,
 		.of_match_table = fsl_easrc_dt_ids,
 	},
 };

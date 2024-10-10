@@ -72,8 +72,6 @@ out:
 
 void dlm_memory_exit(void)
 {
-	rcu_barrier();
-
 	kmem_cache_destroy(writequeue_cache);
 	kmem_cache_destroy(mhandle_cache);
 	kmem_cache_destroy(msg_cache);
@@ -84,7 +82,10 @@ void dlm_memory_exit(void)
 
 char *dlm_allocate_lvb(struct dlm_ls *ls)
 {
-	return kzalloc(ls->ls_lvblen, GFP_ATOMIC);
+	char *p;
+
+	p = kzalloc(ls->ls_lvblen, GFP_ATOMIC);
+	return p;
 }
 
 void dlm_free_lvb(char *p)
@@ -92,33 +93,31 @@ void dlm_free_lvb(char *p)
 	kfree(p);
 }
 
-struct dlm_rsb *dlm_allocate_rsb(void)
+struct dlm_rsb *dlm_allocate_rsb(struct dlm_ls *ls)
 {
-	return kmem_cache_zalloc(rsb_cache, GFP_ATOMIC);
+	struct dlm_rsb *r;
+
+	r = kmem_cache_zalloc(rsb_cache, GFP_ATOMIC);
+	return r;
 }
 
-static void __free_rsb_rcu(struct rcu_head *rcu)
+void dlm_free_rsb(struct dlm_rsb *r)
 {
-	struct dlm_rsb *r = container_of(rcu, struct dlm_rsb, rcu);
 	if (r->res_lvbptr)
 		dlm_free_lvb(r->res_lvbptr);
 	kmem_cache_free(rsb_cache, r);
 }
 
-void dlm_free_rsb(struct dlm_rsb *r)
+struct dlm_lkb *dlm_allocate_lkb(struct dlm_ls *ls)
 {
-	call_rcu(&r->rcu, __free_rsb_rcu);
+	struct dlm_lkb *lkb;
+
+	lkb = kmem_cache_zalloc(lkb_cache, GFP_ATOMIC);
+	return lkb;
 }
 
-struct dlm_lkb *dlm_allocate_lkb(void)
+void dlm_free_lkb(struct dlm_lkb *lkb)
 {
-	return kmem_cache_zalloc(lkb_cache, GFP_ATOMIC);
-}
-
-static void __free_lkb_rcu(struct rcu_head *rcu)
-{
-	struct dlm_lkb *lkb = container_of(rcu, struct dlm_lkb, rcu);
-
 	if (test_bit(DLM_DFL_USER_BIT, &lkb->lkb_dflags)) {
 		struct dlm_user_args *ua;
 		ua = lkb->lkb_ua;
@@ -129,11 +128,6 @@ static void __free_lkb_rcu(struct rcu_head *rcu)
 	}
 
 	kmem_cache_free(lkb_cache, lkb);
-}
-
-void dlm_free_lkb(struct dlm_lkb *lkb)
-{
-	call_rcu(&lkb->rcu, __free_lkb_rcu);
 }
 
 struct dlm_mhandle *dlm_allocate_mhandle(void)

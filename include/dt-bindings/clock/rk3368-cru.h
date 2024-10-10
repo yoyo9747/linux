@@ -182,6 +182,8 @@
 #define HCLK_BUS		477
 #define HCLK_PERI		478
 
+#define CLK_NR_CLKS		(HCLK_PERI + 1)
+
 /* soft-reset indices */
 #define SRST_CORE_B0		0
 #define SRST_CORE_B1		1

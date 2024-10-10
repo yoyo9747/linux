@@ -212,7 +212,6 @@ static void rtw_watch_dog_work(struct work_struct *work)
 	struct rtw_traffic_stats *stats = &rtwdev->stats;
 	struct rtw_watch_dog_iter_data data = {};
 	bool busy_traffic = test_bit(RTW_FLAG_BUSY_TRAFFIC, rtwdev->flags);
-	u32 tx_unicast_mbps, rx_unicast_mbps;
 	bool ps_active;
 
 	mutex_lock(&rtwdev->mutex);
@@ -237,11 +236,10 @@ static void rtw_watch_dog_work(struct work_struct *work)
 	else
 		ps_active = false;
 
-	tx_unicast_mbps = stats->tx_unicast >> RTW_TP_SHIFT;
-	rx_unicast_mbps = stats->rx_unicast >> RTW_TP_SHIFT;
-
-	ewma_tp_add(&stats->tx_ewma_tp, tx_unicast_mbps);
-	ewma_tp_add(&stats->rx_ewma_tp, rx_unicast_mbps);
+	ewma_tp_add(&stats->tx_ewma_tp,
+		    (u32)(stats->tx_unicast >> RTW_TP_SHIFT));
+	ewma_tp_add(&stats->rx_ewma_tp,
+		    (u32)(stats->rx_unicast >> RTW_TP_SHIFT));
 	stats->tx_throughput = ewma_tp_read(&stats->tx_ewma_tp);
 	stats->rx_throughput = ewma_tp_read(&stats->rx_ewma_tp);
 
@@ -260,9 +258,6 @@ static void rtw_watch_dog_work(struct work_struct *work)
 	rtw_coex_query_bt_hid_list(rtwdev);
 
 	rtw_phy_dynamic_mechanism(rtwdev);
-
-	rtw_hci_dynamic_rx_agg(rtwdev,
-			       tx_unicast_mbps >= 1 || rx_unicast_mbps >= 1);
 
 	data.rtwdev = rtwdev;
 	/* rtw_iterate_vifs internally uses an atomic iterator which is needed
@@ -311,6 +306,17 @@ static void rtw_ips_work(struct work_struct *work)
 	mutex_unlock(&rtwdev->mutex);
 }
 
+static u8 rtw_acquire_macid(struct rtw_dev *rtwdev)
+{
+	unsigned long mac_id;
+
+	mac_id = find_first_zero_bit(rtwdev->mac_id_map, RTW_MAX_MAC_ID_NUM);
+	if (mac_id < RTW_MAX_MAC_ID_NUM)
+		set_bit(mac_id, rtwdev->mac_id_map);
+
+	return mac_id;
+}
+
 static void rtw_sta_rc_work(struct work_struct *work)
 {
 	struct rtw_sta_info *si = container_of(work, struct rtw_sta_info,
@@ -329,14 +335,12 @@ int rtw_sta_add(struct rtw_dev *rtwdev, struct ieee80211_sta *sta,
 	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
 	int i;
 
-	if (vif->type == NL80211_IFTYPE_STATION) {
-		si->mac_id = rtwvif->mac_id;
-	} else {
-		si->mac_id = rtw_acquire_macid(rtwdev);
-		if (si->mac_id >= RTW_MAX_MAC_ID_NUM)
-			return -ENOSPC;
-	}
+	si->mac_id = rtw_acquire_macid(rtwdev);
+	if (si->mac_id >= RTW_MAX_MAC_ID_NUM)
+		return -ENOSPC;
 
+	if (vif->type == NL80211_IFTYPE_STATION && vif->cfg.assoc == 0)
+		rtwvif->mac_id = si->mac_id;
 	si->rtwdev = rtwdev;
 	si->sta = sta;
 	si->vif = vif;
@@ -361,13 +365,11 @@ void rtw_sta_remove(struct rtw_dev *rtwdev, struct ieee80211_sta *sta,
 		    bool fw_exist)
 {
 	struct rtw_sta_info *si = (struct rtw_sta_info *)sta->drv_priv;
-	struct ieee80211_vif *vif = si->vif;
 	int i;
 
 	cancel_work_sync(&si->rc_work);
 
-	if (vif->type != NL80211_IFTYPE_STATION)
-		rtw_release_macid(rtwdev, si->mac_id);
+	rtw_release_macid(rtwdev, si->mac_id);
 	if (fw_exist)
 		rtw_fw_media_status_report(rtwdev, si->mac_id, false);
 
@@ -607,8 +609,6 @@ static void rtw_reset_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
 	rtw_bf_disassoc(rtwdev, vif, NULL);
 	rtw_vif_assoc_changed(rtwvif, NULL);
 	rtw_txq_cleanup(rtwdev, vif->txq);
-
-	rtw_release_macid(rtwdev, rtwvif->mac_id);
 }
 
 void rtw_fw_recovery(struct rtw_dev *rtwdev)
@@ -1313,21 +1313,20 @@ static int rtw_wait_firmware_completion(struct rtw_dev *rtwdev)
 {
 	const struct rtw_chip_info *chip = rtwdev->chip;
 	struct rtw_fw_state *fw;
-	int ret = 0;
 
 	fw = &rtwdev->fw;
 	wait_for_completion(&fw->completion);
 	if (!fw->firmware)
-		ret = -EINVAL;
+		return -EINVAL;
 
 	if (chip->wow_fw_name) {
 		fw = &rtwdev->wow_fw;
 		wait_for_completion(&fw->completion);
 		if (!fw->firmware)
-			ret = -EINVAL;
+			return -EINVAL;
 	}
 
-	return ret;
+	return 0;
 }
 
 static enum rtw_lps_deep_mode rtw_update_lps_deep_mode(struct rtw_dev *rtwdev,
@@ -2006,7 +2005,7 @@ static int rtw_chip_efuse_info_setup(struct rtw_dev *rtwdev)
 	efuse->ext_pa_2g = efuse->pa_type_2g & BIT(4) ? 1 : 0;
 	efuse->ext_lna_2g = efuse->lna_type_2g & BIT(3) ? 1 : 0;
 	efuse->ext_pa_5g = efuse->pa_type_5g & BIT(0) ? 1 : 0;
-	efuse->ext_lna_5g = efuse->lna_type_5g & BIT(3) ? 1 : 0;
+	efuse->ext_lna_2g = efuse->lna_type_5g & BIT(3) ? 1 : 0;
 
 	if (!is_valid_ether_addr(efuse->addr)) {
 		eth_random_addr(efuse->addr);
@@ -2134,6 +2133,7 @@ int rtw_core_init(struct rtw_dev *rtwdev)
 	rtwdev->sec.total_cam_num = 32;
 	rtwdev->hal.current_channel = 1;
 	rtwdev->dm_info.fix_rate = U8_MAX;
+	set_bit(RTW_BC_MC_MACID, rtwdev->mac_id_map);
 
 	rtw_stats_init(rtwdev);
 
@@ -2299,7 +2299,6 @@ void rtw_unregister_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
 
 	ieee80211_unregister_hw(hw);
 	rtw_unset_supported_band(hw, chip);
-	rtw_debugfs_deinit(rtwdev);
 }
 EXPORT_SYMBOL(rtw_unregister_hw);
 

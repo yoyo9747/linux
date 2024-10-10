@@ -4,7 +4,6 @@
 #include "buckets.h"
 #include "btree_cache.h"
 #include "btree_iter.h"
-#include "btree_key_cache.h"
 #include "btree_locking.h"
 #include "btree_update_interior.h"
 #include "keylist.h"

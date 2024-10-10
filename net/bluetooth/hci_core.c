@@ -33,13 +33,14 @@
 #include <linux/property.h>
 #include <linux/suspend.h>
 #include <linux/wait.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 #include <net/bluetooth/l2cap.h>
 #include <net/bluetooth/mgmt.h>
 
+#include "hci_request.h"
 #include "hci_debugfs.h"
 #include "smp.h"
 #include "leds.h"
@@ -119,6 +120,13 @@ void hci_discovery_set_state(struct hci_dev *hdev, int state)
 	case DISCOVERY_STARTING:
 		break;
 	case DISCOVERY_FINDING:
+		/* If discovery was not started then it was initiated by the
+		 * MGMT interface so no MGMT event shall be generated either
+		 */
+		if (old_state != DISCOVERY_STARTING) {
+			hdev->discovery.state = old_state;
+			return;
+		}
 		mgmt_discovering(hdev, 1);
 		break;
 	case DISCOVERY_RESOLVING:
@@ -304,12 +312,33 @@ static int inquiry_cache_dump(struct hci_dev *hdev, int num, __u8 *buf)
 	return copied;
 }
 
+static int hci_inq_req(struct hci_request *req, unsigned long opt)
+{
+	struct hci_inquiry_req *ir = (struct hci_inquiry_req *) opt;
+	struct hci_dev *hdev = req->hdev;
+	struct hci_cp_inquiry cp;
+
+	BT_DBG("%s", hdev->name);
+
+	if (test_bit(HCI_INQUIRY, &hdev->flags))
+		return 0;
+
+	/* Start Inquiry */
+	memcpy(&cp.lap, &ir->lap, 3);
+	cp.length  = ir->length;
+	cp.num_rsp = ir->num_rsp;
+	hci_req_add(req, HCI_OP_INQUIRY, sizeof(cp), &cp);
+
+	return 0;
+}
+
 int hci_inquiry(void __user *arg)
 {
 	__u8 __user *ptr = arg;
 	struct hci_inquiry_req ir;
 	struct hci_dev *hdev;
 	int err = 0, do_inquiry = 0, max_rsp;
+	long timeo;
 	__u8 *buf;
 
 	if (copy_from_user(&ir, ptr, sizeof(ir)))
@@ -348,11 +377,11 @@ int hci_inquiry(void __user *arg)
 	}
 	hci_dev_unlock(hdev);
 
-	if (do_inquiry) {
-		hci_req_sync_lock(hdev);
-		err = hci_inquiry_sync(hdev, ir.length, ir.num_rsp);
-		hci_req_sync_unlock(hdev);
+	timeo = ir.length * msecs_to_jiffies(2000);
 
+	if (do_inquiry) {
+		err = hci_req_sync(hdev, hci_inq_req, (unsigned long) &ir,
+				   timeo, NULL);
 		if (err < 0)
 			goto done;
 
@@ -689,8 +718,8 @@ int hci_dev_cmd(unsigned int cmd, void __user *arg)
 
 	switch (cmd) {
 	case HCISETAUTH:
-		err = hci_cmd_sync_status(hdev, HCI_OP_WRITE_AUTH_ENABLE,
-					  1, &dr.dev_opt, HCI_CMD_TIMEOUT);
+		err = __hci_cmd_sync_status(hdev, HCI_OP_WRITE_AUTH_ENABLE,
+					    1, &dr.dev_opt, HCI_CMD_TIMEOUT);
 		break;
 
 	case HCISETENCRYPT:
@@ -701,21 +730,23 @@ int hci_dev_cmd(unsigned int cmd, void __user *arg)
 
 		if (!test_bit(HCI_AUTH, &hdev->flags)) {
 			/* Auth must be enabled first */
-			err = hci_cmd_sync_status(hdev,
-						  HCI_OP_WRITE_AUTH_ENABLE,
-						  1, &dr.dev_opt,
-						  HCI_CMD_TIMEOUT);
+			err = __hci_cmd_sync_status(hdev,
+						    HCI_OP_WRITE_AUTH_ENABLE,
+						    1, &dr.dev_opt,
+						    HCI_CMD_TIMEOUT);
 			if (err)
 				break;
 		}
 
-		err = hci_cmd_sync_status(hdev, HCI_OP_WRITE_ENCRYPT_MODE,
-					  1, &dr.dev_opt, HCI_CMD_TIMEOUT);
+		err = __hci_cmd_sync_status(hdev, HCI_OP_WRITE_ENCRYPT_MODE,
+					    1, &dr.dev_opt,
+					    HCI_CMD_TIMEOUT);
 		break;
 
 	case HCISETSCAN:
-		err = hci_cmd_sync_status(hdev, HCI_OP_WRITE_SCAN_ENABLE,
-					  1, &dr.dev_opt, HCI_CMD_TIMEOUT);
+		err = __hci_cmd_sync_status(hdev, HCI_OP_WRITE_SCAN_ENABLE,
+					    1, &dr.dev_opt,
+					    HCI_CMD_TIMEOUT);
 
 		/* Ensure that the connectable and discoverable states
 		 * get correctly modified as this was a non-mgmt change.
@@ -727,8 +758,9 @@ int hci_dev_cmd(unsigned int cmd, void __user *arg)
 	case HCISETLINKPOL:
 		policy = cpu_to_le16(dr.dev_opt);
 
-		err = hci_cmd_sync_status(hdev, HCI_OP_WRITE_DEF_LINK_POLICY,
-					  2, &policy, HCI_CMD_TIMEOUT);
+		err = __hci_cmd_sync_status(hdev, HCI_OP_WRITE_DEF_LINK_POLICY,
+					    2, &policy,
+					    HCI_CMD_TIMEOUT);
 		break;
 
 	case HCISETLINKMODE:
@@ -769,7 +801,7 @@ int hci_get_dev_list(void __user *arg)
 	struct hci_dev *hdev;
 	struct hci_dev_list_req *dl;
 	struct hci_dev_req *dr;
-	int n = 0, err;
+	int n = 0, size, err;
 	__u16 dev_num;
 
 	if (get_user(dev_num, (__u16 __user *) arg))
@@ -778,11 +810,12 @@ int hci_get_dev_list(void __user *arg)
 	if (!dev_num || dev_num > (PAGE_SIZE * 2) / sizeof(*dr))
 		return -EINVAL;
 
-	dl = kzalloc(struct_size(dl, dev_req, dev_num), GFP_KERNEL);
+	size = sizeof(*dl) + dev_num * sizeof(*dr);
+
+	dl = kzalloc(size, GFP_KERNEL);
 	if (!dl)
 		return -ENOMEM;
 
-	dl->dev_num = dev_num;
 	dr = dl->dev_req;
 
 	read_lock(&hci_dev_list_lock);
@@ -796,8 +829,8 @@ int hci_get_dev_list(void __user *arg)
 		if (hci_dev_test_flag(hdev, HCI_AUTO_OFF))
 			flags &= ~BIT(HCI_UP);
 
-		dr[n].dev_id  = hdev->id;
-		dr[n].dev_opt = flags;
+		(dr + n)->dev_id  = hdev->id;
+		(dr + n)->dev_opt = flags;
 
 		if (++n >= dev_num)
 			break;
@@ -805,7 +838,9 @@ int hci_get_dev_list(void __user *arg)
 	read_unlock(&hci_dev_list_lock);
 
 	dl->dev_num = n;
-	err = copy_to_user(arg, dl, struct_size(dl, dev_req, n));
+	size = sizeof(*dl) + n * sizeof(*dr);
+
+	err = copy_to_user(arg, dl, size);
 	kfree(dl);
 
 	return err ? -EFAULT : 0;
@@ -2406,16 +2441,10 @@ static int hci_suspend_notifier(struct notifier_block *nb, unsigned long action,
 	/* To avoid a potential race with hci_unregister_dev. */
 	hci_dev_hold(hdev);
 
-	switch (action) {
-	case PM_HIBERNATION_PREPARE:
-	case PM_SUSPEND_PREPARE:
+	if (action == PM_SUSPEND_PREPARE)
 		ret = hci_suspend_dev(hdev);
-		break;
-	case PM_POST_HIBERNATION:
-	case PM_POST_SUSPEND:
+	else if (action == PM_POST_SUSPEND)
 		ret = hci_resume_dev(hdev);
-		break;
-	}
 
 	if (ret)
 		bt_dev_err(hdev, "Suspend notifier action (%lu) failed: %d",
@@ -2550,6 +2579,7 @@ struct hci_dev *hci_alloc_dev_priv(int sizeof_priv)
 	INIT_DELAYED_WORK(&hdev->ncmd_timer, hci_ncmd_timeout);
 
 	hci_devcd_setup(hdev);
+	hci_request_setup(hdev);
 
 	hci_init_sysfs(hdev);
 	discovery_init(hdev);
@@ -2882,29 +2912,13 @@ int hci_reset_dev(struct hci_dev *hdev)
 }
 EXPORT_SYMBOL(hci_reset_dev);
 
-static u8 hci_dev_classify_pkt_type(struct hci_dev *hdev, struct sk_buff *skb)
-{
-	if (hdev->classify_pkt_type)
-		return hdev->classify_pkt_type(hdev, skb);
-
-	return hci_skb_pkt_type(skb);
-}
-
 /* Receive frame from HCI drivers */
 int hci_recv_frame(struct hci_dev *hdev, struct sk_buff *skb)
 {
-	u8 dev_pkt_type;
-
 	if (!hdev || (!test_bit(HCI_UP, &hdev->flags)
 		      && !test_bit(HCI_INIT, &hdev->flags))) {
 		kfree_skb(skb);
 		return -ENXIO;
-	}
-
-	/* Check if the driver agree with packet type classification */
-	dev_pkt_type = hci_dev_classify_pkt_type(hdev, skb);
-	if (hci_skb_pkt_type(skb) != dev_pkt_type) {
-		hci_skb_pkt_type(skb) = dev_pkt_type;
 	}
 
 	switch (hci_skb_pkt_type(skb)) {
@@ -3051,7 +3065,7 @@ int hci_send_cmd(struct hci_dev *hdev, __u16 opcode, __u32 plen,
 
 	BT_DBG("%s opcode 0x%4.4x plen %d", hdev->name, opcode, plen);
 
-	skb = hci_cmd_sync_alloc(hdev, opcode, plen, param, NULL);
+	skb = hci_prepare_cmd(hdev, opcode, plen, param);
 	if (!skb) {
 		bt_dev_err(hdev, "no memory for command");
 		return -ENOMEM;
@@ -3086,7 +3100,7 @@ int __hci_cmd_send(struct hci_dev *hdev, u16 opcode, u32 plen,
 		return -EINVAL;
 	}
 
-	skb = hci_cmd_sync_alloc(hdev, opcode, plen, param, NULL);
+	skb = hci_prepare_cmd(hdev, opcode, plen, param);
 	if (!skb) {
 		bt_dev_err(hdev, "no memory for command (opcode 0x%4.4x)",
 			   opcode);
@@ -3670,19 +3684,19 @@ static void hci_sched_le(struct hci_dev *hdev)
 {
 	struct hci_chan *chan;
 	struct sk_buff *skb;
-	int quote, *cnt, tmp;
+	int quote, cnt, tmp;
 
 	BT_DBG("%s", hdev->name);
 
 	if (!hci_conn_num(hdev, LE_LINK))
 		return;
 
-	cnt = hdev->le_pkts ? &hdev->le_cnt : &hdev->acl_cnt;
+	cnt = hdev->le_pkts ? hdev->le_cnt : hdev->acl_cnt;
 
-	__check_timeout(hdev, *cnt, LE_LINK);
+	__check_timeout(hdev, cnt, LE_LINK);
 
-	tmp = *cnt;
-	while (*cnt && (chan = hci_chan_sent(hdev, LE_LINK, &quote))) {
+	tmp = cnt;
+	while (cnt && (chan = hci_chan_sent(hdev, LE_LINK, &quote))) {
 		u32 priority = (skb_peek(&chan->data_q))->priority;
 		while (quote-- && (skb = skb_peek(&chan->data_q))) {
 			BT_DBG("chan %p skb %p len %d priority %u", chan, skb,
@@ -3697,7 +3711,7 @@ static void hci_sched_le(struct hci_dev *hdev)
 			hci_send_frame(hdev, skb);
 			hdev->le_last_tx = jiffies;
 
-			(*cnt)--;
+			cnt--;
 			chan->sent++;
 			chan->conn->sent++;
 
@@ -3707,7 +3721,12 @@ static void hci_sched_le(struct hci_dev *hdev)
 		}
 	}
 
-	if (*cnt != tmp)
+	if (hdev->le_pkts)
+		hdev->le_cnt = cnt;
+	else
+		hdev->acl_cnt = cnt;
+
+	if (cnt != tmp)
 		hci_prio_recalculate(hdev, LE_LINK);
 }
 
@@ -3782,8 +3801,6 @@ static void hci_acldata_packet(struct hci_dev *hdev, struct sk_buff *skb)
 
 	hci_dev_lock(hdev);
 	conn = hci_conn_hash_lookup_handle(hdev, handle);
-	if (conn && hci_dev_test_flag(hdev, HCI_MGMT))
-		mgmt_device_connected(hdev, conn, NULL, 0);
 	hci_dev_unlock(hdev);
 
 	if (conn) {
@@ -4068,7 +4085,7 @@ static void hci_send_cmd_sync(struct hci_dev *hdev, struct sk_buff *skb)
 		return;
 	}
 
-	if (hdev->req_status == HCI_REQ_PEND &&
+	if (hci_req_status_pend(hdev) &&
 	    !hci_dev_test_and_set_flag(hdev, HCI_CMD_PENDING)) {
 		kfree_skb(hdev->req_skb);
 		hdev->req_skb = skb_clone(hdev->sent_cmd, GFP_KERNEL);

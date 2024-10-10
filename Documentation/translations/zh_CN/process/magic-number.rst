@@ -1,6 +1,6 @@
 .. include:: ../disclaimer-zh_CN.rst
 
-:Original: Documentation/staging/magic-number.rst
+:Original: Documentation/process/magic-number.rst
 
 :翻译:
 

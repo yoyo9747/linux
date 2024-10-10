@@ -3063,13 +3063,14 @@ static void ehea_shutdown_single_port(struct ehea_port *port)
 static int ehea_setup_ports(struct ehea_adapter *adapter)
 {
 	struct device_node *lhea_dn;
-	struct device_node *eth_dn;
+	struct device_node *eth_dn = NULL;
 
 	const u32 *dn_log_port_id;
 	int i = 0;
 
 	lhea_dn = adapter->ofdev->dev.of_node;
-	for_each_child_of_node(lhea_dn, eth_dn) {
+	while ((eth_dn = of_get_next_child(lhea_dn, eth_dn))) {
+
 		dn_log_port_id = of_get_property(eth_dn, "ibm,hea-port-no",
 						 NULL);
 		if (!dn_log_port_id) {
@@ -3101,11 +3102,12 @@ static struct device_node *ehea_get_eth_dn(struct ehea_adapter *adapter,
 					   u32 logical_port_id)
 {
 	struct device_node *lhea_dn;
-	struct device_node *eth_dn;
+	struct device_node *eth_dn = NULL;
 	const u32 *dn_log_port_id;
 
 	lhea_dn = adapter->ofdev->dev.of_node;
-	for_each_child_of_node(lhea_dn, eth_dn) {
+	while ((eth_dn = of_get_next_child(lhea_dn, eth_dn))) {
+
 		dn_log_port_id = of_get_property(eth_dn, "ibm,hea-port-no",
 						 NULL);
 		if (dn_log_port_id)

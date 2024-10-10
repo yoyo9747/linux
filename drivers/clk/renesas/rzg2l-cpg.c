@@ -339,7 +339,8 @@ static const struct clk_ops rzg3s_div_clk_ops = {
 };
 
 static struct clk * __init
-rzg3s_cpg_div_clk_register(const struct cpg_core_clk *core, struct rzg2l_cpg_priv *priv)
+rzg3s_cpg_div_clk_register(const struct cpg_core_clk *core, struct clk **clks,
+			   void __iomem *base, struct rzg2l_cpg_priv *priv)
 {
 	struct div_hw_data *div_hw_data;
 	struct clk_init_data init = {};
@@ -350,7 +351,7 @@ rzg3s_cpg_div_clk_register(const struct cpg_core_clk *core, struct rzg2l_cpg_pri
 	u32 max = 0;
 	int ret;
 
-	parent = priv->clks[core->parent];
+	parent = clks[core->parent & 0xffff];
 	if (IS_ERR(parent))
 		return ERR_CAST(parent);
 
@@ -399,15 +400,16 @@ rzg3s_cpg_div_clk_register(const struct cpg_core_clk *core, struct rzg2l_cpg_pri
 
 static struct clk * __init
 rzg2l_cpg_div_clk_register(const struct cpg_core_clk *core,
+			   struct clk **clks,
+			   void __iomem *base,
 			   struct rzg2l_cpg_priv *priv)
 {
-	void __iomem *base = priv->base;
 	struct device *dev = priv->dev;
 	const struct clk *parent;
 	const char *parent_name;
 	struct clk_hw *clk_hw;
 
-	parent = priv->clks[core->parent];
+	parent = clks[core->parent & 0xffff];
 	if (IS_ERR(parent))
 		return ERR_CAST(parent);
 
@@ -438,6 +440,7 @@ rzg2l_cpg_div_clk_register(const struct cpg_core_clk *core,
 
 static struct clk * __init
 rzg2l_cpg_mux_clk_register(const struct cpg_core_clk *core,
+			   void __iomem *base,
 			   struct rzg2l_cpg_priv *priv)
 {
 	const struct clk_hw *clk_hw;
@@ -445,7 +448,7 @@ rzg2l_cpg_mux_clk_register(const struct cpg_core_clk *core,
 	clk_hw = devm_clk_hw_register_mux(priv->dev, core->name,
 					  core->parent_names, core->num_parents,
 					  core->flag,
-					  priv->base + GET_REG_OFFSET(core->conf),
+					  base + GET_REG_OFFSET(core->conf),
 					  GET_SHIFT(core->conf),
 					  GET_WIDTH(core->conf),
 					  core->mux_flags, &priv->rmw_lock);
@@ -505,6 +508,7 @@ static const struct clk_ops rzg2l_cpg_sd_clk_mux_ops = {
 
 static struct clk * __init
 rzg2l_cpg_sd_mux_clk_register(const struct cpg_core_clk *core,
+			      void __iomem *base,
 			      struct rzg2l_cpg_priv *priv)
 {
 	struct sd_mux_hw_data *sd_mux_hw_data;
@@ -648,6 +652,7 @@ static const struct clk_ops rzg2l_cpg_dsi_div_ops = {
 
 static struct clk * __init
 rzg2l_cpg_dsi_div_clk_register(const struct cpg_core_clk *core,
+			       struct clk **clks,
 			       struct rzg2l_cpg_priv *priv)
 {
 	struct dsi_div_hw_data *clk_hw_data;
@@ -657,7 +662,7 @@ rzg2l_cpg_dsi_div_clk_register(const struct cpg_core_clk *core,
 	struct clk_hw *clk_hw;
 	int ret;
 
-	parent = priv->clks[core->parent];
+	parent = clks[core->parent & 0xffff];
 	if (IS_ERR(parent))
 		return ERR_CAST(parent);
 
@@ -895,6 +900,7 @@ static const struct clk_ops rzg2l_cpg_sipll5_ops = {
 
 static struct clk * __init
 rzg2l_cpg_sipll5_register(const struct cpg_core_clk *core,
+			  struct clk **clks,
 			  struct rzg2l_cpg_priv *priv)
 {
 	const struct clk *parent;
@@ -904,7 +910,7 @@ rzg2l_cpg_sipll5_register(const struct cpg_core_clk *core,
 	struct clk_hw *clk_hw;
 	int ret;
 
-	parent = priv->clks[core->parent];
+	parent = clks[core->parent & 0xffff];
 	if (IS_ERR(parent))
 		return ERR_CAST(parent);
 
@@ -1007,6 +1013,8 @@ static const struct clk_ops rzg3s_cpg_pll_ops = {
 
 static struct clk * __init
 rzg2l_cpg_pll_clk_register(const struct cpg_core_clk *core,
+			   struct clk **clks,
+			   void __iomem *base,
 			   struct rzg2l_cpg_priv *priv,
 			   const struct clk_ops *ops)
 {
@@ -1015,9 +1023,8 @@ rzg2l_cpg_pll_clk_register(const struct cpg_core_clk *core,
 	struct clk_init_data init;
 	const char *parent_name;
 	struct pll_clk *pll_clk;
-	int ret;
 
-	parent = priv->clks[core->parent];
+	parent = clks[core->parent & 0xffff];
 	if (IS_ERR(parent))
 		return ERR_CAST(parent);
 
@@ -1034,15 +1041,11 @@ rzg2l_cpg_pll_clk_register(const struct cpg_core_clk *core,
 
 	pll_clk->hw.init = &init;
 	pll_clk->conf = core->conf;
-	pll_clk->base = priv->base;
+	pll_clk->base = base;
 	pll_clk->priv = priv;
 	pll_clk->type = core->type;
 
-	ret = devm_clk_hw_register(dev, &pll_clk->hw);
-	if (ret)
-		return ERR_PTR(ret);
-
-	return pll_clk->hw.clk;
+	return clk_register(NULL, &pll_clk->hw);
 }
 
 static struct clk
@@ -1099,7 +1102,6 @@ rzg2l_cpg_register_core_clk(const struct cpg_core_clk *core,
 	struct device *dev = priv->dev;
 	unsigned int id = core->id, div = core->div;
 	const char *parent_name;
-	struct clk_hw *clk_hw;
 
 	WARN_DEBUG(id >= priv->num_core_clks);
 	WARN_DEBUG(PTR_ERR(priv->clks[id]) != -ENOENT);
@@ -1122,40 +1124,39 @@ rzg2l_cpg_register_core_clk(const struct cpg_core_clk *core,
 		}
 
 		parent_name = __clk_get_name(parent);
-		clk_hw = devm_clk_hw_register_fixed_factor(dev, core->name, parent_name,
-							   CLK_SET_RATE_PARENT,
-							   core->mult, div);
-		if (IS_ERR(clk_hw))
-			clk = ERR_CAST(clk_hw);
-		else
-			clk = clk_hw->clk;
+		clk = clk_register_fixed_factor(NULL, core->name,
+						parent_name, CLK_SET_RATE_PARENT,
+						core->mult, div);
 		break;
 	case CLK_TYPE_SAM_PLL:
-		clk = rzg2l_cpg_pll_clk_register(core, priv, &rzg2l_cpg_pll_ops);
+		clk = rzg2l_cpg_pll_clk_register(core, priv->clks, priv->base, priv,
+						 &rzg2l_cpg_pll_ops);
 		break;
 	case CLK_TYPE_G3S_PLL:
-		clk = rzg2l_cpg_pll_clk_register(core, priv, &rzg3s_cpg_pll_ops);
+		clk = rzg2l_cpg_pll_clk_register(core, priv->clks, priv->base, priv,
+						 &rzg3s_cpg_pll_ops);
 		break;
 	case CLK_TYPE_SIPLL5:
-		clk = rzg2l_cpg_sipll5_register(core, priv);
+		clk = rzg2l_cpg_sipll5_register(core, priv->clks, priv);
 		break;
 	case CLK_TYPE_DIV:
-		clk = rzg2l_cpg_div_clk_register(core, priv);
+		clk = rzg2l_cpg_div_clk_register(core, priv->clks,
+						 priv->base, priv);
 		break;
 	case CLK_TYPE_G3S_DIV:
-		clk = rzg3s_cpg_div_clk_register(core, priv);
+		clk = rzg3s_cpg_div_clk_register(core, priv->clks, priv->base, priv);
 		break;
 	case CLK_TYPE_MUX:
-		clk = rzg2l_cpg_mux_clk_register(core, priv);
+		clk = rzg2l_cpg_mux_clk_register(core, priv->base, priv);
 		break;
 	case CLK_TYPE_SD_MUX:
-		clk = rzg2l_cpg_sd_mux_clk_register(core, priv);
+		clk = rzg2l_cpg_sd_mux_clk_register(core, priv->base, priv);
 		break;
 	case CLK_TYPE_PLL5_4_MUX:
 		clk = rzg2l_cpg_pll5_4_mux_clk_register(core, priv);
 		break;
 	case CLK_TYPE_DSI_DIV:
-		clk = rzg2l_cpg_dsi_div_clk_register(core, priv);
+		clk = rzg2l_cpg_dsi_div_clk_register(core, priv->clks, priv);
 		break;
 	default:
 		goto fail;
@@ -1336,7 +1337,6 @@ rzg2l_cpg_register_mod_clk(const struct rzg2l_mod_clk *mod,
 	struct clk *parent, *clk;
 	const char *parent_name;
 	unsigned int i;
-	int ret;
 
 	WARN_DEBUG(id < priv->num_core_clks);
 	WARN_DEBUG(id >= priv->num_core_clks + priv->num_mod_clks);
@@ -1380,13 +1380,10 @@ rzg2l_cpg_register_mod_clk(const struct rzg2l_mod_clk *mod,
 	clock->priv = priv;
 	clock->hw.init = &init;
 
-	ret = devm_clk_hw_register(dev, &clock->hw);
-	if (ret) {
-		clk = ERR_PTR(ret);
+	clk = clk_register(NULL, &clock->hw);
+	if (IS_ERR(clk))
 		goto fail;
-	}
 
-	clk = clock->hw.clk;
 	dev_dbg(dev, "Module clock %pC at %lu Hz\n", clk, clk_get_rate(clk));
 	priv->clks[id] = clk;
 

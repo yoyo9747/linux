@@ -19,7 +19,6 @@ Contents:
    caif/index
    ethtool-netlink
    ieee802154
-   iso15765-2
    j1939
    kapi
    msg_zerocopy
@@ -49,7 +48,6 @@ Contents:
    cdc_mbim
    dccp
    dctcp
-   devmem
    dns_resolver
    driver
    eql
@@ -74,7 +72,6 @@ Contents:
    mac80211-injection
    mctp
    mpls-sysctl
-   mptcp
    mptcp-sysctl
    multiqueue
    multi-pf-netdev
@@ -88,12 +85,10 @@ Contents:
    nexthop-group-resilient
    nf_conntrack-sysctl
    nf_flowtable
-   oa-tc6-framework
    openvswitch
    operstates
    packet_mmap
    phonet
-   phy-link-topology
    pktgen
    plip
    ppp_generic
@@ -109,7 +104,6 @@ Contents:
    seg6-sysctl
    skbuff
    smc-sysctl
-   sriov
    statistics
    strparser
    switchdev

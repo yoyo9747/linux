@@ -9,7 +9,7 @@
 #include <linux/memblock.h>
 #include <linux/random.h>
 #include <asm/dmi.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #ifndef SMBIOS_ENTRY_POINT_SCAN_START
 #define SMBIOS_ENTRY_POINT_SCAN_START 0xF0000

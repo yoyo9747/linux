@@ -87,7 +87,6 @@ struct icc_provider *icc_clk_register(struct device *dev,
 	onecell = devm_kzalloc(dev, struct_size(onecell, nodes, 2 * num_clocks), GFP_KERNEL);
 	if (!onecell)
 		return ERR_PTR(-ENOMEM);
-	onecell->num_nodes = 2 * num_clocks;
 
 	qp = devm_kzalloc(dev, struct_size(qp, clocks, num_clocks), GFP_KERNEL);
 	if (!qp)
@@ -109,7 +108,7 @@ struct icc_provider *icc_clk_register(struct device *dev,
 	for (i = 0, j = 0; i < num_clocks; i++) {
 		qp->clocks[i].clk = data[i].clk;
 
-		node = icc_node_create(first_id + data[i].master_id);
+		node = icc_node_create(first_id + j);
 		if (IS_ERR(node)) {
 			ret = PTR_ERR(node);
 			goto err;
@@ -119,10 +118,10 @@ struct icc_provider *icc_clk_register(struct device *dev,
 		node->data = &qp->clocks[i];
 		icc_node_add(node, provider);
 		/* link to the next node, slave */
-		icc_link_create(node, first_id + data[i].slave_id);
+		icc_link_create(node, first_id + j + 1);
 		onecell->nodes[j++] = node;
 
-		node = icc_node_create(first_id + data[i].slave_id);
+		node = icc_node_create(first_id + j);
 		if (IS_ERR(node)) {
 			ret = PTR_ERR(node);
 			goto err;
@@ -133,6 +132,8 @@ struct icc_provider *icc_clk_register(struct device *dev,
 		icc_node_add(node, provider);
 		onecell->nodes[j++] = node;
 	}
+
+	onecell->num_nodes = j;
 
 	ret = icc_provider_register(provider);
 	if (ret)
@@ -146,24 +147,6 @@ err:
 	return ERR_PTR(ret);
 }
 EXPORT_SYMBOL_GPL(icc_clk_register);
-
-static void devm_icc_release(void *res)
-{
-	icc_clk_unregister(res);
-}
-
-int devm_icc_clk_register(struct device *dev, unsigned int first_id,
-			  unsigned int num_clocks, const struct icc_clk_data *data)
-{
-	struct icc_provider *prov;
-
-	prov = icc_clk_register(dev, first_id, num_clocks, data);
-	if (IS_ERR(prov))
-		return PTR_ERR(prov);
-
-	return devm_add_action_or_reset(dev, devm_icc_release, prov);
-}
-EXPORT_SYMBOL_GPL(devm_icc_clk_register);
 
 /**
  * icc_clk_unregister() - unregister a previously registered clk interconnect provider

@@ -48,7 +48,7 @@
 };
 
 &exp1 {
-	p15-hog {
+	p15 {
 		/* P15 - EXP_MUX2 */
 		gpio-hog;
 		gpios = <13 GPIO_ACTIVE_HIGH>;

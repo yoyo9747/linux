@@ -2,8 +2,6 @@
 #ifndef _ASM_LOONGARCH_KVM_PARA_H
 #define _ASM_LOONGARCH_KVM_PARA_H
 
-#include <uapi/asm/kvm_para.h>
-
 /*
  * Hypercall code field
  */
@@ -16,7 +14,6 @@
 
 #define KVM_HCALL_SERVICE		HYPERCALL_ENCODE(HYPERVISOR_KVM, KVM_HCALL_CODE_SERVICE)
 #define  KVM_HCALL_FUNC_IPI		1
-#define  KVM_HCALL_FUNC_NOTIFY		2
 
 #define KVM_HCALL_SWDBG			HYPERCALL_ENCODE(HYPERVISOR_KVM, KVM_HCALL_CODE_SWDBG)
 
@@ -27,23 +24,13 @@
 #define KVM_HCALL_INVALID_CODE		-1UL
 #define KVM_HCALL_INVALID_PARAMETER	-2UL
 
-#define KVM_STEAL_PHYS_VALID		BIT_ULL(0)
-#define KVM_STEAL_PHYS_MASK		GENMASK_ULL(63, 6)
-
-struct kvm_steal_time {
-	__u64 steal;
-	__u32 version;
-	__u32 flags;
-	__u32 pad[12];
-};
-
 /*
  * Hypercall interface for KVM hypervisor
  *
  * a0: function identifier
- * a1-a5: args
+ * a1-a6: args
  * Return value will be placed in a0.
- * Up to 5 arguments are passed in a1, a2, a3, a4, a5.
+ * Up to 6 arguments are passed in a1, a2, a3, a4, a5, a6.
  */
 static __always_inline long kvm_hypercall0(u64 fid)
 {
@@ -156,20 +143,10 @@ static __always_inline long kvm_hypercall5(u64 fid,
 	return ret;
 }
 
-#ifdef CONFIG_PARAVIRT
-bool kvm_para_available(void);
-unsigned int kvm_arch_para_features(void);
-#else
-static inline bool kvm_para_available(void)
-{
-	return false;
-}
-
 static inline unsigned int kvm_arch_para_features(void)
 {
 	return 0;
 }
-#endif
 
 static inline unsigned int kvm_arch_para_hints(void)
 {

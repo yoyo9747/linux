@@ -28,7 +28,6 @@
 
 static struct kmem_cache *hfs_inode_cachep;
 
-MODULE_DESCRIPTION("Apple Macintosh file system support");
 MODULE_LICENSE("GPL");
 
 static int hfs_sync_fs(struct super_block *sb, int wait)

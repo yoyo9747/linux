@@ -111,15 +111,14 @@ __bpf_kfunc_start_defs();
 /**
  * bpf_get_fsverity_digest: read fsverity digest of file
  * @file: file to get digest from
- * @digest_p: (out) dynptr for struct fsverity_digest
+ * @digest_ptr: (out) dynptr for struct fsverity_digest
  *
  * Read fsverity_digest of *file* into *digest_ptr*.
  *
  * Return: 0 on success, a negative value on error.
  */
-__bpf_kfunc int bpf_get_fsverity_digest(struct file *file, struct bpf_dynptr *digest_p)
+__bpf_kfunc int bpf_get_fsverity_digest(struct file *file, struct bpf_dynptr_kern *digest_ptr)
 {
-	struct bpf_dynptr_kern *digest_ptr = (struct bpf_dynptr_kern *)digest_p;
 	const struct inode *inode = file_inode(file);
 	u32 dynptr_sz = __bpf_dynptr_size(digest_ptr);
 	struct fsverity_digest *arg;

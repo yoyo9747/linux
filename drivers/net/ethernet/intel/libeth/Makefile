@@ -3,4 +3,4 @@
 
 obj-$(CONFIG_LIBETH)		+= libeth.o
 
-libeth-y			:= rx.o
+libeth-objs			+= rx.o

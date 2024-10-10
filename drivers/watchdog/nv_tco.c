@@ -264,6 +264,7 @@ static long nv_tco_ioctl(struct file *file, unsigned int cmd,
 
 static const struct file_operations nv_tco_fops = {
 	.owner =		THIS_MODULE,
+	.llseek =		no_llseek,
 	.write =		nv_tco_write,
 	.unlocked_ioctl =	nv_tco_ioctl,
 	.compat_ioctl =		compat_ptr_ioctl,

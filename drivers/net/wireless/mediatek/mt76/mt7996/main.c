@@ -93,7 +93,7 @@ static int mt7996_start(struct ieee80211_hw *hw)
 	return ret;
 }
 
-static void mt7996_stop(struct ieee80211_hw *hw, bool suspend)
+static void mt7996_stop(struct ieee80211_hw *hw)
 {
 	struct mt7996_dev *dev = mt7996_hw_dev(hw);
 	struct mt7996_phy *phy = mt7996_hw_phy(hw);
@@ -206,7 +206,7 @@ static int mt7996_add_interface(struct ieee80211_hw *hw,
 	mvif->mt76.omac_idx = idx;
 	mvif->phy = phy;
 	mvif->mt76.band_idx = band_idx;
-	mvif->mt76.wmm_idx = vif->type == NL80211_IFTYPE_AP ? 0 : 3;
+	mvif->mt76.wmm_idx = vif->type != NL80211_IFTYPE_AP;
 
 	ret = mt7996_mcu_add_dev_info(phy, vif, true);
 	if (ret)
@@ -291,16 +291,19 @@ static void mt7996_remove_interface(struct ieee80211_hw *hw,
 	mt76_wcid_cleanup(&dev->mt76, &msta->wcid);
 }
 
-int mt7996_set_channel(struct mt76_phy *mphy)
+int mt7996_set_channel(struct mt7996_phy *phy)
 {
-	struct mt7996_phy *phy = mphy->priv;
+	struct mt7996_dev *dev = phy->dev;
 	int ret;
 
-	ret = mt7996_mcu_set_chan_info(phy, UNI_CHANNEL_SWITCH);
-	if (ret)
-		goto out;
+	cancel_delayed_work_sync(&phy->mt76->mac_work);
 
-	ret = mt7996_mcu_set_chan_info(phy, UNI_CHANNEL_RX_PATH);
+	mutex_lock(&dev->mt76.mutex);
+	set_bit(MT76_RESET, &phy->mt76->state);
+
+	mt76_set_channel(phy->mt76);
+
+	ret = mt7996_mcu_set_chan_info(phy, UNI_CHANNEL_SWITCH);
 	if (ret)
 		goto out;
 
@@ -311,7 +314,13 @@ int mt7996_set_channel(struct mt76_phy *mphy)
 	phy->noise = 0;
 
 out:
-	ieee80211_queue_delayed_work(mphy->hw, &mphy->mac_work,
+	clear_bit(MT76_RESET, &phy->mt76->state);
+	mutex_unlock(&dev->mt76.mutex);
+
+	mt76_txq_schedule_all(phy->mt76);
+
+	ieee80211_queue_delayed_work(phy->mt76->hw,
+				     &phy->mt76->mac_work,
 				     MT7996_WATCHDOG_TIME);
 
 	return ret;
@@ -351,14 +360,14 @@ static int mt7996_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	case WLAN_CIPHER_SUITE_SMS4:
 		break;
 	case WLAN_CIPHER_SUITE_AES_CMAC:
+		wcid_keyidx = &wcid->hw_key_idx2;
+		key->flags |= IEEE80211_KEY_FLAG_GENERATE_MMIE;
+		fallthrough;
 	case WLAN_CIPHER_SUITE_BIP_CMAC_256:
 	case WLAN_CIPHER_SUITE_BIP_GMAC_128:
 	case WLAN_CIPHER_SUITE_BIP_GMAC_256:
-		if (key->keyidx == 6 || key->keyidx == 7) {
-			wcid_keyidx = &wcid->hw_key_idx2;
-			key->flags |= IEEE80211_KEY_FLAG_GENERATE_MMIE;
+		if (key->keyidx == 6 || key->keyidx == 7)
 			break;
-		}
 		fallthrough;
 	case WLAN_CIPHER_SUITE_WEP40:
 	case WLAN_CIPHER_SUITE_WEP104:
@@ -402,9 +411,11 @@ static int mt7996_config(struct ieee80211_hw *hw, u32 changed)
 	int ret;
 
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
-		ret = mt76_update_channel(phy->mt76);
+		ieee80211_stop_queues(hw);
+		ret = mt7996_set_channel(phy);
 		if (ret)
 			return ret;
+		ieee80211_wake_queues(hw);
 	}
 
 	if (changed & (IEEE80211_CONF_CHANGE_POWER |

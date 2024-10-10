@@ -147,7 +147,8 @@ nfsd4_block_get_device_info_simple(struct super_block *sb,
 	struct pnfs_block_deviceaddr *dev;
 	struct pnfs_block_volume *b;
 
-	dev = kzalloc(struct_size(dev, volumes, 1), GFP_KERNEL);
+	dev = kzalloc(sizeof(struct pnfs_block_deviceaddr) +
+		      sizeof(struct pnfs_block_volume), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 	gdp->gd_device = dev;
@@ -254,7 +255,8 @@ nfsd4_block_get_device_info_scsi(struct super_block *sb,
 	const struct pr_ops *ops;
 	int ret;
 
-	dev = kzalloc(struct_size(dev, volumes, 1), GFP_KERNEL);
+	dev = kzalloc(sizeof(struct pnfs_block_deviceaddr) +
+		      sizeof(struct pnfs_block_volume), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 	gdp->gd_device = dev;

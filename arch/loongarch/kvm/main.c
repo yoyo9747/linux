@@ -242,7 +242,6 @@ void kvm_check_vpid(struct kvm_vcpu *vcpu)
 		kvm_update_vpid(vcpu, cpu);
 		trace_kvm_vpid_change(vcpu, vcpu->arch.vpid);
 		vcpu->cpu = cpu;
-		kvm_clear_request(KVM_REQ_TLB_FLUSH_GPA, vcpu);
 	}
 
 	/* Restore GSTAT(0x50).vpid */
@@ -261,7 +260,7 @@ long kvm_arch_dev_ioctl(struct file *filp,
 	return -ENOIOCTLCMD;
 }
 
-int kvm_arch_enable_virtualization_cpu(void)
+int kvm_arch_hardware_enable(void)
 {
 	unsigned long env, gcfg = 0;
 
@@ -300,7 +299,7 @@ int kvm_arch_enable_virtualization_cpu(void)
 	return 0;
 }
 
-void kvm_arch_disable_virtualization_cpu(void)
+void kvm_arch_hardware_disable(void)
 {
 	write_csr_gcfg(0);
 	write_csr_gstat(0);

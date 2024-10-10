@@ -25,7 +25,6 @@
 #include "wmi-tlv.h"
 #include "wmi-ops.h"
 #include "wow.h"
-#include "leds.h"
 
 /*********/
 /* Rates */
@@ -1437,7 +1436,7 @@ static void ath10k_recalc_radar_detection(struct ath10k *ar)
 		 * by indicating that radar was detected.
 		 */
 		ath10k_warn(ar, "failed to start CAC: %d\n", ret);
-		ieee80211_radar_detected(ar->hw, NULL);
+		ieee80211_radar_detected(ar->hw);
 	}
 }
 
@@ -5363,7 +5362,7 @@ err:
 	return ret;
 }
 
-static void ath10k_stop(struct ieee80211_hw *hw, bool suspend)
+static void ath10k_stop(struct ieee80211_hw *hw)
 {
 	struct ath10k *ar = hw->priv;
 	u32 opt;

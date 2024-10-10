@@ -13,7 +13,7 @@
 #include <dt-bindings/pwm/pwm.h>
 
 / {
-	model = "Pine64 Pinebook";
+	model = "Pinebook";
 	compatible = "pine64,pinebook", "allwinner,sun50i-a64";
 	chassis-type = "laptop";
 

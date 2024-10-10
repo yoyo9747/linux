@@ -491,8 +491,10 @@ static int __init drmem_init(void)
 	const __be32 *prop;
 
 	dn = of_find_node_by_path("/ibm,dynamic-reconfiguration-memory");
-	if (!dn)
+	if (!dn) {
+		pr_info("No dynamic reconfiguration memory found\n");
 		return 0;
+	}
 
 	if (init_drmem_lmb_size(dn)) {
 		of_node_put(dn);

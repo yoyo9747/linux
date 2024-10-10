@@ -45,8 +45,7 @@ static void pm_calc_rlib_size(struct packet_manager *pm,
 	unsigned int process_count, queue_count, compute_queue_count, gws_queue_count;
 	unsigned int map_queue_size;
 	unsigned int max_proc_per_quantum = 1;
-	struct kfd_node *node = pm->dqm->dev;
-	struct device *dev = node->adev->dev;
+	struct kfd_node *dev = pm->dqm->dev;
 
 	process_count = pm->dqm->processes_count;
 	queue_count = pm->dqm->active_queue_count;
@@ -60,14 +59,14 @@ static void pm_calc_rlib_size(struct packet_manager *pm,
 	 */
 	*over_subscription = false;
 
-	if (node->max_proc_per_quantum > 1)
-		max_proc_per_quantum = node->max_proc_per_quantum;
+	if (dev->max_proc_per_quantum > 1)
+		max_proc_per_quantum = dev->max_proc_per_quantum;
 
 	if ((process_count > max_proc_per_quantum) ||
 	    compute_queue_count > get_cp_queues_num(pm->dqm) ||
 	    gws_queue_count > 1) {
 		*over_subscription = true;
-		dev_dbg(dev, "Over subscribed runlist\n");
+		pr_debug("Over subscribed runlist\n");
 	}
 
 	map_queue_size = pm->pmf->map_queues_size;
@@ -82,7 +81,7 @@ static void pm_calc_rlib_size(struct packet_manager *pm,
 	if (*over_subscription)
 		*rlib_size += pm->pmf->runlist_size;
 
-	dev_dbg(dev, "runlist ib size %d\n", *rlib_size);
+	pr_debug("runlist ib size %d\n", *rlib_size);
 }
 
 static int pm_allocate_runlist_ib(struct packet_manager *pm,
@@ -91,8 +90,6 @@ static int pm_allocate_runlist_ib(struct packet_manager *pm,
 				unsigned int *rl_buffer_size,
 				bool *is_over_subscription)
 {
-	struct kfd_node *node = pm->dqm->dev;
-	struct device *dev = node->adev->dev;
 	int retval;
 
 	if (WARN_ON(pm->allocated))
@@ -102,10 +99,11 @@ static int pm_allocate_runlist_ib(struct packet_manager *pm,
 
 	mutex_lock(&pm->lock);
 
-	retval = kfd_gtt_sa_allocate(node, *rl_buffer_size, &pm->ib_buffer_obj);
+	retval = kfd_gtt_sa_allocate(pm->dqm->dev, *rl_buffer_size,
+					&pm->ib_buffer_obj);
 
 	if (retval) {
-		dev_err(dev, "Failed to allocate runlist IB\n");
+		pr_err("Failed to allocate runlist IB\n");
 		goto out;
 	}
 
@@ -127,8 +125,6 @@ static int pm_create_runlist_ib(struct packet_manager *pm,
 {
 	unsigned int alloc_size_bytes;
 	unsigned int *rl_buffer, rl_wptr, i;
-	struct kfd_node *node = pm->dqm->dev;
-	struct device *dev = node->adev->dev;
 	int retval, processes_mapped;
 	struct device_process_node *cur;
 	struct qcm_process_device *qpd;
@@ -146,7 +142,7 @@ static int pm_create_runlist_ib(struct packet_manager *pm,
 	*rl_size_bytes = alloc_size_bytes;
 	pm->ib_size_bytes = alloc_size_bytes;
 
-	dev_dbg(dev, "Building runlist ib process count: %d queues count %d\n",
+	pr_debug("Building runlist ib process count: %d queues count %d\n",
 		pm->dqm->processes_count, pm->dqm->active_queue_count);
 
 	/* build the run list ib packet */
@@ -154,7 +150,7 @@ static int pm_create_runlist_ib(struct packet_manager *pm,
 		qpd = cur->qpd;
 		/* build map process packet */
 		if (processes_mapped >= pm->dqm->processes_count) {
-			dev_dbg(dev, "Not enough space left in runlist IB\n");
+			pr_debug("Not enough space left in runlist IB\n");
 			pm_release_ib(pm);
 			return -ENOMEM;
 		}
@@ -171,8 +167,7 @@ static int pm_create_runlist_ib(struct packet_manager *pm,
 			if (!kq->queue->properties.is_active)
 				continue;
 
-			dev_dbg(dev,
-				"static_queue, mapping kernel q %d, is debug status %d\n",
+			pr_debug("static_queue, mapping kernel q %d, is debug status %d\n",
 				kq->queue->queue, qpd->is_debug);
 
 			retval = pm->pmf->map_queues(pm,
@@ -191,8 +186,7 @@ static int pm_create_runlist_ib(struct packet_manager *pm,
 			if (!q->properties.is_active)
 				continue;
 
-			dev_dbg(dev,
-				"static_queue, mapping user queue %d, is debug status %d\n",
+			pr_debug("static_queue, mapping user queue %d, is debug status %d\n",
 				q->queue, qpd->is_debug);
 
 			retval = pm->pmf->map_queues(pm,
@@ -209,13 +203,11 @@ static int pm_create_runlist_ib(struct packet_manager *pm,
 		}
 	}
 
-	dev_dbg(dev, "Finished map process and queues to runlist\n");
+	pr_debug("Finished map process and queues to runlist\n");
 
 	if (is_over_subscription) {
 		if (!pm->is_over_subscription)
-			dev_warn(
-				dev,
-				"Runlist is getting oversubscribed. Expect reduced ROCm performance.\n");
+			pr_warn("Runlist is getting oversubscribed. Expect reduced ROCm performance.\n");
 		retval = pm->pmf->runlist(pm, &rl_buffer[rl_wptr],
 					*rl_gpu_addr,
 					alloc_size_bytes / sizeof(uint32_t),
@@ -247,8 +239,7 @@ int pm_init(struct packet_manager *pm, struct device_queue_manager *dqm)
 		break;
 	default:
 		if (KFD_GC_VERSION(dqm->dev) == IP_VERSION(9, 4, 2) ||
-		    KFD_GC_VERSION(dqm->dev) == IP_VERSION(9, 4, 3) ||
-		    KFD_GC_VERSION(dqm->dev) == IP_VERSION(9, 4, 4))
+		    KFD_GC_VERSION(dqm->dev) == IP_VERSION(9, 4, 3))
 			pm->pmf = &kfd_aldebaran_pm_funcs;
 		else if (KFD_GC_VERSION(dqm->dev) >= IP_VERSION(9, 0, 1))
 			pm->pmf = &kfd_v9_pm_funcs;
@@ -271,18 +262,16 @@ int pm_init(struct packet_manager *pm, struct device_queue_manager *dqm)
 	return 0;
 }
 
-void pm_uninit(struct packet_manager *pm)
+void pm_uninit(struct packet_manager *pm, bool hanging)
 {
 	mutex_destroy(&pm->lock);
-	kernel_queue_uninit(pm->priv_queue);
+	kernel_queue_uninit(pm->priv_queue, hanging);
 	pm->priv_queue = NULL;
 }
 
 int pm_send_set_resources(struct packet_manager *pm,
 				struct scheduling_resources *res)
 {
-	struct kfd_node *node = pm->dqm->dev;
-	struct device *dev = node->adev->dev;
 	uint32_t *buffer, size;
 	int retval = 0;
 
@@ -292,7 +281,7 @@ int pm_send_set_resources(struct packet_manager *pm,
 					size / sizeof(uint32_t),
 					(unsigned int **)&buffer);
 	if (!buffer) {
-		dev_err(dev, "Failed to allocate buffer on kernel queue\n");
+		pr_err("Failed to allocate buffer on kernel queue\n");
 		retval = -ENOMEM;
 		goto out;
 	}
@@ -354,8 +343,6 @@ fail_create_runlist_ib:
 int pm_send_query_status(struct packet_manager *pm, uint64_t fence_address,
 			uint64_t fence_value)
 {
-	struct kfd_node *node = pm->dqm->dev;
-	struct device *dev = node->adev->dev;
 	uint32_t *buffer, size;
 	int retval = 0;
 
@@ -367,7 +354,7 @@ int pm_send_query_status(struct packet_manager *pm, uint64_t fence_address,
 	kq_acquire_packet_buffer(pm->priv_queue,
 			size / sizeof(uint32_t), (unsigned int **)&buffer);
 	if (!buffer) {
-		dev_err(dev, "Failed to allocate buffer on kernel queue\n");
+		pr_err("Failed to allocate buffer on kernel queue\n");
 		retval = -ENOMEM;
 		goto out;
 	}
@@ -385,8 +372,6 @@ out:
 
 int pm_update_grace_period(struct packet_manager *pm, uint32_t grace_period)
 {
-	struct kfd_node *node = pm->dqm->dev;
-	struct device *dev = node->adev->dev;
 	int retval = 0;
 	uint32_t *buffer, size;
 
@@ -400,8 +385,7 @@ int pm_update_grace_period(struct packet_manager *pm, uint32_t grace_period)
 			(unsigned int **)&buffer);
 
 		if (!buffer) {
-			dev_err(dev,
-				"Failed to allocate buffer on kernel queue\n");
+			pr_err("Failed to allocate buffer on kernel queue\n");
 			retval = -ENOMEM;
 			goto out;
 		}
@@ -422,8 +406,6 @@ int pm_send_unmap_queue(struct packet_manager *pm,
 			enum kfd_unmap_queues_filter filter,
 			uint32_t filter_param, bool reset)
 {
-	struct kfd_node *node = pm->dqm->dev;
-	struct device *dev = node->adev->dev;
 	uint32_t *buffer, size;
 	int retval = 0;
 
@@ -432,7 +414,7 @@ int pm_send_unmap_queue(struct packet_manager *pm,
 	kq_acquire_packet_buffer(pm->priv_queue,
 			size / sizeof(uint32_t), (unsigned int **)&buffer);
 	if (!buffer) {
-		dev_err(dev, "Failed to allocate buffer on kernel queue\n");
+		pr_err("Failed to allocate buffer on kernel queue\n");
 		retval = -ENOMEM;
 		goto out;
 	}
@@ -481,8 +463,6 @@ out:
 
 int pm_debugfs_hang_hws(struct packet_manager *pm)
 {
-	struct kfd_node *node = pm->dqm->dev;
-	struct device *dev = node->adev->dev;
 	uint32_t *buffer, size;
 	int r = 0;
 
@@ -494,16 +474,16 @@ int pm_debugfs_hang_hws(struct packet_manager *pm)
 	kq_acquire_packet_buffer(pm->priv_queue,
 			size / sizeof(uint32_t), (unsigned int **)&buffer);
 	if (!buffer) {
-		dev_err(dev, "Failed to allocate buffer on kernel queue\n");
+		pr_err("Failed to allocate buffer on kernel queue\n");
 		r = -ENOMEM;
 		goto out;
 	}
 	memset(buffer, 0x55, size);
 	kq_submit_packet(pm->priv_queue);
 
-	dev_info(dev, "Submitting %x %x %x %x %x %x %x to HIQ to hang the HWS.",
-		 buffer[0], buffer[1], buffer[2], buffer[3], buffer[4],
-		 buffer[5], buffer[6]);
+	pr_info("Submitting %x %x %x %x %x %x %x to HIQ to hang the HWS.",
+		buffer[0], buffer[1], buffer[2], buffer[3],
+		buffer[4], buffer[5], buffer[6]);
 out:
 	mutex_unlock(&pm->lock);
 	return r;

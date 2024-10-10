@@ -407,9 +407,6 @@ static int __skb_datagram_iter(const struct sk_buff *skb, int offset,
 			return 0;
 	}
 
-	if (!skb_frags_readable(skb))
-		goto short_copy;
-
 	/* Copy paged appendix. Hmm... why does this look so complicated? */
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		int end;
@@ -621,13 +618,16 @@ fault:
 }
 EXPORT_SYMBOL(skb_copy_datagram_from_iter);
 
-int zerocopy_fill_skb_from_iter(struct sk_buff *skb,
-				struct iov_iter *from, size_t length)
+int __zerocopy_sg_from_iter(struct msghdr *msg, struct sock *sk,
+			    struct sk_buff *skb, struct iov_iter *from,
+			    size_t length)
 {
-	int frag = skb_shinfo(skb)->nr_frags;
+	int frag;
 
-	if (!skb_frags_readable(skb))
-		return -EFAULT;
+	if (msg && msg->msg_ubuf && msg->sg_from_iter)
+		return msg->sg_from_iter(sk, skb, from, length);
+
+	frag = skb_shinfo(skb)->nr_frags;
 
 	while (length && iov_iter_count(from)) {
 		struct page *head, *last_head = NULL;
@@ -635,6 +635,7 @@ int zerocopy_fill_skb_from_iter(struct sk_buff *skb,
 		int refs, order, n = 0;
 		size_t start;
 		ssize_t copied;
+		unsigned long truesize;
 
 		if (frag == MAX_SKB_FRAGS)
 			return -EMSGSIZE;
@@ -646,9 +647,17 @@ int zerocopy_fill_skb_from_iter(struct sk_buff *skb,
 
 		length -= copied;
 
+		truesize = PAGE_ALIGN(copied + start);
 		skb->data_len += copied;
 		skb->len += copied;
-		skb->truesize += PAGE_ALIGN(copied + start);
+		skb->truesize += truesize;
+		if (sk && sk->sk_type == SOCK_STREAM) {
+			sk_wmem_queued_add(sk, truesize);
+			if (!skb_zcopy_pure(skb))
+				sk_mem_charge(sk, truesize);
+		} else {
+			refcount_add(truesize, &skb->sk->sk_wmem_alloc);
+		}
 
 		head = compound_head(pages[n]);
 		order = compound_order(head);
@@ -690,30 +699,6 @@ int zerocopy_fill_skb_from_iter(struct sk_buff *skb,
 			page_ref_sub(last_head, refs);
 	}
 	return 0;
-}
-
-int __zerocopy_sg_from_iter(struct msghdr *msg, struct sock *sk,
-			    struct sk_buff *skb, struct iov_iter *from,
-			    size_t length)
-{
-	unsigned long orig_size = skb->truesize;
-	unsigned long truesize;
-	int ret;
-
-	if (msg && msg->msg_ubuf && msg->sg_from_iter)
-		ret = msg->sg_from_iter(skb, from, length);
-	else
-		ret = zerocopy_fill_skb_from_iter(skb, from, length);
-
-	truesize = skb->truesize - orig_size;
-	if (sk && sk->sk_type == SOCK_STREAM) {
-		sk_wmem_queued_add(sk, truesize);
-		if (!skb_zcopy_pure(skb))
-			sk_mem_charge(sk, truesize);
-	} else {
-		refcount_add(truesize, &skb->sk->sk_wmem_alloc);
-	}
-	return ret;
 }
 EXPORT_SYMBOL(__zerocopy_sg_from_iter);
 

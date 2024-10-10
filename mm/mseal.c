@@ -16,24 +16,33 @@
 #include <linux/sched.h>
 #include "internal.h"
 
+static inline bool vma_is_sealed(struct vm_area_struct *vma)
+{
+	return (vma->vm_flags & VM_SEALED);
+}
+
 static inline void set_vma_sealed(struct vm_area_struct *vma)
 {
 	vm_flags_set(vma, VM_SEALED);
 }
 
+/*
+ * check if a vma is sealed for modification.
+ * return true, if modification is allowed.
+ */
+static bool can_modify_vma(struct vm_area_struct *vma)
+{
+	if (unlikely(vma_is_sealed(vma)))
+		return false;
+
+	return true;
+}
+
 static bool is_madv_discard(int behavior)
 {
-	switch (behavior) {
-	case MADV_FREE:
-	case MADV_DONTNEED:
-	case MADV_DONTNEED_LOCKED:
-	case MADV_REMOVE:
-	case MADV_DONTFORK:
-	case MADV_WIPEONFORK:
-		return true;
-	}
-
-	return false;
+	return	behavior &
+		(MADV_FREE | MADV_DONTNEED | MADV_DONTNEED_LOCKED |
+		 MADV_REMOVE | MADV_DONTFORK | MADV_WIPEONFORK);
 }
 
 static bool is_ro_anon(struct vm_area_struct *vma)
@@ -54,15 +63,45 @@ static bool is_ro_anon(struct vm_area_struct *vma)
 }
 
 /*
- * Check if a vma is allowed to be modified by madvise.
+ * Check if the vmas of a memory range are allowed to be modified.
+ * the memory ranger can have a gap (unallocated memory).
+ * return true, if it is allowed.
  */
-bool can_modify_vma_madv(struct vm_area_struct *vma, int behavior)
+bool can_modify_mm(struct mm_struct *mm, unsigned long start, unsigned long end)
 {
+	struct vm_area_struct *vma;
+
+	VMA_ITERATOR(vmi, mm, start);
+
+	/* going through each vma to check. */
+	for_each_vma_range(vmi, vma, end) {
+		if (unlikely(!can_modify_vma(vma)))
+			return false;
+	}
+
+	/* Allow by default. */
+	return true;
+}
+
+/*
+ * Check if the vmas of a memory range are allowed to be modified by madvise.
+ * the memory ranger can have a gap (unallocated memory).
+ * return true, if it is allowed.
+ */
+bool can_modify_mm_madv(struct mm_struct *mm, unsigned long start, unsigned long end,
+		int behavior)
+{
+	struct vm_area_struct *vma;
+
+	VMA_ITERATOR(vmi, mm, start);
+
 	if (!is_madv_discard(behavior))
 		return true;
 
-	if (unlikely(!can_modify_vma(vma) && is_ro_anon(vma)))
-		return false;
+	/* going through each vma to check. */
+	for_each_vma_range(vmi, vma, end)
+		if (unlikely(is_ro_anon(vma) && !can_modify_vma(vma)))
+			return false;
 
 	/* Allow by default. */
 	return true;
@@ -209,7 +248,7 @@ static int apply_mm_seal(unsigned long start, unsigned long end)
  *
  *  unseal() is not supported.
  */
-int do_mseal(unsigned long start, size_t len_in, unsigned long flags)
+static int do_mseal(unsigned long start, size_t len_in, unsigned long flags)
 {
 	size_t len;
 	int ret = 0;

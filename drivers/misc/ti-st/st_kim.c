@@ -198,7 +198,7 @@ static long read_local_version(struct kim_data_s *kim_gdata, char *bts_scr_name)
 {
 	unsigned short version = 0, chip = 0, min_ver = 0, maj_ver = 0;
 	static const char read_ver_cmd[] = { 0x01, 0x01, 0x10, 0x00 };
-	long time_left;
+	long timeout;
 
 	pr_debug("%s", __func__);
 
@@ -208,11 +208,11 @@ static long read_local_version(struct kim_data_s *kim_gdata, char *bts_scr_name)
 		return -EIO;
 	}
 
-	time_left = wait_for_completion_interruptible_timeout(
+	timeout = wait_for_completion_interruptible_timeout(
 		&kim_gdata->kim_rcvd, msecs_to_jiffies(CMD_RESP_TIME));
-	if (time_left <= 0) {
+	if (timeout <= 0) {
 		pr_err(" waiting for ver info- timed out or received signal");
-		return time_left ? -ERESTARTSYS : -ETIMEDOUT;
+		return timeout ? -ERESTARTSYS : -ETIMEDOUT;
 	}
 	reinit_completion(&kim_gdata->kim_rcvd);
 	/*

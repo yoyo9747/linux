@@ -11,7 +11,6 @@ USB support
     dwc3
     ehci
     functionfs
-    functionfs-desc
     gadget_configfs
     gadget_hid
     gadget_multi

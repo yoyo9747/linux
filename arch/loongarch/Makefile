@@ -105,8 +105,7 @@ KBUILD_CFLAGS			+= -fno-jump-tables
 endif
 
 KBUILD_RUSTFLAGS		+= --target=loongarch64-unknown-none-softfloat
-KBUILD_RUSTFLAGS_KERNEL		+= -Zdirect-access-external-data=yes
-KBUILD_RUSTFLAGS_MODULE		+= -Zdirect-access-external-data=no
+KBUILD_RUSTFLAGS_MODULE		+= -Crelocation-model=pic
 
 ifeq ($(CONFIG_RELOCATABLE),y)
 KBUILD_CFLAGS_KERNEL		+= -fPIE

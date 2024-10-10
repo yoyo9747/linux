@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
-// Copyright(c) 2023 Intel Corporation
+// Copyright(c) 2023 Intel Corporation. All rights reserved.
 
 /*
  * Soundwire Intel ops for LunarLake
  */
 
 #include <linux/acpi.h>
-#include <linux/cleanup.h>
 #include <linux/device.h>
 #include <linux/soundwire/sdw_registers.h>
 #include <linux/soundwire/sdw.h>
@@ -28,11 +27,6 @@ static void intel_shim_vs_init(struct sdw_intel *sdw)
 	void __iomem *shim_vs = sdw->link_res->shim_vs;
 	struct sdw_bus *bus = &sdw->cdns.bus;
 	struct sdw_intel_prop *intel_prop;
-	u16 clde;
-	u16 doaise2;
-	u16 dodse2;
-	u16 clds;
-	u16 clss;
 	u16 doaise;
 	u16 doais;
 	u16 dodse;
@@ -40,22 +34,12 @@ static void intel_shim_vs_init(struct sdw_intel *sdw)
 	u16 act;
 
 	intel_prop = bus->vendor_specific_prop;
-	clde = intel_prop->clde;
-	doaise2 = intel_prop->doaise2;
-	dodse2 = intel_prop->dodse2;
-	clds = intel_prop->clds;
-	clss = intel_prop->clss;
 	doaise = intel_prop->doaise;
 	doais = intel_prop->doais;
 	dodse = intel_prop->dodse;
 	dods = intel_prop->dods;
 
 	act = intel_readw(shim_vs, SDW_SHIM2_INTEL_VS_ACTMCTL);
-	u16p_replace_bits(&act, clde, SDW_SHIM3_INTEL_VS_ACTMCTL_CLDE);
-	u16p_replace_bits(&act, doaise2, SDW_SHIM3_INTEL_VS_ACTMCTL_DOAISE2);
-	u16p_replace_bits(&act, dodse2, SDW_SHIM3_INTEL_VS_ACTMCTL_DODSE2);
-	u16p_replace_bits(&act, clds, SDW_SHIM3_INTEL_VS_ACTMCTL_CLDS);
-	u16p_replace_bits(&act, clss, SDW_SHIM3_INTEL_VS_ACTMCTL_CLSS);
 	u16p_replace_bits(&act, doaise, SDW_SHIM2_INTEL_VS_ACTMCTL_DOAISE);
 	u16p_replace_bits(&act, doais, SDW_SHIM2_INTEL_VS_ACTMCTL_DOAIS);
 	u16p_replace_bits(&act, dodse, SDW_SHIM2_INTEL_VS_ACTMCTL_DODSE);
@@ -311,6 +295,7 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 	struct sdw_cdns_dai_runtime *dai_runtime;
 	struct sdw_cdns_pdi *pdi;
 	struct sdw_stream_config sconfig;
+	struct sdw_port_config *pconfig;
 	int ch, dir;
 	int ret;
 
@@ -325,8 +310,11 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 		dir = SDW_DATA_DIR_TX;
 
 	pdi = sdw_cdns_alloc_pdi(cdns, &cdns->pcm, ch, dir, dai->id);
-	if (!pdi)
-		return -EINVAL;
+
+	if (!pdi) {
+		ret = -EINVAL;
+		goto error;
+	}
 
 	/* use same definitions for alh_id as previous generations */
 	pdi->intel_alh_id = (sdw->instance * 16) + pdi->num + 3;
@@ -347,7 +335,7 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 				  sdw->instance,
 				  pdi->intel_alh_id);
 	if (ret)
-		return ret;
+		goto error;
 
 	sconfig.direction = dir;
 	sconfig.ch_count = ch;
@@ -357,10 +345,11 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 	sconfig.bps = snd_pcm_format_width(params_format(params));
 
 	/* Port configuration */
-	struct sdw_port_config *pconfig __free(kfree) = kzalloc(sizeof(*pconfig),
-								GFP_KERNEL);
-	if (!pconfig)
-		return -ENOMEM;
+	pconfig = kzalloc(sizeof(*pconfig), GFP_KERNEL);
+	if (!pconfig) {
+		ret =  -ENOMEM;
+		goto error;
+	}
 
 	pconfig->num = pdi->num;
 	pconfig->ch_mask = (1 << ch) - 1;
@@ -370,6 +359,8 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 	if (ret)
 		dev_err(cdns->dev, "add master to stream failed:%d\n", ret);
 
+	kfree(pconfig);
+error:
 	return ret;
 }
 
@@ -706,29 +697,9 @@ static void intel_program_sdi(struct sdw_intel *sdw, int dev_num)
 			__func__, sdw->instance, dev_num);
 }
 
-static int intel_get_link_count(struct sdw_intel *sdw)
-{
-	int ret;
-
-	ret = hdac_bus_eml_get_count(sdw->link_res->hbus, true, AZX_REG_ML_LEPTR_ID_SDW);
-	if (!ret) {
-		dev_err(sdw->cdns.dev, "%s: could not retrieve link count\n", __func__);
-		return -ENODEV;
-	}
-
-	if (ret > SDW_INTEL_MAX_LINKS) {
-		dev_err(sdw->cdns.dev, "%s: link count %d exceed max %d\n", __func__, ret, SDW_INTEL_MAX_LINKS);
-		return -EINVAL;
-	}
-
-	return ret;
-}
-
 const struct sdw_intel_hw_ops sdw_intel_lnl_hw_ops = {
 	.debugfs_init = intel_ace2x_debugfs_init,
 	.debugfs_exit = intel_ace2x_debugfs_exit,
-
-	.get_link_count = intel_get_link_count,
 
 	.register_dai = intel_register_dai,
 

@@ -1241,13 +1241,14 @@ static ssize_t omapfb_show_caps_num(struct device *dev,
 {
 	struct omapfb_device *fbdev = dev_get_drvdata(dev);
 	int plane;
-	size_t size = 0;
+	size_t size;
 	struct omapfb_caps caps;
 
 	plane = 0;
-	while (plane < OMAPFB_PLANE_NUM) {
+	size = 0;
+	while (size < PAGE_SIZE && plane < OMAPFB_PLANE_NUM) {
 		omapfb_get_caps(fbdev, plane, &caps);
-		size += sysfs_emit_at(buf, size,
+		size += scnprintf(&buf[size], PAGE_SIZE - size,
 			"plane#%d %#010x %#010x %#010x\n",
 			plane, caps.ctrl, caps.plane_color, caps.wnd_color);
 		plane++;
@@ -1262,27 +1263,34 @@ static ssize_t omapfb_show_caps_text(struct device *dev,
 	int i;
 	struct omapfb_caps caps;
 	int plane;
-	size_t size = 0;
+	size_t size;
 
 	plane = 0;
-	while (plane < OMAPFB_PLANE_NUM) {
+	size = 0;
+	while (size < PAGE_SIZE && plane < OMAPFB_PLANE_NUM) {
 		omapfb_get_caps(fbdev, plane, &caps);
-		size += sysfs_emit_at(buf, size, "plane#%d:\n", plane);
-		for (i = 0; i < ARRAY_SIZE(ctrl_caps); i++) {
+		size += scnprintf(&buf[size], PAGE_SIZE - size,
+				 "plane#%d:\n", plane);
+		for (i = 0; i < ARRAY_SIZE(ctrl_caps) &&
+		     size < PAGE_SIZE; i++) {
 			if (ctrl_caps[i].flag & caps.ctrl)
-				size += sysfs_emit_at(buf, size,
+				size += scnprintf(&buf[size], PAGE_SIZE - size,
 					" %s\n", ctrl_caps[i].name);
 		}
-		size += sysfs_emit_at(buf, size, " plane colors:\n");
-		for (i = 0; i < ARRAY_SIZE(color_caps); i++) {
+		size += scnprintf(&buf[size], PAGE_SIZE - size,
+				 " plane colors:\n");
+		for (i = 0; i < ARRAY_SIZE(color_caps) &&
+		     size < PAGE_SIZE; i++) {
 			if (color_caps[i].flag & caps.plane_color)
-				size += sysfs_emit_at(buf, size,
+				size += scnprintf(&buf[size], PAGE_SIZE - size,
 					"  %s\n", color_caps[i].name);
 		}
-		size += sysfs_emit_at(buf, size, " window colors:\n");
-		for (i = 0; i < ARRAY_SIZE(color_caps); i++) {
+		size += scnprintf(&buf[size], PAGE_SIZE - size,
+				 " window colors:\n");
+		for (i = 0; i < ARRAY_SIZE(color_caps) &&
+		     size < PAGE_SIZE; i++) {
 			if (color_caps[i].flag & caps.wnd_color)
-				size += sysfs_emit_at(buf, size,
+				size += scnprintf(&buf[size], PAGE_SIZE - size,
 					"  %s\n", color_caps[i].name);
 		}
 

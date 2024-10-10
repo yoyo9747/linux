@@ -1061,27 +1061,6 @@ static int _set_opp_bw(const struct opp_table *opp_table,
 	return 0;
 }
 
-static int _set_opp_level(struct device *dev, struct dev_pm_opp *opp)
-{
-	unsigned int level = 0;
-	int ret = 0;
-
-	if (opp) {
-		if (opp->level == OPP_LEVEL_UNSET)
-			return 0;
-
-		level = opp->level;
-	}
-
-	/* Request a new performance state through the device's PM domain. */
-	ret = dev_pm_domain_set_performance_state(dev, level);
-	if (ret)
-		dev_err(dev, "Failed to set performance state %u (%d)\n", level,
-			ret);
-
-	return ret;
-}
-
 /* This is only called for PM domain for now */
 static int _set_required_opps(struct device *dev, struct opp_table *opp_table,
 			      struct dev_pm_opp *opp, bool up)
@@ -1112,7 +1091,7 @@ static int _set_required_opps(struct device *dev, struct opp_table *opp_table,
 		if (devs[index]) {
 			required_opp = opp ? opp->required_opps[index] : NULL;
 
-			ret = _set_opp_level(devs[index], required_opp);
+			ret = dev_pm_opp_set_opp(devs[index], required_opp);
 			if (ret)
 				return ret;
 		}
@@ -1121,6 +1100,28 @@ static int _set_required_opps(struct device *dev, struct opp_table *opp_table,
 	}
 
 	return 0;
+}
+
+static int _set_opp_level(struct device *dev, struct opp_table *opp_table,
+			  struct dev_pm_opp *opp)
+{
+	unsigned int level = 0;
+	int ret = 0;
+
+	if (opp) {
+		if (opp->level == OPP_LEVEL_UNSET)
+			return 0;
+
+		level = opp->level;
+	}
+
+	/* Request a new performance state through the device's PM domain. */
+	ret = dev_pm_domain_set_performance_state(dev, level);
+	if (ret)
+		dev_err(dev, "Failed to set performance state %u (%d)\n", level,
+			ret);
+
+	return ret;
 }
 
 static void _find_current_opp(struct device *dev, struct opp_table *opp_table)
@@ -1170,7 +1171,7 @@ static int _disable_opp_table(struct device *dev, struct opp_table *opp_table)
 	if (opp_table->regulators)
 		regulator_disable(opp_table->regulators[0]);
 
-	ret = _set_opp_level(dev, NULL);
+	ret = _set_opp_level(dev, opp_table, NULL);
 	if (ret)
 		goto out;
 
@@ -1219,7 +1220,7 @@ static int _set_opp(struct device *dev, struct opp_table *opp_table,
 			return ret;
 		}
 
-		ret = _set_opp_level(dev, opp);
+		ret = _set_opp_level(dev, opp_table, opp);
 		if (ret)
 			return ret;
 
@@ -1266,7 +1267,7 @@ static int _set_opp(struct device *dev, struct opp_table *opp_table,
 			return ret;
 		}
 
-		ret = _set_opp_level(dev, opp);
+		ret = _set_opp_level(dev, opp_table, opp);
 		if (ret)
 			return ret;
 
@@ -2442,10 +2443,8 @@ static int _opp_attach_genpd(struct opp_table *opp_table, struct device *dev,
 		 * Cross check it again and fix if required.
 		 */
 		gdev = dev_to_genpd_dev(virt_dev);
-		if (IS_ERR(gdev)) {
-			ret = PTR_ERR(gdev);
-			goto err;
-		}
+		if (IS_ERR(gdev))
+			return PTR_ERR(gdev);
 
 		genpd_table = _find_opp_table(gdev);
 		if (!IS_ERR(genpd_table)) {
@@ -2455,6 +2454,18 @@ static int _opp_attach_genpd(struct opp_table *opp_table, struct device *dev,
 			} else {
 				dev_pm_opp_put_opp_table(genpd_table);
 			}
+		}
+
+		/*
+		 * Add the virtual genpd device as a user of the OPP table, so
+		 * we can call dev_pm_opp_set_opp() on it directly.
+		 *
+		 * This will be automatically removed when the OPP table is
+		 * removed, don't need to handle that here.
+		 */
+		if (!_add_opp_dev(virt_dev, opp_table->required_opp_tables[index])) {
+			ret = -ENOMEM;
+			goto err;
 		}
 
 		opp_table->required_devs[index] = virt_dev;

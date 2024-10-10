@@ -676,6 +676,7 @@ static void keyspan_pda_port_remove(struct usb_serial_port *port)
 
 static struct usb_serial_driver keyspan_pda_fake_device = {
 	.driver = {
+		.owner =	THIS_MODULE,
 		.name =		"keyspan_pda_pre",
 	},
 	.description =		"Keyspan PDA - (prerenumeration)",
@@ -686,6 +687,7 @@ static struct usb_serial_driver keyspan_pda_fake_device = {
 
 static struct usb_serial_driver keyspan_pda_device = {
 	.driver = {
+		.owner =	THIS_MODULE,
 		.name =		"keyspan_pda",
 	},
 	.description =		"Keyspan PDA",

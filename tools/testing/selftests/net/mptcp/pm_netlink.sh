@@ -137,8 +137,6 @@ check()
 	fi
 }
 
-mptcp_lib_subtests_last_ts_reset
-
 check "show_endpoints" "" "defaults addr list"
 
 default_limits="$(get_limits)"

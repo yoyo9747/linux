@@ -582,18 +582,23 @@ static int tsensor_group_thermtrip_get(struct tegra_soctherm *ts, int id)
 	return temp;
 }
 
-static int tegra_thermctl_set_trip_temp(struct thermal_zone_device *tz,
-					const struct thermal_trip *trip, int temp)
+static int tegra_thermctl_set_trip_temp(struct thermal_zone_device *tz, int trip_id, int temp)
 {
 	struct tegra_thermctl_zone *zone = thermal_zone_device_priv(tz);
 	struct tegra_soctherm *ts = zone->ts;
+	struct thermal_trip trip;
 	const struct tegra_tsensor_group *sg = zone->sg;
 	struct device *dev = zone->dev;
+	int ret;
 
 	if (!tz)
 		return -EINVAL;
 
-	if (trip->type == THERMAL_TRIP_CRITICAL) {
+	ret = __thermal_zone_get_trip(tz, trip_id, &trip);
+	if (ret)
+		return ret;
+
+	if (trip.type == THERMAL_TRIP_CRITICAL) {
 		/*
 		 * If thermtrips property is set in DT,
 		 * doesn't need to program critical type trip to HW,
@@ -604,7 +609,7 @@ static int tegra_thermctl_set_trip_temp(struct thermal_zone_device *tz,
 		else
 			return 0;
 
-	} else if (trip->type == THERMAL_TRIP_HOT) {
+	} else if (trip.type == THERMAL_TRIP_HOT) {
 		int i;
 
 		for (i = 0; i < THROTTLE_SIZE; i++) {
@@ -615,7 +620,7 @@ static int tegra_thermctl_set_trip_temp(struct thermal_zone_device *tz,
 				continue;
 
 			cdev = ts->throt_cfgs[i].cdev;
-			if (thermal_trip_is_bound_to_cdev(tz, trip, cdev))
+			if (get_thermal_instance(tz, cdev, trip_id))
 				stc = find_throttle_cfg_by_name(ts, cdev->type);
 			else
 				continue;
@@ -682,25 +687,24 @@ static const struct thermal_zone_device_ops tegra_of_thermal_ops = {
 	.set_trips = tegra_thermctl_set_trips,
 };
 
-static int get_hot_trip_cb(struct thermal_trip *trip, void *arg)
+static int get_hot_temp(struct thermal_zone_device *tz, int *trip_id, int *temp)
 {
-	const struct thermal_trip **trip_ret = arg;
+	int i, ret;
+	struct thermal_trip trip;
 
-	if (trip->type != THERMAL_TRIP_HOT)
-		return 0;
+	for (i = 0; i < thermal_zone_get_num_trips(tz); i++) {
 
-	*trip_ret = trip;
-	/* Return nonzero to terminate the search. */
-	return 1;
-}
+		ret = thermal_zone_get_trip(tz, i, &trip);
+		if (ret)
+			return -EINVAL;
 
-static const struct thermal_trip *get_hot_trip(struct thermal_zone_device *tz)
-{
-	const struct thermal_trip *trip = NULL;
+		if (trip.type == THERMAL_TRIP_HOT) {
+			*trip_id = i;
+			return 0;
+		}
+	}
 
-	thermal_zone_for_each_trip(tz, get_hot_trip_cb, &trip);
-
-	return trip;
+	return -EINVAL;
 }
 
 /**
@@ -732,9 +736,8 @@ static int tegra_soctherm_set_hwtrips(struct device *dev,
 				      struct thermal_zone_device *tz)
 {
 	struct tegra_soctherm *ts = dev_get_drvdata(dev);
-	const struct thermal_trip *hot_trip;
 	struct soctherm_throt_cfg *stc;
-	int i, temperature, ret;
+	int i, trip, temperature, ret;
 
 	/* Get thermtrips. If missing, try to get critical trips. */
 	temperature = tsensor_group_thermtrip_get(ts, sg->id);
@@ -751,8 +754,8 @@ static int tegra_soctherm_set_hwtrips(struct device *dev,
 	dev_info(dev, "thermtrip: will shut down when %s reaches %d mC\n",
 		 sg->name, temperature);
 
-	hot_trip = get_hot_trip(tz);
-	if (!hot_trip) {
+	ret = get_hot_temp(tz, &trip, &temperature);
+	if (ret) {
 		dev_info(dev, "throttrip: %s: missing hot temperature\n",
 			 sg->name);
 		return 0;
@@ -765,7 +768,7 @@ static int tegra_soctherm_set_hwtrips(struct device *dev,
 			continue;
 
 		cdev = ts->throt_cfgs[i].cdev;
-		if (thermal_trip_is_bound_to_cdev(tz, hot_trip, cdev))
+		if (get_thermal_instance(tz, cdev, trip))
 			stc = find_throttle_cfg_by_name(ts, cdev->type);
 		else
 			continue;

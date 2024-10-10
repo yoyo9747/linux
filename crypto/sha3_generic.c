@@ -13,7 +13,7 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <crypto/sha3.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 /*
  * On some 32-bit architectures (h8300), GCC ends up using

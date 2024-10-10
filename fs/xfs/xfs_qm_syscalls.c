@@ -53,15 +53,16 @@ xfs_qm_scall_quotaoff(
 STATIC int
 xfs_qm_scall_trunc_qfile(
 	struct xfs_mount	*mp,
-	xfs_dqtype_t		type)
+	xfs_ino_t		ino)
 {
 	struct xfs_inode	*ip;
 	struct xfs_trans	*tp;
 	int			error;
 
-	error = xfs_qm_qino_load(mp, type, &ip);
-	if (error == -ENOENT)
+	if (ino == NULLFSINO)
 		return 0;
+
+	error = xfs_iget(mp, NULL, ino, 0, 0, &ip);
 	if (error)
 		return error;
 
@@ -112,17 +113,17 @@ xfs_qm_scall_trunc_qfiles(
 	}
 
 	if (flags & XFS_QMOPT_UQUOTA) {
-		error = xfs_qm_scall_trunc_qfile(mp, XFS_DQTYPE_USER);
+		error = xfs_qm_scall_trunc_qfile(mp, mp->m_sb.sb_uquotino);
 		if (error)
 			return error;
 	}
 	if (flags & XFS_QMOPT_GQUOTA) {
-		error = xfs_qm_scall_trunc_qfile(mp, XFS_DQTYPE_GROUP);
+		error = xfs_qm_scall_trunc_qfile(mp, mp->m_sb.sb_gquotino);
 		if (error)
 			return error;
 	}
 	if (flags & XFS_QMOPT_PQUOTA)
-		error = xfs_qm_scall_trunc_qfile(mp, XFS_DQTYPE_PROJ);
+		error = xfs_qm_scall_trunc_qfile(mp, mp->m_sb.sb_pquotino);
 
 	return error;
 }

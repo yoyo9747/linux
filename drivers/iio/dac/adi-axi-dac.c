@@ -452,7 +452,7 @@ static int axi_dac_data_source_set(struct iio_backend *back, unsigned int chan,
 	struct axi_dac_state *st = iio_backend_get_priv(back);
 
 	switch (data) {
-	case IIO_BACKEND_INTERNAL_CONTINUOUS_WAVE:
+	case IIO_BACKEND_INTERNAL_CONTINUOS_WAVE:
 		return regmap_update_bits(st->regmap,
 					  AXI_DAC_REG_CHAN_CNTRL_7(chan),
 					  AXI_DAC_DATA_SEL,
@@ -507,18 +507,7 @@ static int axi_dac_set_sample_rate(struct iio_backend *back, unsigned int chan,
 	return 0;
 }
 
-static int axi_dac_reg_access(struct iio_backend *back, unsigned int reg,
-			      unsigned int writeval, unsigned int *readval)
-{
-	struct axi_dac_state *st = iio_backend_get_priv(back);
-
-	if (readval)
-		return regmap_read(st->regmap, reg, readval);
-
-	return regmap_write(st->regmap, reg, writeval);
-}
-
-static const struct iio_backend_ops axi_dac_generic_ops = {
+static const struct iio_backend_ops axi_dac_generic = {
 	.enable = axi_dac_enable,
 	.disable = axi_dac_disable,
 	.request_buffer = axi_dac_request_buffer,
@@ -528,12 +517,6 @@ static const struct iio_backend_ops axi_dac_generic_ops = {
 	.ext_info_get = axi_dac_ext_info_get,
 	.data_source_set = axi_dac_data_source_set,
 	.set_sample_rate = axi_dac_set_sample_rate,
-	.debugfs_reg_access = iio_backend_debugfs_ptr(axi_dac_reg_access),
-};
-
-static const struct iio_backend_info axi_dac_generic = {
-	.name = "axi-dac",
-	.ops = &axi_dac_generic_ops,
 };
 
 static const struct regmap_config axi_dac_regmap_config = {
@@ -562,8 +545,7 @@ static int axi_dac_probe(struct platform_device *pdev)
 
 	clk = devm_clk_get_enabled(&pdev->dev, NULL);
 	if (IS_ERR(clk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(clk),
-				     "failed to get clock\n");
+		return PTR_ERR(clk);
 
 	base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(base))
@@ -573,8 +555,7 @@ static int axi_dac_probe(struct platform_device *pdev)
 	st->regmap = devm_regmap_init_mmio(&pdev->dev, base,
 					   &axi_dac_regmap_config);
 	if (IS_ERR(st->regmap))
-		return dev_err_probe(&pdev->dev, PTR_ERR(st->regmap),
-				     "failed to init register map\n");
+		return PTR_ERR(st->regmap);
 
 	/*
 	 * Force disable the core. Up to the frontend to enable us. And we can
@@ -620,8 +601,7 @@ static int axi_dac_probe(struct platform_device *pdev)
 	mutex_init(&st->lock);
 	ret = devm_iio_backend_register(&pdev->dev, &axi_dac_generic, st);
 	if (ret)
-		return dev_err_probe(&pdev->dev, ret,
-				     "failed to register iio backend\n");
+		return ret;
 
 	dev_info(&pdev->dev, "AXI DAC IP core (%d.%.2d.%c) probed\n",
 		 ADI_AXI_PCORE_VER_MAJOR(ver),

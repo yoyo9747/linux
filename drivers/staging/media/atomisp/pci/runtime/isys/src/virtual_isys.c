@@ -13,8 +13,6 @@
  * more details.
  */
 
-#include <linux/bitops.h>
-#include <linux/math.h>
 #include <linux/string.h> /* for memcpy() */
 
 #include "system_global.h"
@@ -22,6 +20,7 @@
 
 #include "ia_css_isys.h"
 #include "ia_css_debug.h"
+#include "math_support.h"
 #include "virtual_isys.h"
 #include "isp.h"
 #include "sh_css_defs.h"
@@ -559,7 +558,7 @@ static int32_t calculate_stride(
 		bits_per_pixel = CEIL_MUL(bits_per_pixel, 8);
 
 	pixels_per_word = HIVE_ISP_DDR_WORD_BITS / bits_per_pixel;
-	words_per_line  = DIV_ROUND_UP(pixels_per_line_padded, pixels_per_word);
+	words_per_line  = ceil_div(pixels_per_line_padded, pixels_per_word);
 	bytes_per_line  = HIVE_ISP_DDR_WORD_BYTES * words_per_line;
 
 	return bytes_per_line;
@@ -691,6 +690,7 @@ static bool calculate_ibuf_ctrl_cfg(
     const isp2401_input_system_cfg_t	*isys_cfg,
     ibuf_ctrl_cfg_t			*cfg)
 {
+	const s32 bits_per_byte = 8;
 	s32 bits_per_pixel;
 	s32 bytes_per_pixel;
 	s32 left_padding;
@@ -698,7 +698,7 @@ static bool calculate_ibuf_ctrl_cfg(
 	(void)input_port;
 
 	bits_per_pixel = isys_cfg->input_port_resolution.bits_per_pixel;
-	bytes_per_pixel = BITS_TO_BYTES(bits_per_pixel);
+	bytes_per_pixel = ceil_div(bits_per_pixel, bits_per_byte);
 
 	left_padding = CEIL_MUL(isys_cfg->output_port_attr.left_padding, ISP_VEC_NELEMS)
 		       * bytes_per_pixel;

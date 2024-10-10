@@ -489,7 +489,9 @@ error_available:
 
 static int vm_find_vqs(struct virtio_device *vdev, unsigned int nvqs,
 		       struct virtqueue *vqs[],
-		       struct virtqueue_info vqs_info[],
+		       vq_callback_t *callbacks[],
+		       const char * const names[],
+		       const bool *ctx,
 		       struct irq_affinity *desc)
 {
 	struct virtio_mmio_device *vm_dev = to_virtio_mmio_device(vdev);
@@ -508,15 +510,13 @@ static int vm_find_vqs(struct virtio_device *vdev, unsigned int nvqs,
 		enable_irq_wake(irq);
 
 	for (i = 0; i < nvqs; ++i) {
-		struct virtqueue_info *vqi = &vqs_info[i];
-
-		if (!vqi->name) {
+		if (!names[i]) {
 			vqs[i] = NULL;
 			continue;
 		}
 
-		vqs[i] = vm_setup_vq(vdev, queue_idx++, vqi->callback,
-				     vqi->name, vqi->ctx);
+		vqs[i] = vm_setup_vq(vdev, queue_idx++, callbacks[i], names[i],
+				     ctx ? ctx[i] : false);
 		if (IS_ERR(vqs[i])) {
 			vm_del_vqs(vdev);
 			return PTR_ERR(vqs[i]);

@@ -56,12 +56,10 @@ static void dwxgmac2_set_tx_owner(struct dma_desc *p)
 
 static void dwxgmac2_set_rx_owner(struct dma_desc *p, int disable_rx_ic)
 {
-	u32 flags = XGMAC_RDES3_OWN;
+	p->des3 |= cpu_to_le32(XGMAC_RDES3_OWN);
 
 	if (!disable_rx_ic)
-		flags |= XGMAC_RDES3_IOC;
-
-	p->des3 |= cpu_to_le32(flags);
+		p->des3 |= cpu_to_le32(XGMAC_RDES3_IOC);
 }
 
 static int dwxgmac2_get_tx_ls(struct dma_desc *p)

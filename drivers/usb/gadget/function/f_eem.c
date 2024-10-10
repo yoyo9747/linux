@@ -674,6 +674,5 @@ static struct usb_function *eem_alloc(struct usb_function_instance *fi)
 }
 
 DECLARE_USB_FUNCTION_INIT(eem, eem_alloc_inst, eem_alloc);
-MODULE_DESCRIPTION("USB CDC Ethernet (EEM) link function driver");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("David Brownell");

@@ -1317,6 +1317,5 @@ static void __exit af_alg_exit(void)
 
 module_init(af_alg_init);
 module_exit(af_alg_exit);
-MODULE_DESCRIPTION("Crypto userspace interface");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_NETPROTO(AF_ALG);

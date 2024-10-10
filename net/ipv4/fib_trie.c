@@ -1580,7 +1580,8 @@ found:
 			if (index >= (1ul << fa->fa_slen))
 				continue;
 		}
-		if (fa->fa_dscp && !fib_dscp_masked_match(fa->fa_dscp, flp))
+		if (fa->fa_dscp &&
+		    inet_dscp_to_dsfield(fa->fa_dscp) != flp->flowi4_tos)
 			continue;
 		/* Paired with WRITE_ONCE() in fib_release_info() */
 		if (READ_ONCE(fi->fib_dead))
@@ -1628,7 +1629,6 @@ set_result:
 			res->nhc = nhc;
 			res->type = fa->fa_type;
 			res->scope = fi->fib_scope;
-			res->dscp = fa->fa_dscp;
 			res->fi = fi;
 			res->table = tb;
 			res->fa_head = &n->leaf;

@@ -101,14 +101,8 @@ static struct sk_buff *tcp4_gso_segment(struct sk_buff *skb,
 	if (!pskb_may_pull(skb, sizeof(struct tcphdr)))
 		return ERR_PTR(-EINVAL);
 
-	if (skb_shinfo(skb)->gso_type & SKB_GSO_FRAGLIST) {
-		struct tcphdr *th = tcp_hdr(skb);
-
-		if (skb_pagelen(skb) - th->doff * 4 == skb_shinfo(skb)->gso_size)
-			return __tcp4_gso_segment_list(skb, features);
-
-		skb->ip_summed = CHECKSUM_NONE;
-	}
+	if (skb_shinfo(skb)->gso_type & SKB_GSO_FRAGLIST)
+		return __tcp4_gso_segment_list(skb, features);
 
 	if (unlikely(skb->ip_summed != CHECKSUM_PARTIAL)) {
 		const struct iphdr *iph = ip_hdr(skb);
@@ -144,9 +138,6 @@ struct sk_buff *tcp_gso_segment(struct sk_buff *skb,
 	th = tcp_hdr(skb);
 	thlen = th->doff * 4;
 	if (thlen < sizeof(*th))
-		goto out;
-
-	if (unlikely(skb_checksum_start(skb) != skb_transport_header(skb)))
 		goto out;
 
 	if (!pskb_may_pull(skb, thlen))

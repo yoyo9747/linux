@@ -835,30 +835,21 @@ static const struct initial_reg {
 	     be(0x0707)), /* 3F44: couple k factor 2 */
 };
 
-static void __ar0521_power_off(struct device *dev)
+static int ar0521_power_off(struct device *dev)
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct ar0521_dev *sensor = to_ar0521_dev(sd);
 	int i;
 
+	clk_disable_unprepare(sensor->extclk);
+
 	if (sensor->reset_gpio)
-		/* assert RESET signal */
-		gpiod_set_value_cansleep(sensor->reset_gpio, 1);
+		gpiod_set_value(sensor->reset_gpio, 1); /* assert RESET signal */
 
 	for (i = ARRAY_SIZE(ar0521_supply_names) - 1; i >= 0; i--) {
 		if (sensor->supplies[i])
 			regulator_disable(sensor->supplies[i]);
 	}
-}
-
-static int ar0521_power_off(struct device *dev)
-{
-	struct v4l2_subdev *sd = dev_get_drvdata(dev);
-	struct ar0521_dev *sensor = to_ar0521_dev(sd);
-
-	clk_disable_unprepare(sensor->extclk);
-	__ar0521_power_off(dev);
-
 	return 0;
 }
 
@@ -887,7 +878,7 @@ static int ar0521_power_on(struct device *dev)
 
 	if (sensor->reset_gpio)
 		/* deassert RESET signal */
-		gpiod_set_value_cansleep(sensor->reset_gpio, 0);
+		gpiod_set_value(sensor->reset_gpio, 0);
 	usleep_range(4500, 5000); /* min 45000 clocks */
 
 	for (cnt = 0; cnt < ARRAY_SIZE(initial_regs); cnt++) {
@@ -917,8 +908,7 @@ static int ar0521_power_on(struct device *dev)
 
 	return 0;
 off:
-	clk_disable_unprepare(sensor->extclk);
-	__ar0521_power_off(dev);
+	ar0521_power_off(dev);
 	return ret;
 }
 

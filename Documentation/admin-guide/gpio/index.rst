@@ -10,7 +10,6 @@ GPIO
     Character Device Userspace API <../../userspace-api/gpio/chardev>
     gpio-aggregator
     gpio-sim
-    gpio-virtuser
     Obsolete APIs <obsolete>
 
 .. only::  subproject and html

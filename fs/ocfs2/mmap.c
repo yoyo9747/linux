@@ -53,7 +53,7 @@ static vm_fault_t __ocfs2_page_mkwrite(struct file *file,
 	loff_t pos = page_offset(page);
 	unsigned int len = PAGE_SIZE;
 	pgoff_t last_index;
-	struct folio *locked_folio = NULL;
+	struct page *locked_page = NULL;
 	void *fsdata;
 	loff_t size = i_size_read(inode);
 
@@ -91,7 +91,7 @@ static vm_fault_t __ocfs2_page_mkwrite(struct file *file,
 		len = ((size - 1) & ~PAGE_MASK) + 1;
 
 	err = ocfs2_write_begin_nolock(mapping, pos, len, OCFS2_WRITE_MMAP,
-				       &locked_folio, &fsdata, di_bh, page);
+				       &locked_page, &fsdata, di_bh, page);
 	if (err) {
 		if (err != -ENOSPC)
 			mlog_errno(err);
@@ -99,7 +99,7 @@ static vm_fault_t __ocfs2_page_mkwrite(struct file *file,
 		goto out;
 	}
 
-	if (!locked_folio) {
+	if (!locked_page) {
 		ret = VM_FAULT_NOPAGE;
 		goto out;
 	}

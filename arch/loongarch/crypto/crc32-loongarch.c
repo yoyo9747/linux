@@ -13,7 +13,7 @@
 #include <crypto/internal/hash.h>
 
 #include <asm/cpu-features.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define _CRC32(crc, value, size, type)			\
 do {							\

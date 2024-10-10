@@ -1130,8 +1130,8 @@ static void _hv_pcifront_read_config(struct hv_pci_dev *hpdev, int where,
 		   PCI_CAPABILITY_LIST) {
 		/* ROM BARs are unimplemented */
 		*val = 0;
-	} else if ((where >= PCI_INTERRUPT_LINE && where + size <= PCI_INTERRUPT_PIN) ||
-		   (where >= PCI_INTERRUPT_PIN && where + size <= PCI_MIN_GNT)) {
+	} else if (where >= PCI_INTERRUPT_LINE && where + size <=
+		   PCI_INTERRUPT_PIN) {
 		/*
 		 * Interrupt Line and Interrupt PIN are hard-wired to zero
 		 * because this front-end only supports message-signaled
@@ -4004,6 +4004,9 @@ static int hv_pci_restore_msi_msg(struct pci_dev *pdev, void *arg)
  */
 static void hv_pci_restore_msi_state(struct hv_pcibus_device *hbus)
 {
+	pci_walk_bus(hbus->bridge->bus,;
+		pci_u_pcibus_device *hbus)
+{
 	pci_walk_bus(hbus->bridge->bus, hv_pci_restore_msi_msg, NULL);
 }
 
@@ -4109,7 +4112,4 @@ static int __init init_hv_pci_drv(void)
 }
 
 module_init(init_hv_pci_drv);
-module_exit(exit_hv_pci_drv);
-
-MODULE_DESCRIPTION("Hyper-V PCI");
-MODULE_LICENSE("GPL v2");
+module_exit(exit_hv_pci_drv

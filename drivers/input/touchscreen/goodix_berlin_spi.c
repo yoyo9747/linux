@@ -7,7 +7,7 @@
  *
  * Based on goodix_ts_berlin driver.
  */
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
@@ -36,14 +36,13 @@ static int goodix_berlin_spi_read(void *context, const void *reg_buf,
 	struct spi_transfer xfers;
 	struct spi_message spi_msg;
 	const u32 *reg = reg_buf; /* reg is stored as native u32 at start of buffer */
+	u8 *buf;
 	int error;
 
 	if (reg_size != GOODIX_BERLIN_REGISTER_WIDTH)
 		return -EINVAL;
 
-	u8 *buf __free(kfree) =
-		kzalloc(GOODIX_BERLIN_SPI_READ_PREFIX_LEN + val_size,
-			GFP_KERNEL);
+	buf = kzalloc(GOODIX_BERLIN_SPI_READ_PREFIX_LEN + val_size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -63,12 +62,12 @@ static int goodix_berlin_spi_read(void *context, const void *reg_buf,
 	spi_message_add_tail(&xfers, &spi_msg);
 
 	error = spi_sync(spi, &spi_msg);
-	if (error < 0) {
+	if (error < 0)
 		dev_err(&spi->dev, "spi transfer error, %d", error);
-		return error;
-	}
+	else
+		memcpy(val_buf, buf + GOODIX_BERLIN_SPI_READ_PREFIX_LEN, val_size);
 
-	memcpy(val_buf, buf + GOODIX_BERLIN_SPI_READ_PREFIX_LEN, val_size);
+	kfree(buf);
 	return error;
 }
 
@@ -80,10 +79,10 @@ static int goodix_berlin_spi_write(void *context, const void *data,
 	struct spi_transfer xfers;
 	struct spi_message spi_msg;
 	const u32 *reg = data; /* reg is stored as native u32 at start of buffer */
+	u8 *buf;
 	int error;
 
-	u8 *buf __free(kfree) =
-		kzalloc(GOODIX_BERLIN_SPI_WRITE_PREFIX_LEN + len, GFP_KERNEL);
+	buf = kzalloc(GOODIX_BERLIN_SPI_WRITE_PREFIX_LEN + len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -101,12 +100,11 @@ static int goodix_berlin_spi_write(void *context, const void *data,
 	spi_message_add_tail(&xfers, &spi_msg);
 
 	error = spi_sync(spi, &spi_msg);
-	if (error < 0) {
+	if (error < 0)
 		dev_err(&spi->dev, "spi transfer error, %d", error);
-		return error;
-	}
 
-	return 0;
+	kfree(buf);
+	return error;
 }
 
 static const struct regmap_config goodix_berlin_spi_regmap_conf = {
@@ -169,7 +167,6 @@ static struct spi_driver goodix_berlin_spi_driver = {
 		.name = "goodix-berlin-spi",
 		.of_match_table = goodix_berlin_spi_of_match,
 		.pm = pm_sleep_ptr(&goodix_berlin_pm_ops),
-		.dev_groups = goodix_berlin_groups,
 	},
 	.probe = goodix_berlin_spi_probe,
 	.id_table = goodix_berlin_spi_ids,

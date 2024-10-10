@@ -82,7 +82,7 @@ static inline int virtio_id_match(const struct virtio_device *dev,
 
 /* This looks through all the IDs a driver claims to support.  If any of them
  * match, we return 1 and the kernel will call virtio_dev_probe(). */
-static int virtio_dev_match(struct device *_dv, const struct device_driver *_dr)
+static int virtio_dev_match(struct device *_dv, struct device_driver *_dr)
 {
 	unsigned int i;
 	struct virtio_device *dev = dev_to_virtio(_dv);
@@ -127,12 +127,10 @@ static void __virtio_config_changed(struct virtio_device *dev)
 {
 	struct virtio_driver *drv = drv_to_virtio(dev->dev.driver);
 
-	if (!dev->config_core_enabled || dev->config_driver_disabled)
+	if (!dev->config_enabled)
 		dev->config_change_pending = true;
-	else if (drv && drv->config_changed) {
+	else if (drv && drv->config_changed)
 		drv->config_changed(dev);
-		dev->config_change_pending = false;
-	}
 }
 
 void virtio_config_changed(struct virtio_device *dev)
@@ -145,51 +143,20 @@ void virtio_config_changed(struct virtio_device *dev)
 }
 EXPORT_SYMBOL_GPL(virtio_config_changed);
 
-/**
- * virtio_config_driver_disable - disable config change reporting by drivers
- * @dev: the device to reset
- *
- * This is only allowed to be called by a driver and disabling can't
- * be nested.
- */
-void virtio_config_driver_disable(struct virtio_device *dev)
+static void virtio_config_disable(struct virtio_device *dev)
 {
 	spin_lock_irq(&dev->config_lock);
-	dev->config_driver_disabled = true;
+	dev->config_enabled = false;
 	spin_unlock_irq(&dev->config_lock);
 }
-EXPORT_SYMBOL_GPL(virtio_config_driver_disable);
 
-/**
- * virtio_config_driver_enable - enable config change reporting by drivers
- * @dev: the device to reset
- *
- * This is only allowed to be called by a driver and enabling can't
- * be nested.
- */
-void virtio_config_driver_enable(struct virtio_device *dev)
+static void virtio_config_enable(struct virtio_device *dev)
 {
 	spin_lock_irq(&dev->config_lock);
-	dev->config_driver_disabled = false;
+	dev->config_enabled = true;
 	if (dev->config_change_pending)
 		__virtio_config_changed(dev);
-	spin_unlock_irq(&dev->config_lock);
-}
-EXPORT_SYMBOL_GPL(virtio_config_driver_enable);
-
-static void virtio_config_core_disable(struct virtio_device *dev)
-{
-	spin_lock_irq(&dev->config_lock);
-	dev->config_core_enabled = false;
-	spin_unlock_irq(&dev->config_lock);
-}
-
-static void virtio_config_core_enable(struct virtio_device *dev)
-{
-	spin_lock_irq(&dev->config_lock);
-	dev->config_core_enabled = true;
-	if (dev->config_change_pending)
-		__virtio_config_changed(dev);
+	dev->config_change_pending = false;
 	spin_unlock_irq(&dev->config_lock);
 }
 
@@ -338,9 +305,15 @@ static int virtio_dev_probe(struct device *_d)
 	if (err)
 		goto err;
 
+	if (dev->config->create_avq) {
+		err = dev->config->create_avq(dev);
+		if (err)
+			goto err;
+	}
+
 	err = drv->probe(dev);
 	if (err)
-		goto err;
+		goto err_probe;
 
 	/* If probe didn't do it, mark device DRIVER_OK ourselves. */
 	if (!(dev->config->get_status(dev) & VIRTIO_CONFIG_S_DRIVER_OK))
@@ -349,10 +322,13 @@ static int virtio_dev_probe(struct device *_d)
 	if (drv->scan)
 		drv->scan(dev);
 
-	virtio_config_core_enable(dev);
+	virtio_config_enable(dev);
 
 	return 0;
 
+err_probe:
+	if (dev->config->destroy_avq)
+		dev->config->destroy_avq(dev);
 err:
 	virtio_add_status(dev, VIRTIO_CONFIG_S_FAILED);
 	return err;
@@ -364,9 +340,12 @@ static void virtio_dev_remove(struct device *_d)
 	struct virtio_device *dev = dev_to_virtio(_d);
 	struct virtio_driver *drv = drv_to_virtio(dev->dev.driver);
 
-	virtio_config_core_disable(dev);
+	virtio_config_disable(dev);
 
 	drv->remove(dev);
+
+	if (dev->config->destroy_avq)
+		dev->config->destroy_avq(dev);
 
 	/* Driver should have reset device. */
 	WARN_ON_ONCE(dev->config->get_status(dev));
@@ -476,7 +455,7 @@ int register_virtio_device(struct virtio_device *dev)
 		goto out_ida_remove;
 
 	spin_lock_init(&dev->config_lock);
-	dev->config_core_enabled = false;
+	dev->config_enabled = false;
 	dev->config_change_pending = false;
 
 	INIT_LIST_HEAD(&dev->vqs);
@@ -533,17 +512,20 @@ int virtio_device_freeze(struct virtio_device *dev)
 	struct virtio_driver *drv = drv_to_virtio(dev->dev.driver);
 	int ret;
 
-	virtio_config_core_disable(dev);
+	virtio_config_disable(dev);
 
 	dev->failed = dev->config->get_status(dev) & VIRTIO_CONFIG_S_FAILED;
 
 	if (drv && drv->freeze) {
 		ret = drv->freeze(dev);
 		if (ret) {
-			virtio_config_core_enable(dev);
+			virtio_config_enable(dev);
 			return ret;
 		}
 	}
+
+	if (dev->config->destroy_avq)
+		dev->config->destroy_avq(dev);
 
 	return 0;
 }
@@ -580,20 +562,29 @@ int virtio_device_restore(struct virtio_device *dev)
 	if (ret)
 		goto err;
 
+	if (dev->config->create_avq) {
+		ret = dev->config->create_avq(dev);
+		if (ret)
+			goto err;
+	}
+
 	if (drv->restore) {
 		ret = drv->restore(dev);
 		if (ret)
-			goto err;
+			goto err_restore;
 	}
 
 	/* If restore didn't do it, mark device DRIVER_OK ourselves. */
 	if (!(dev->config->get_status(dev) & VIRTIO_CONFIG_S_DRIVER_OK))
 		virtio_device_ready(dev);
 
-	virtio_config_core_enable(dev);
+	virtio_config_enable(dev);
 
 	return 0;
 
+err_restore:
+	if (dev->config->destroy_avq)
+		dev->config->destroy_avq(dev);
 err:
 	virtio_add_status(dev, VIRTIO_CONFIG_S_FAILED);
 	return ret;
@@ -618,5 +609,4 @@ static void __exit virtio_exit(void)
 core_initcall(virtio_init);
 module_exit(virtio_exit);
 
-MODULE_DESCRIPTION("Virtio core interface");
 MODULE_LICENSE("GPL");

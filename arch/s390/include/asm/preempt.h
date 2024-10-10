@@ -5,9 +5,8 @@
 #include <asm/current.h>
 #include <linux/thread_info.h>
 #include <asm/atomic_ops.h>
-#include <asm/march.h>
 
-#ifdef MARCH_HAS_Z196_FEATURES
+#ifdef CONFIG_HAVE_MARCH_Z196_FEATURES
 
 /* We use the MSB mostly because its available */
 #define PREEMPT_NEED_RESCHED	0x80000000
@@ -15,7 +14,7 @@
 
 static __always_inline int preempt_count(void)
 {
-	return READ_ONCE(get_lowcore()->preempt_count) & ~PREEMPT_NEED_RESCHED;
+	return READ_ONCE(S390_lowcore.preempt_count) & ~PREEMPT_NEED_RESCHED;
 }
 
 static __always_inline void preempt_count_set(int pc)
@@ -23,26 +22,26 @@ static __always_inline void preempt_count_set(int pc)
 	int old, new;
 
 	do {
-		old = READ_ONCE(get_lowcore()->preempt_count);
+		old = READ_ONCE(S390_lowcore.preempt_count);
 		new = (old & PREEMPT_NEED_RESCHED) |
 			(pc & ~PREEMPT_NEED_RESCHED);
-	} while (__atomic_cmpxchg(&get_lowcore()->preempt_count,
+	} while (__atomic_cmpxchg(&S390_lowcore.preempt_count,
 				  old, new) != old);
 }
 
 static __always_inline void set_preempt_need_resched(void)
 {
-	__atomic_and(~PREEMPT_NEED_RESCHED, &get_lowcore()->preempt_count);
+	__atomic_and(~PREEMPT_NEED_RESCHED, &S390_lowcore.preempt_count);
 }
 
 static __always_inline void clear_preempt_need_resched(void)
 {
-	__atomic_or(PREEMPT_NEED_RESCHED, &get_lowcore()->preempt_count);
+	__atomic_or(PREEMPT_NEED_RESCHED, &S390_lowcore.preempt_count);
 }
 
 static __always_inline bool test_preempt_need_resched(void)
 {
-	return !(READ_ONCE(get_lowcore()->preempt_count) & PREEMPT_NEED_RESCHED);
+	return !(READ_ONCE(S390_lowcore.preempt_count) & PREEMPT_NEED_RESCHED);
 }
 
 static __always_inline void __preempt_count_add(int val)
@@ -53,11 +52,11 @@ static __always_inline void __preempt_count_add(int val)
 	 */
 	if (!IS_ENABLED(CONFIG_PROFILE_ALL_BRANCHES)) {
 		if (__builtin_constant_p(val) && (val >= -128) && (val <= 127)) {
-			__atomic_add_const(val, &get_lowcore()->preempt_count);
+			__atomic_add_const(val, &S390_lowcore.preempt_count);
 			return;
 		}
 	}
-	__atomic_add(val, &get_lowcore()->preempt_count);
+	__atomic_add(val, &S390_lowcore.preempt_count);
 }
 
 static __always_inline void __preempt_count_sub(int val)
@@ -67,27 +66,27 @@ static __always_inline void __preempt_count_sub(int val)
 
 static __always_inline bool __preempt_count_dec_and_test(void)
 {
-	return __atomic_add(-1, &get_lowcore()->preempt_count) == 1;
+	return __atomic_add(-1, &S390_lowcore.preempt_count) == 1;
 }
 
 static __always_inline bool should_resched(int preempt_offset)
 {
-	return unlikely(READ_ONCE(get_lowcore()->preempt_count) ==
+	return unlikely(READ_ONCE(S390_lowcore.preempt_count) ==
 			preempt_offset);
 }
 
-#else /* MARCH_HAS_Z196_FEATURES */
+#else /* CONFIG_HAVE_MARCH_Z196_FEATURES */
 
 #define PREEMPT_ENABLED	(0)
 
 static __always_inline int preempt_count(void)
 {
-	return READ_ONCE(get_lowcore()->preempt_count);
+	return READ_ONCE(S390_lowcore.preempt_count);
 }
 
 static __always_inline void preempt_count_set(int pc)
 {
-	get_lowcore()->preempt_count = pc;
+	S390_lowcore.preempt_count = pc;
 }
 
 static __always_inline void set_preempt_need_resched(void)
@@ -105,17 +104,17 @@ static __always_inline bool test_preempt_need_resched(void)
 
 static __always_inline void __preempt_count_add(int val)
 {
-	get_lowcore()->preempt_count += val;
+	S390_lowcore.preempt_count += val;
 }
 
 static __always_inline void __preempt_count_sub(int val)
 {
-	get_lowcore()->preempt_count -= val;
+	S390_lowcore.preempt_count -= val;
 }
 
 static __always_inline bool __preempt_count_dec_and_test(void)
 {
-	return !--get_lowcore()->preempt_count && tif_need_resched();
+	return !--S390_lowcore.preempt_count && tif_need_resched();
 }
 
 static __always_inline bool should_resched(int preempt_offset)
@@ -124,7 +123,7 @@ static __always_inline bool should_resched(int preempt_offset)
 			tif_need_resched());
 }
 
-#endif /* MARCH_HAS_Z196_FEATURES */
+#endif /* CONFIG_HAVE_MARCH_Z196_FEATURES */
 
 #define init_task_preempt_count(p)	do { } while (0)
 /* Deferred to CPU bringup time */

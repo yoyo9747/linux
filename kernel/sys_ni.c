@@ -76,6 +76,8 @@ COND_SYSCALL(timerfd_gettime32);
 COND_SYSCALL(acct);
 COND_SYSCALL(capget);
 COND_SYSCALL(capset);
+/* __ARCH_WANT_SYS_CLONE3 */
+COND_SYSCALL(clone3);
 COND_SYSCALL(futex);
 COND_SYSCALL(futex_time32);
 COND_SYSCALL(set_robust_list);
@@ -390,5 +392,3 @@ COND_SYSCALL(setuid16);
 
 /* restartable sequence */
 COND_SYSCALL(rseq);
-
-COND_SYSCALL(uretprobe);

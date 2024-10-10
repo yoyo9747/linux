@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * test_kprobes.c - simple sanity test for k*probes
+ * test_kprobes.c - simple sanity test for *probes
  *
  * Copyright IBM Corp. 2008
  */
@@ -400,5 +400,4 @@ static struct kunit_suite kprobes_test_suite = {
 
 kunit_test_suites(&kprobes_test_suite);
 
-MODULE_DESCRIPTION("simple sanity test for k*probes");
 MODULE_LICENSE("GPL");

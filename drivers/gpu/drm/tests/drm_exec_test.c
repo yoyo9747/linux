@@ -210,5 +210,4 @@ static struct kunit_suite drm_exec_test_suite = {
 kunit_test_suite(drm_exec_test_suite);
 
 MODULE_AUTHOR("AMD");
-MODULE_DESCRIPTION("Kunit test for drm_exec functions");
 MODULE_LICENSE("GPL and additional rights");

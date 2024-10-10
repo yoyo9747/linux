@@ -113,8 +113,6 @@ properties:
             # LED indicates NAND memory activity (deprecated),
             # in new implementations use "mtd"
           - nand-disk
-            # LED indicates network activity
-          - netdev
             # No trigger assigned to the LED. This is the default mode
             # if trigger is absent
           - none

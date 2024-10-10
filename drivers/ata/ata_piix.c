@@ -1446,6 +1446,7 @@ static int piix_init_sidpr(struct ata_host *host)
 		if (hpriv->map[i] == IDE)
 			return 0;
 
+	/* is it blacklisted? */
 	if (piix_no_sidpr(host))
 		return 0;
 

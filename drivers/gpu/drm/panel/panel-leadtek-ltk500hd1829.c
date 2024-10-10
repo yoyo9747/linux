@@ -40,6 +40,7 @@ struct ltk500hd1829 {
 	struct regulator *vcc;
 	struct regulator *iovcc;
 	const struct ltk500hd1829_desc *panel_desc;
+	bool prepared;
 };
 
 static const struct ltk500hd1829_cmd ltk101b4029w_init[] = {
@@ -491,6 +492,9 @@ static int ltk500hd1829_unprepare(struct drm_panel *panel)
 	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
 	int ret;
 
+	if (!ctx->prepared)
+		return 0;
+
 	ret = mipi_dsi_dcs_set_display_off(dsi);
 	if (ret < 0)
 		dev_err(panel->dev, "failed to set display off: %d\n", ret);
@@ -506,6 +510,8 @@ static int ltk500hd1829_unprepare(struct drm_panel *panel)
 	regulator_disable(ctx->iovcc);
 	regulator_disable(ctx->vcc);
 
+	ctx->prepared = false;
+
 	return 0;
 }
 
@@ -515,6 +521,9 @@ static int ltk500hd1829_prepare(struct drm_panel *panel)
 	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
 	unsigned int i;
 	int ret;
+
+	if (ctx->prepared)
+		return 0;
 
 	ret = regulator_enable(ctx->vcc);
 	if (ret < 0) {
@@ -558,6 +567,8 @@ static int ltk500hd1829_prepare(struct drm_panel *panel)
 		dev_err(panel->dev, "failed to set display on: %d\n", ret);
 		goto disable_iovcc;
 	}
+
+	ctx->prepared = true;
 
 	return 0;
 
@@ -662,10 +673,26 @@ static int ltk500hd1829_probe(struct mipi_dsi_device *dsi)
 	return 0;
 }
 
+static void ltk500hd1829_shutdown(struct mipi_dsi_device *dsi)
+{
+	struct ltk500hd1829 *ctx = mipi_dsi_get_drvdata(dsi);
+	int ret;
+
+	ret = drm_panel_unprepare(&ctx->panel);
+	if (ret < 0)
+		dev_err(&dsi->dev, "Failed to unprepare panel: %d\n", ret);
+
+	ret = drm_panel_disable(&ctx->panel);
+	if (ret < 0)
+		dev_err(&dsi->dev, "Failed to disable panel: %d\n", ret);
+}
+
 static void ltk500hd1829_remove(struct mipi_dsi_device *dsi)
 {
 	struct ltk500hd1829 *ctx = mipi_dsi_get_drvdata(dsi);
 	int ret;
+
+	ltk500hd1829_shutdown(dsi);
 
 	ret = mipi_dsi_detach(dsi);
 	if (ret < 0)
@@ -694,6 +721,7 @@ static struct mipi_dsi_driver ltk500hd1829_driver = {
 	},
 	.probe = ltk500hd1829_probe,
 	.remove = ltk500hd1829_remove,
+	.shutdown = ltk500hd1829_shutdown,
 };
 module_mipi_dsi_driver(ltk500hd1829_driver);
 

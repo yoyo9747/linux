@@ -59,7 +59,7 @@ struct mii_timestamper {
 			   struct phy_device *phydev);
 
 	int  (*ts_info)(struct mii_timestamper *mii_ts,
-			struct kernel_ethtool_ts_info *ts_info);
+			struct ethtool_ts_info *ts_info);
 
 	struct device *device;
 };

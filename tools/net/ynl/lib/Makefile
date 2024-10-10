@@ -14,9 +14,7 @@ include $(wildcard *.d)
 all: ynl.a
 
 ynl.a: $(OBJS)
-	@echo -e "\tAR $@"
-	@ar rcs $@ $(OBJS)
-
+	ar rcs $@ $(OBJS)
 clean:
 	rm -f *.o *.d *~
 	rm -rf __pycache__

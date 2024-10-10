@@ -175,5 +175,4 @@ static void __exit rtllib_exit(void)
 module_init(rtllib_init);
 module_exit(rtllib_exit);
 
-MODULE_DESCRIPTION("Support module for rtllib wireless devices");
 MODULE_LICENSE("GPL");

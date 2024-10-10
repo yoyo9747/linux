@@ -253,5 +253,4 @@ void of_sunxi_ccu_probe(struct device_node *node, void __iomem *reg,
 	}
 }
 
-MODULE_DESCRIPTION("Common clock support for Allwinner SoCs");
 MODULE_LICENSE("GPL");

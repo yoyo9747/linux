@@ -476,6 +476,12 @@ struct gpi_dev {
 	struct gpii *gpiis;
 };
 
+struct reg_info {
+	char *name;
+	u32 offset;
+	u32 val;
+};
+
 struct gchan {
 	struct virt_dma_chan vc;
 	u32 chid;
@@ -1191,6 +1197,7 @@ static int gpi_reset_chan(struct gchan *gchan, enum gpi_cmd gpi_cmd)
 {
 	struct gpii *gpii = gchan->gpii;
 	struct gpi_ring *ch_ring = &gchan->ch_ring;
+	unsigned long flags;
 	LIST_HEAD(list);
 	int ret;
 
@@ -1213,9 +1220,9 @@ static int gpi_reset_chan(struct gchan *gchan, enum gpi_cmd gpi_cmd)
 	gpi_mark_stale_events(gchan);
 
 	/* remove all async descriptors */
-	spin_lock(&gchan->vc.lock);
+	spin_lock_irqsave(&gchan->vc.lock, flags);
 	vchan_get_all_descriptors(&gchan->vc, &list);
-	spin_unlock(&gchan->vc.lock);
+	spin_unlock_irqrestore(&gchan->vc.lock, flags);
 	write_unlock_irq(&gpii->pm_lock);
 	vchan_dma_desc_free_list(&gchan->vc, &list);
 
@@ -1856,7 +1863,7 @@ static void gpi_issue_pending(struct dma_chan *chan)
 
 	read_lock_irqsave(&gpii->pm_lock, pm_lock_flags);
 
-	/* move all submitted descriptors to issued list */
+	/* move all submitted discriptors to issued list */
 	spin_lock_irqsave(&gchan->vc.lock, flags);
 	if (vchan_issue_pending(&gchan->vc))
 		vd = list_last_entry(&gchan->vc.desc_issued,

@@ -40,7 +40,7 @@
 #include <linux/sched.h>
 #include <linux/bitops.h>
 #include <linux/slab.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 /**
  *	prandom_u32_state - seeded pseudo-random number generator.

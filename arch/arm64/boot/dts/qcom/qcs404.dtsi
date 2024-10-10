@@ -177,7 +177,7 @@
 			mboxes = <&apcs_glb 0>;
 
 			rpm_requests: rpm-requests {
-				compatible = "qcom,rpm-qcs404", "qcom,glink-smd-rpm";
+				compatible = "qcom,rpm-qcs404";
 				qcom,glink-channels = "rpm_requests";
 
 				rpmcc: clock-controller {
@@ -1324,7 +1324,7 @@
 		};
 
 		apcs_hfpll: clock-controller@b016000 {
-			compatible = "qcom,qcs404-hfpll";
+			compatible = "qcom,hfpll";
 			reg = <0x0b016000 0x30>;
 			#clock-cells = <0>;
 			clock-output-names = "apcs_hfpll";
@@ -1531,10 +1531,10 @@
 
 	timer {
 		compatible = "arm,armv8-timer";
-		interrupts = <GIC_PPI 2 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
-			     <GIC_PPI 3 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
-			     <GIC_PPI 4 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
-			     <GIC_PPI 1 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>;
+		interrupts = <GIC_PPI 2 0xff08>,
+			     <GIC_PPI 3 0xff08>,
+			     <GIC_PPI 4 0xff08>,
+			     <GIC_PPI 1 0xff08>;
 	};
 
 	smp2p-adsp {
@@ -1600,6 +1600,7 @@
 	thermal-zones {
 		aoss-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 0>;
 
@@ -1614,6 +1615,7 @@
 
 		q6-hvx-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 1>;
 
@@ -1628,6 +1630,7 @@
 
 		lpass-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 2>;
 
@@ -1642,6 +1645,7 @@
 
 		wlan-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 3>;
 
@@ -1656,6 +1660,7 @@
 
 		cluster-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 4>;
 
@@ -1689,6 +1694,7 @@
 
 		cpu0-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 5>;
 
@@ -1722,6 +1728,7 @@
 
 		cpu1-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 6>;
 
@@ -1755,6 +1762,7 @@
 
 		cpu2-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 7>;
 
@@ -1788,6 +1796,7 @@
 
 		cpu3-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 8>;
 
@@ -1821,6 +1830,7 @@
 
 		gpu-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 9>;
 

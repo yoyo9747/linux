@@ -91,6 +91,7 @@ static int whiteheat_break_ctl(struct tty_struct *tty, int break_state);
 
 static struct usb_serial_driver whiteheat_fake_device = {
 	.driver = {
+		.owner =	THIS_MODULE,
 		.name =		"whiteheatnofirm",
 	},
 	.description =		"Connect Tech - WhiteHEAT - (prerenumeration)",
@@ -102,6 +103,7 @@ static struct usb_serial_driver whiteheat_fake_device = {
 
 static struct usb_serial_driver whiteheat_device = {
 	.driver = {
+		.owner =	THIS_MODULE,
 		.name =		"whiteheat",
 	},
 	.description =		"Connect Tech - WhiteHEAT",

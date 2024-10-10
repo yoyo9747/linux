@@ -462,10 +462,11 @@ static __always_inline int spin_is_contended(spinlock_t *lock)
  */
 static inline int spin_needbreak(spinlock_t *lock)
 {
-	if (!preempt_model_preemptible())
-		return 0;
-
+#ifdef CONFIG_PREEMPTION
 	return spin_is_contended(lock);
+#else
+	return 0;
+#endif
 }
 
 /*
@@ -478,10 +479,11 @@ static inline int spin_needbreak(spinlock_t *lock)
  */
 static inline int rwlock_needbreak(rwlock_t *lock)
 {
-	if (!preempt_model_preemptible())
-		return 0;
-
+#ifdef CONFIG_PREEMPTION
 	return rwlock_is_contended(lock);
+#else
+	return 0;
+#endif
 }
 
 /*

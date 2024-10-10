@@ -68,6 +68,7 @@ required:
   - reg
   - clocks
   - clock-names
+  - interrupts
 
 additionalProperties: false
 

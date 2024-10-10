@@ -368,7 +368,7 @@ static int sun50i_a100_ledc_suspend(struct device *dev)
 		if (!xfer_active)
 			break;
 
-		usleep_range(1000, 1100);
+		msleep(1);
 	}
 
 	clk_disable_unprepare(priv->mod_clk);

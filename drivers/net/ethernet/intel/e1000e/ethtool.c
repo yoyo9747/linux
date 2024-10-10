@@ -2263,7 +2263,7 @@ static int e1000e_set_eee(struct net_device *netdev, struct ethtool_keee *edata)
 }
 
 static int e1000e_get_ts_info(struct net_device *netdev,
-			      struct kernel_ethtool_ts_info *info)
+			      struct ethtool_ts_info *info)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 

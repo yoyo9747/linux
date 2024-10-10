@@ -23,9 +23,7 @@ properties:
           - enum:
               - elan,ekth5015m
           - const: elan,ekth6915
-      - enum:
-          - elan,ekth6915
-          - elan,ekth6a12nay
+      - const: elan,ekth6915
 
   reg:
     const: 0x10

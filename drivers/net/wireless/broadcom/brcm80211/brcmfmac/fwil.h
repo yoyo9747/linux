@@ -96,21 +96,14 @@ static inline
 s32 brcmf_fil_cmd_int_get(struct brcmf_if *ifp, u32 cmd, u32 *data)
 {
 	s32 err;
+	__le32 data_le = cpu_to_le32(*data);
 
-	err = brcmf_fil_cmd_data_get(ifp, cmd, data, sizeof(*data));
+	err = brcmf_fil_cmd_data_get(ifp, cmd, &data_le, sizeof(data_le));
 	if (err == 0)
-		*data = le32_to_cpu(*(__le32 *)data);
+		*data = le32_to_cpu(data_le);
 	brcmf_dbg(FIL, "ifidx=%d, cmd=%d, value=%d\n", ifp->ifidx, cmd, *data);
 
 	return err;
-}
-static inline
-s32 brcmf_fil_cmd_int_query(struct brcmf_if *ifp, u32 cmd, u32 *data)
-{
-	__le32 *data_le = (__le32 *)data;
-
-	*data_le = cpu_to_le32(*data);
-	return brcmf_fil_cmd_int_get(ifp, cmd, data);
 }
 
 s32 brcmf_fil_iovar_data_set(struct brcmf_if *ifp, const char *name,
@@ -127,20 +120,13 @@ s32 brcmf_fil_iovar_int_set(struct brcmf_if *ifp, const char *name, u32 data)
 static inline
 s32 brcmf_fil_iovar_int_get(struct brcmf_if *ifp, const char *name, u32 *data)
 {
+	__le32 data_le = cpu_to_le32(*data);
 	s32 err;
 
-	err = brcmf_fil_iovar_data_get(ifp, name, data, sizeof(*data));
+	err = brcmf_fil_iovar_data_get(ifp, name, &data_le, sizeof(data_le));
 	if (err == 0)
-		*data = le32_to_cpu(*(__le32 *)data);
+		*data = le32_to_cpu(data_le);
 	return err;
-}
-static inline
-s32 brcmf_fil_iovar_int_query(struct brcmf_if *ifp, const char *name, u32 *data)
-{
-	__le32 *data_le = (__le32 *)data;
-
-	*data_le = cpu_to_le32(*data);
-	return brcmf_fil_iovar_int_get(ifp, name, data);
 }
 
 
@@ -159,20 +145,14 @@ s32 brcmf_fil_bsscfg_int_set(struct brcmf_if *ifp, const char *name, u32 data)
 static inline
 s32 brcmf_fil_bsscfg_int_get(struct brcmf_if *ifp, const char *name, u32 *data)
 {
+	__le32 data_le = cpu_to_le32(*data);
 	s32 err;
 
-	err = brcmf_fil_bsscfg_data_get(ifp, name, data, sizeof(*data));
+	err = brcmf_fil_bsscfg_data_get(ifp, name, &data_le,
+					sizeof(data_le));
 	if (err == 0)
-		*data = le32_to_cpu(*(__le32 *)data);
+		*data = le32_to_cpu(data_le);
 	return err;
-}
-static inline
-s32 brcmf_fil_bsscfg_int_query(struct brcmf_if *ifp, const char *name, u32 *data)
-{
-	__le32 *data_le = (__le32 *)data;
-
-	*data_le = cpu_to_le32(*data);
-	return brcmf_fil_bsscfg_int_get(ifp, name, data);
 }
 
 s32 brcmf_fil_xtlv_data_set(struct brcmf_if *ifp, const char *name, u16 id,

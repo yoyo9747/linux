@@ -308,9 +308,7 @@ static int tmp401_temp_read(struct device *dev, u32 attr, int channel, long *val
 {
 	struct tmp401_data *data = dev_get_drvdata(dev);
 	struct regmap *regmap = data->regmap;
-	unsigned int regs[2] = { TMP401_TEMP_MSB[3][channel], TMP401_TEMP_CRIT_HYST };
 	unsigned int regval;
-	u16 regvals[2];
 	int reg, ret;
 
 	switch (attr) {
@@ -327,11 +325,20 @@ static int tmp401_temp_read(struct device *dev, u32 attr, int channel, long *val
 		*val = tmp401_register_to_temp(regval, data->extended_range);
 		break;
 	case hwmon_temp_crit_hyst:
-		ret = regmap_multi_reg_read(regmap, regs, regvals, 2);
+		mutex_lock(&data->update_lock);
+		reg = TMP401_TEMP_MSB[3][channel];
+		ret = regmap_read(regmap, reg, &regval);
+		if (ret < 0)
+			goto unlock;
+		*val = tmp401_register_to_temp(regval, data->extended_range);
+		ret = regmap_read(regmap, TMP401_TEMP_CRIT_HYST, &regval);
+		if (ret < 0)
+			goto unlock;
+		*val -= regval * 1000;
+unlock:
+		mutex_unlock(&data->update_lock);
 		if (ret < 0)
 			return ret;
-		*val = tmp401_register_to_temp(regvals[0], data->extended_range) -
-							(regvals[1] * 1000);
 		break;
 	case hwmon_temp_fault:
 	case hwmon_temp_min_alarm:
@@ -686,7 +693,7 @@ static int tmp401_probe(struct i2c_client *client)
 
 	data->client = client;
 	mutex_init(&data->update_lock);
-	data->kind = (uintptr_t)i2c_get_match_data(client);
+	data->kind = i2c_match_id(tmp401_id, client)->driver_data;
 
 	data->regmap = devm_regmap_init(dev, NULL, data, &tmp401_regmap_config);
 	if (IS_ERR(data->regmap))

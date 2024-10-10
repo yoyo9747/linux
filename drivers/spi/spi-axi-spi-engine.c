@@ -41,13 +41,11 @@
 #define SPI_ENGINE_CONFIG_CPHA			BIT(0)
 #define SPI_ENGINE_CONFIG_CPOL			BIT(1)
 #define SPI_ENGINE_CONFIG_3WIRE			BIT(2)
-#define SPI_ENGINE_CONFIG_SDO_IDLE_HIGH		BIT(3)
 
 #define SPI_ENGINE_INST_TRANSFER		0x0
 #define SPI_ENGINE_INST_ASSERT			0x1
 #define SPI_ENGINE_INST_WRITE			0x2
 #define SPI_ENGINE_INST_MISC			0x3
-#define SPI_ENGINE_INST_CS_INV			0x4
 
 #define SPI_ENGINE_CMD_REG_CLK_DIV		0x0
 #define SPI_ENGINE_CMD_REG_CONFIG		0x1
@@ -75,8 +73,6 @@
 	SPI_ENGINE_CMD(SPI_ENGINE_INST_MISC, SPI_ENGINE_MISC_SLEEP, (delay))
 #define SPI_ENGINE_CMD_SYNC(id) \
 	SPI_ENGINE_CMD(SPI_ENGINE_INST_MISC, SPI_ENGINE_MISC_SYNC, (id))
-#define SPI_ENGINE_CMD_CS_INV(flags) \
-	SPI_ENGINE_CMD(SPI_ENGINE_INST_CS_INV, 0, (flags))
 
 struct spi_engine_program {
 	unsigned int length;
@@ -115,8 +111,6 @@ struct spi_engine {
 	struct spi_engine_message_state msg_state;
 	struct completion msg_complete;
 	unsigned int int_enable;
-	/* shadows hardware CS inversion flag state */
-	u8 cs_inv;
 };
 
 static void spi_engine_program_add_cmd(struct spi_engine_program *p,
@@ -138,10 +132,6 @@ static unsigned int spi_engine_get_config(struct spi_device *spi)
 		config |= SPI_ENGINE_CONFIG_CPHA;
 	if (spi->mode & SPI_3WIRE)
 		config |= SPI_ENGINE_CONFIG_3WIRE;
-	if (spi->mode & SPI_MOSI_IDLE_HIGH)
-		config |= SPI_ENGINE_CONFIG_SDO_IDLE_HIGH;
-	if (spi->mode & SPI_MOSI_IDLE_LOW)
-		config &= ~SPI_ENGINE_CONFIG_SDO_IDLE_HIGH;
 
 	return config;
 }
@@ -263,7 +253,7 @@ static void spi_engine_compile_message(struct spi_message *msg, bool dry,
 					clk_div - 1));
 		}
 
-		if (bits_per_word != xfer->bits_per_word && xfer->len) {
+		if (bits_per_word != xfer->bits_per_word) {
 			bits_per_word = xfer->bits_per_word;
 			spi_engine_program_add_cmd(p, dry,
 				SPI_ENGINE_CMD_WRITE(SPI_ENGINE_CMD_REG_XFER_BITS,
@@ -550,29 +540,6 @@ static int spi_engine_unoptimize_message(struct spi_message *msg)
 	return 0;
 }
 
-static int spi_engine_setup(struct spi_device *device)
-{
-	struct spi_controller *host = device->controller;
-	struct spi_engine *spi_engine = spi_controller_get_devdata(host);
-
-	if (device->mode & SPI_CS_HIGH)
-		spi_engine->cs_inv |= BIT(spi_get_chipselect(device, 0));
-	else
-		spi_engine->cs_inv &= ~BIT(spi_get_chipselect(device, 0));
-
-	writel_relaxed(SPI_ENGINE_CMD_CS_INV(spi_engine->cs_inv),
-		       spi_engine->base + SPI_ENGINE_REG_CMD_FIFO);
-
-	/*
-	 * In addition to setting the flags, we have to do a CS assert command
-	 * to make the new setting actually take effect.
-	 */
-	writel_relaxed(SPI_ENGINE_CMD_ASSERT(0, 0xff),
-		       spi_engine->base + SPI_ENGINE_REG_CMD_FIFO);
-
-	return 0;
-}
-
 static int spi_engine_transfer_one_message(struct spi_controller *host,
 	struct spi_message *msg)
 {
@@ -696,20 +663,16 @@ static int spi_engine_probe(struct platform_device *pdev)
 	host->unoptimize_message = spi_engine_unoptimize_message;
 	host->num_chipselect = 8;
 
-	/* Some features depend of the IP core version. */
-	if (ADI_AXI_PCORE_VER_MAJOR(version) >= 1) {
-		if (ADI_AXI_PCORE_VER_MINOR(version) >= 2) {
-			host->mode_bits |= SPI_CS_HIGH;
-			host->setup = spi_engine_setup;
-		}
-		if (ADI_AXI_PCORE_VER_MINOR(version) >= 3)
-			host->mode_bits |= SPI_MOSI_IDLE_LOW | SPI_MOSI_IDLE_HIGH;
-	}
-
 	if (host->max_speed_hz == 0)
 		return dev_err_probe(&pdev->dev, -EINVAL, "spi_clk rate is 0");
 
-	return devm_spi_register_controller(&pdev->dev, host);
+	ret = devm_spi_register_controller(&pdev->dev, host);
+	if (ret)
+		return ret;
+
+	platform_set_drvdata(pdev, host);
+
+	return 0;
 }
 
 static const struct of_device_id spi_engine_match_table[] = {

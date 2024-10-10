@@ -394,6 +394,7 @@ static int load_elf_fdpic_binary(struct linux_binprm *bprm)
 			goto error;
 		}
 
+		allow_write_access(interpreter);
 		fput(interpreter);
 		interpreter = NULL;
 	}
@@ -465,8 +466,10 @@ static int load_elf_fdpic_binary(struct linux_binprm *bprm)
 	retval = 0;
 
 error:
-	if (interpreter)
+	if (interpreter) {
+		allow_write_access(interpreter);
 		fput(interpreter);
+	}
 	kfree(interpreter_name);
 	kfree(exec_params.phdrs);
 	kfree(exec_params.loadmap);
@@ -589,9 +592,6 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
 
 	if (bprm->have_execfd)
 		nitems++;
-#ifdef ELF_HWCAP2
-	nitems++;
-#endif
 
 	csp = sp;
 	sp -= nitems * 2 * sizeof(unsigned long);

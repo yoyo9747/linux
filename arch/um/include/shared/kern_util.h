@@ -13,6 +13,7 @@ struct siginfo;
 
 extern int uml_exitcode;
 
+extern int ncpus;
 extern int kmalloc_ok;
 
 #define UML_ROUND_UP(addr) \

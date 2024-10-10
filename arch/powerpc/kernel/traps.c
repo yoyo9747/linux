@@ -121,7 +121,7 @@ static void pmac_backlight_unblank(void)
 
 		props = &pmac_backlight->props;
 		props->brightness = props->max_brightness;
-		props->power = BACKLIGHT_POWER_ON;
+		props->power = FB_BLANK_UNBLANK;
 		backlight_update_status(pmac_backlight);
 	}
 	mutex_unlock(&pmac_backlight_mutex);
@@ -2244,7 +2244,7 @@ void __noreturn unrecoverable_exception(struct pt_regs *regs)
 		;
 }
 
-#ifdef CONFIG_BOOKE_WDT
+#if defined(CONFIG_BOOKE_WDT) || defined(CONFIG_40x)
 DEFINE_INTERRUPT_HANDLER_NMI(WatchdogException)
 {
 	printk (KERN_EMERG "PowerPC Book-E Watchdog Exception\n");

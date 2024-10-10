@@ -547,8 +547,7 @@ static int ad5933_ring_preenable(struct iio_dev *indio_dev)
 	struct ad5933_state *st = iio_priv(indio_dev);
 	int ret;
 
-	if (bitmap_empty(indio_dev->active_scan_mask,
-			 iio_get_masklength(indio_dev)))
+	if (bitmap_empty(indio_dev->active_scan_mask, indio_dev->masklength))
 		return -EINVAL;
 
 	ret = ad5933_reset(st);
@@ -626,7 +625,7 @@ static void ad5933_work(struct work_struct *work)
 
 	if (status & AD5933_STAT_DATA_VALID) {
 		int scan_count = bitmap_weight(indio_dev->active_scan_mask,
-					       iio_get_masklength(indio_dev));
+					       indio_dev->masklength);
 		ret = ad5933_i2c_read(st->client,
 				test_bit(1, indio_dev->active_scan_mask) ?
 				AD5933_REG_REAL_DATA : AD5933_REG_IMAG_DATA,
@@ -722,8 +721,8 @@ static int ad5933_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id ad5933_id[] = {
-	{ "ad5933" },
-	{ "ad5934" },
+	{ "ad5933", 0 },
+	{ "ad5934", 0 },
 	{}
 };
 

@@ -5,7 +5,6 @@
 
 #include "i915_drv.h"
 #include "i915_reg.h"
-#include "intel_color.h"
 #include "intel_crtc.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
@@ -67,8 +66,8 @@
  */
 u32 i915_get_vblank_counter(struct drm_crtc *crtc)
 {
-	struct intel_display *display = to_intel_display(crtc->dev);
-	struct drm_vblank_crtc *vblank = drm_crtc_vblank_crtc(crtc);
+	struct drm_i915_private *dev_priv = to_i915(crtc->dev);
+	struct drm_vblank_crtc *vblank = &dev_priv->drm.vblank[drm_crtc_index(crtc)];
 	const struct drm_display_mode *mode = &vblank->hwmode;
 	enum pipe pipe = to_intel_crtc(crtc)->pipe;
 	u32 pixel, vbl_start, hsync_start, htotal;
@@ -90,7 +89,9 @@ u32 i915_get_vblank_counter(struct drm_crtc *crtc)
 
 	htotal = mode->crtc_htotal;
 	hsync_start = mode->crtc_hsync_start;
-	vbl_start = intel_mode_vblank_start(mode);
+	vbl_start = mode->crtc_vblank_start;
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+		vbl_start = DIV_ROUND_UP(vbl_start, 2);
 
 	/* Convert to pixel count */
 	vbl_start *= htotal;
@@ -103,8 +104,7 @@ u32 i915_get_vblank_counter(struct drm_crtc *crtc)
 	 * we get a low value that's stable across two reads of the high
 	 * register.
 	 */
-	frame = intel_de_read64_2x32(display, PIPEFRAMEPIXEL(display, pipe),
-				     PIPEFRAME(display, pipe));
+	frame = intel_de_read64_2x32(dev_priv, PIPEFRAMEPIXEL(pipe), PIPEFRAME(pipe));
 
 	pixel = frame & PIPE_PIXEL_MASK;
 	frame = (frame >> PIPE_FRAME_LOW_SHIFT) & 0xffffff;
@@ -119,20 +119,21 @@ u32 i915_get_vblank_counter(struct drm_crtc *crtc)
 
 u32 g4x_get_vblank_counter(struct drm_crtc *crtc)
 {
-	struct intel_display *display = to_intel_display(crtc->dev);
-	struct drm_vblank_crtc *vblank = drm_crtc_vblank_crtc(crtc);
+	struct drm_i915_private *dev_priv = to_i915(crtc->dev);
+	struct drm_vblank_crtc *vblank = &dev_priv->drm.vblank[drm_crtc_index(crtc)];
 	enum pipe pipe = to_intel_crtc(crtc)->pipe;
 
 	if (!vblank->max_vblank_count)
 		return 0;
 
-	return intel_de_read(display, PIPE_FRMCOUNT_G4X(display, pipe));
+	return intel_de_read(dev_priv, PIPE_FRMCOUNT_G4X(pipe));
 }
 
 static u32 intel_crtc_scanlines_since_frame_timestamp(struct intel_crtc *crtc)
 {
-	struct intel_display *display = to_intel_display(crtc);
-	struct drm_vblank_crtc *vblank = drm_crtc_vblank_crtc(&crtc->base);
+	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
+	struct drm_vblank_crtc *vblank =
+		&crtc->base.dev->vblank[drm_crtc_index(&crtc->base)];
 	const struct drm_display_mode *mode = &vblank->hwmode;
 	u32 htotal = mode->crtc_htotal;
 	u32 clock = mode->crtc_clock;
@@ -150,16 +151,16 @@ static u32 intel_crtc_scanlines_since_frame_timestamp(struct intel_crtc *crtc)
 		 * pipe frame time stamp. The time stamp value
 		 * is sampled at every start of vertical blank.
 		 */
-		scan_prev_time = intel_de_read_fw(display,
+		scan_prev_time = intel_de_read_fw(dev_priv,
 						  PIPE_FRMTMSTMP(crtc->pipe));
 
 		/*
 		 * The TIMESTAMP_CTR register has the current
 		 * time stamp value.
 		 */
-		scan_curr_time = intel_de_read_fw(display, IVB_TIMESTAMP_CTR);
+		scan_curr_time = intel_de_read_fw(dev_priv, IVB_TIMESTAMP_CTR);
 
-		scan_post_time = intel_de_read_fw(display,
+		scan_post_time = intel_de_read_fw(dev_priv,
 						  PIPE_FRMTMSTMP(crtc->pipe));
 	} while (scan_post_time != scan_prev_time);
 
@@ -177,7 +178,8 @@ static u32 intel_crtc_scanlines_since_frame_timestamp(struct intel_crtc *crtc)
  */
 static u32 __intel_get_crtc_scanline_from_timestamp(struct intel_crtc *crtc)
 {
-	struct drm_vblank_crtc *vblank = drm_crtc_vblank_crtc(&crtc->base);
+	struct drm_vblank_crtc *vblank =
+		&crtc->base.dev->vblank[drm_crtc_index(&crtc->base)];
 	const struct drm_display_mode *mode = &vblank->hwmode;
 	u32 vblank_start = mode->crtc_vblank_start;
 	u32 vtotal = mode->crtc_vtotal;
@@ -190,66 +192,33 @@ static u32 __intel_get_crtc_scanline_from_timestamp(struct intel_crtc *crtc)
 	return scanline;
 }
 
-int intel_crtc_scanline_offset(const struct intel_crtc_state *crtc_state)
-{
-	struct intel_display *display = to_intel_display(crtc_state);
-	struct drm_i915_private *i915 = to_i915(crtc_state->uapi.crtc->dev);
-
-	/*
-	 * The scanline counter increments at the leading edge of hsync.
-	 *
-	 * On most platforms it starts counting from vtotal-1 on the
-	 * first active line. That means the scanline counter value is
-	 * always one less than what we would expect. Ie. just after
-	 * start of vblank, which also occurs at start of hsync (on the
-	 * last active line), the scanline counter will read vblank_start-1.
-	 *
-	 * On gen2 the scanline counter starts counting from 1 instead
-	 * of vtotal-1, so we have to subtract one.
-	 *
-	 * On HSW+ the behaviour of the scanline counter depends on the output
-	 * type. For DP ports it behaves like most other platforms, but on HDMI
-	 * there's an extra 1 line difference. So we need to add two instead of
-	 * one to the value.
-	 *
-	 * On VLV/CHV DSI the scanline counter would appear to increment
-	 * approx. 1/3 of a scanline before start of vblank. Unfortunately
-	 * that means we can't tell whether we're in vblank or not while
-	 * we're on that particular line. We must still set scanline_offset
-	 * to 1 so that the vblank timestamps come out correct when we query
-	 * the scanline counter from within the vblank interrupt handler.
-	 * However if queried just before the start of vblank we'll get an
-	 * answer that's slightly in the future.
-	 */
-	if (DISPLAY_VER(display) == 2)
-		return -1;
-	else if (HAS_DDI(i915) && intel_crtc_has_type(crtc_state, INTEL_OUTPUT_HDMI))
-		return 2;
-	else
-		return 1;
-}
-
 /*
  * intel_de_read_fw(), only for fast reads of display block, no need for
  * forcewake etc.
  */
 static int __intel_get_crtc_scanline(struct intel_crtc *crtc)
 {
-	struct intel_display *display = to_intel_display(crtc);
-	struct drm_vblank_crtc *vblank = drm_crtc_vblank_crtc(&crtc->base);
-	const struct drm_display_mode *mode = &vblank->hwmode;
+	struct drm_device *dev = crtc->base.dev;
+	struct drm_i915_private *dev_priv = to_i915(dev);
+	const struct drm_display_mode *mode;
+	struct drm_vblank_crtc *vblank;
 	enum pipe pipe = crtc->pipe;
 	int position, vtotal;
 
 	if (!crtc->active)
 		return 0;
 
+	vblank = &crtc->base.dev->vblank[drm_crtc_index(&crtc->base)];
+	mode = &vblank->hwmode;
+
 	if (crtc->mode_flags & I915_MODE_FLAG_GET_SCANLINE_FROM_TIMESTAMP)
 		return __intel_get_crtc_scanline_from_timestamp(crtc);
 
-	vtotal = intel_mode_vtotal(mode);
+	vtotal = mode->crtc_vtotal;
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+		vtotal /= 2;
 
-	position = intel_de_read_fw(display, PIPEDSL(display, pipe)) & PIPEDSL_LINE_MASK;
+	position = intel_de_read_fw(dev_priv, PIPEDSL(pipe)) & PIPEDSL_LINE_MASK;
 
 	/*
 	 * On HSW, the DSL reg (0x70000) appears to return 0 if we
@@ -263,13 +232,12 @@ static int __intel_get_crtc_scanline(struct intel_crtc *crtc)
 	 * problem.  We may need to extend this to include other platforms,
 	 * but so far testing only shows the problem on HSW.
 	 */
-	if (HAS_DDI(display) && !position) {
+	if (HAS_DDI(dev_priv) && !position) {
 		int i, temp;
 
 		for (i = 0; i < 100; i++) {
 			udelay(1);
-			temp = intel_de_read_fw(display,
-						PIPEDSL(display, pipe)) & PIPEDSL_LINE_MASK;
+			temp = intel_de_read_fw(dev_priv, PIPEDSL(pipe)) & PIPEDSL_LINE_MASK;
 			if (temp != position) {
 				position = temp;
 				break;
@@ -281,7 +249,21 @@ static int __intel_get_crtc_scanline(struct intel_crtc *crtc)
 	 * See update_scanline_offset() for the details on the
 	 * scanline_offset adjustment.
 	 */
-	return (position + vtotal + crtc->scanline_offset) % vtotal;
+	return (position + crtc->scanline_offset) % vtotal;
+}
+
+int intel_crtc_scanline_to_hw(struct intel_crtc *crtc, int scanline)
+{
+	const struct drm_vblank_crtc *vblank =
+		&crtc->base.dev->vblank[drm_crtc_index(&crtc->base)];
+	const struct drm_display_mode *mode = &vblank->hwmode;
+	int vtotal;
+
+	vtotal = mode->crtc_vtotal;
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+		vtotal /= 2;
+
+	return (scanline + vtotal - crtc->scanline_offset) % vtotal;
 }
 
 /*
@@ -294,29 +276,21 @@ static int __intel_get_crtc_scanline(struct intel_crtc *crtc)
  * all register accesses to the same cacheline to be serialized,
  * otherwise they may hang.
  */
-#ifdef I915
-static void intel_vblank_section_enter(struct intel_display *display)
+static void intel_vblank_section_enter(struct drm_i915_private *i915)
 	__acquires(i915->uncore.lock)
 {
-	struct drm_i915_private *i915 = to_i915(display->drm);
+#ifdef I915
 	spin_lock(&i915->uncore.lock);
+#endif
 }
 
-static void intel_vblank_section_exit(struct intel_display *display)
+static void intel_vblank_section_exit(struct drm_i915_private *i915)
 	__releases(i915->uncore.lock)
 {
-	struct drm_i915_private *i915 = to_i915(display->drm);
+#ifdef I915
 	spin_unlock(&i915->uncore.lock);
-}
-#else
-static void intel_vblank_section_enter(struct intel_display *display)
-{
-}
-
-static void intel_vblank_section_exit(struct intel_display *display)
-{
-}
 #endif
+}
 
 static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 				     bool in_vblank_irq,
@@ -324,19 +298,19 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 				     ktime_t *stime, ktime_t *etime,
 				     const struct drm_display_mode *mode)
 {
-	struct intel_display *display = to_intel_display(_crtc->dev);
-	struct drm_i915_private *dev_priv = to_i915(display->drm);
+	struct drm_device *dev = _crtc->dev;
+	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct intel_crtc *crtc = to_intel_crtc(_crtc);
 	enum pipe pipe = crtc->pipe;
 	int position;
 	int vbl_start, vbl_end, hsync_start, htotal, vtotal;
 	unsigned long irqflags;
-	bool use_scanline_counter = DISPLAY_VER(display) >= 5 ||
-		IS_G4X(dev_priv) || DISPLAY_VER(display) == 2 ||
+	bool use_scanline_counter = DISPLAY_VER(dev_priv) >= 5 ||
+		IS_G4X(dev_priv) || DISPLAY_VER(dev_priv) == 2 ||
 		crtc->mode_flags & I915_MODE_FLAG_USE_SCANLINE_COUNTER;
 
-	if (drm_WARN_ON(display->drm, !mode->crtc_clock)) {
-		drm_dbg(display->drm,
+	if (drm_WARN_ON(&dev_priv->drm, !mode->crtc_clock)) {
+		drm_dbg(&dev_priv->drm,
 			"trying to get scanoutpos for disabled pipe %c\n",
 			pipe_name(pipe));
 		return false;
@@ -344,9 +318,15 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 
 	htotal = mode->crtc_htotal;
 	hsync_start = mode->crtc_hsync_start;
-	vtotal = intel_mode_vtotal(mode);
-	vbl_start = intel_mode_vblank_start(mode);
-	vbl_end = intel_mode_vblank_end(mode);
+	vtotal = mode->crtc_vtotal;
+	vbl_start = mode->crtc_vblank_start;
+	vbl_end = mode->crtc_vblank_end;
+
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE) {
+		vbl_start = DIV_ROUND_UP(vbl_start, 2);
+		vbl_end /= 2;
+		vtotal /= 2;
+	}
 
 	/*
 	 * Enter vblank critical section, as we will do multiple
@@ -354,7 +334,7 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 	 * preemption disabled, so the following code must not block.
 	 */
 	local_irq_save(irqflags);
-	intel_vblank_section_enter(display);
+	intel_vblank_section_enter(dev_priv);
 
 	/* preempt_disable_rt() should go right here in PREEMPT_RT patchset. */
 
@@ -386,7 +366,7 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 		 * We can split this into vertical and horizontal
 		 * scanout position.
 		 */
-		position = (intel_de_read_fw(display, PIPEFRAMEPIXEL(display, pipe)) & PIPE_PIXEL_MASK) >> PIPE_PIXEL_SHIFT;
+		position = (intel_de_read_fw(dev_priv, PIPEFRAMEPIXEL(pipe)) & PIPE_PIXEL_MASK) >> PIPE_PIXEL_SHIFT;
 
 		/* convert to pixel counts */
 		vbl_start *= htotal;
@@ -422,7 +402,7 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 
 	/* preempt_enable_rt() should go right here in PREEMPT_RT patchset. */
 
-	intel_vblank_section_exit(display);
+	intel_vblank_section_exit(dev_priv);
 	local_irq_restore(irqflags);
 
 	/*
@@ -457,42 +437,42 @@ bool intel_crtc_get_vblank_timestamp(struct drm_crtc *crtc, int *max_error,
 
 int intel_get_crtc_scanline(struct intel_crtc *crtc)
 {
-	struct intel_display *display = to_intel_display(crtc);
+	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	unsigned long irqflags;
 	int position;
 
 	local_irq_save(irqflags);
-	intel_vblank_section_enter(display);
+	intel_vblank_section_enter(dev_priv);
 
 	position = __intel_get_crtc_scanline(crtc);
 
-	intel_vblank_section_exit(display);
+	intel_vblank_section_exit(dev_priv);
 	local_irq_restore(irqflags);
 
 	return position;
 }
 
-static bool pipe_scanline_is_moving(struct intel_display *display,
+static bool pipe_scanline_is_moving(struct drm_i915_private *dev_priv,
 				    enum pipe pipe)
 {
-	i915_reg_t reg = PIPEDSL(display, pipe);
+	i915_reg_t reg = PIPEDSL(pipe);
 	u32 line1, line2;
 
-	line1 = intel_de_read(display, reg) & PIPEDSL_LINE_MASK;
+	line1 = intel_de_read(dev_priv, reg) & PIPEDSL_LINE_MASK;
 	msleep(5);
-	line2 = intel_de_read(display, reg) & PIPEDSL_LINE_MASK;
+	line2 = intel_de_read(dev_priv, reg) & PIPEDSL_LINE_MASK;
 
 	return line1 != line2;
 }
 
 static void wait_for_pipe_scanline_moving(struct intel_crtc *crtc, bool state)
 {
-	struct intel_display *display = to_intel_display(crtc);
+	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	enum pipe pipe = crtc->pipe;
 
 	/* Wait for the display line to settle/start moving */
-	if (wait_for(pipe_scanline_is_moving(display, pipe) == state, 100))
-		drm_err(display->drm,
+	if (wait_for(pipe_scanline_is_moving(dev_priv, pipe) == state, 100))
+		drm_err(&dev_priv->drm,
 			"pipe %c scanline %s wait timed out\n",
 			pipe_name(pipe), str_on_off(state));
 }
@@ -507,11 +487,58 @@ void intel_wait_for_pipe_scanline_moving(struct intel_crtc *crtc)
 	wait_for_pipe_scanline_moving(crtc, true);
 }
 
+static int intel_crtc_scanline_offset(const struct intel_crtc_state *crtc_state)
+{
+	struct drm_i915_private *i915 = to_i915(crtc_state->uapi.crtc->dev);
+	const struct drm_display_mode *adjusted_mode = &crtc_state->hw.adjusted_mode;
+
+	/*
+	 * The scanline counter increments at the leading edge of hsync.
+	 *
+	 * On most platforms it starts counting from vtotal-1 on the
+	 * first active line. That means the scanline counter value is
+	 * always one less than what we would expect. Ie. just after
+	 * start of vblank, which also occurs at start of hsync (on the
+	 * last active line), the scanline counter will read vblank_start-1.
+	 *
+	 * On gen2 the scanline counter starts counting from 1 instead
+	 * of vtotal-1, so we have to subtract one (or rather add vtotal-1
+	 * to keep the value positive), instead of adding one.
+	 *
+	 * On HSW+ the behaviour of the scanline counter depends on the output
+	 * type. For DP ports it behaves like most other platforms, but on HDMI
+	 * there's an extra 1 line difference. So we need to add two instead of
+	 * one to the value.
+	 *
+	 * On VLV/CHV DSI the scanline counter would appear to increment
+	 * approx. 1/3 of a scanline before start of vblank. Unfortunately
+	 * that means we can't tell whether we're in vblank or not while
+	 * we're on that particular line. We must still set scanline_offset
+	 * to 1 so that the vblank timestamps come out correct when we query
+	 * the scanline counter from within the vblank interrupt handler.
+	 * However if queried just before the start of vblank we'll get an
+	 * answer that's slightly in the future.
+	 */
+	if (DISPLAY_VER(i915) == 2) {
+		int vtotal;
+
+		vtotal = adjusted_mode->crtc_vtotal;
+		if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE)
+			vtotal /= 2;
+
+		return vtotal - 1;
+	} else if (HAS_DDI(i915) && intel_crtc_has_type(crtc_state, INTEL_OUTPUT_HDMI)) {
+		return 2;
+	} else {
+		return 1;
+	}
+}
+
 void intel_crtc_update_active_timings(const struct intel_crtc_state *crtc_state,
 				      bool vrr_enable)
 {
-	struct intel_display *display = to_intel_display(crtc_state);
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
 	u8 mode_flags = crtc_state->mode_flags;
 	struct drm_display_mode adjusted_mode;
 	int vmax_vblank_start = 0;
@@ -520,8 +547,7 @@ void intel_crtc_update_active_timings(const struct intel_crtc_state *crtc_state,
 	drm_mode_init(&adjusted_mode, &crtc_state->hw.adjusted_mode);
 
 	if (vrr_enable) {
-		drm_WARN_ON(display->drm,
-			    (mode_flags & I915_MODE_FLAG_VRR) == 0);
+		drm_WARN_ON(&i915->drm, (mode_flags & I915_MODE_FLAG_VRR) == 0);
 
 		adjusted_mode.crtc_vtotal = crtc_state->vrr.vmax;
 		adjusted_mode.crtc_vblank_end = crtc_state->vrr.vmax;
@@ -543,8 +569,8 @@ void intel_crtc_update_active_timings(const struct intel_crtc_state *crtc_state,
 	 * __intel_get_crtc_scanline()) with vblank_time_lock?
 	 * Need to audit everything to make sure it's safe.
 	 */
-	spin_lock_irqsave(&display->drm->vblank_time_lock, irqflags);
-	intel_vblank_section_enter(display);
+	spin_lock_irqsave(&i915->drm.vblank_time_lock, irqflags);
+	intel_vblank_section_enter(i915);
 
 	drm_calc_timestamping_constants(&crtc->base, &adjusted_mode);
 
@@ -553,21 +579,11 @@ void intel_crtc_update_active_timings(const struct intel_crtc_state *crtc_state,
 	crtc->mode_flags = mode_flags;
 
 	crtc->scanline_offset = intel_crtc_scanline_offset(crtc_state);
-	intel_vblank_section_exit(display);
-	spin_unlock_irqrestore(&display->drm->vblank_time_lock, irqflags);
+	intel_vblank_section_exit(i915);
+	spin_unlock_irqrestore(&i915->drm.vblank_time_lock, irqflags);
 }
 
-int intel_mode_vdisplay(const struct drm_display_mode *mode)
-{
-	int vdisplay = mode->crtc_vdisplay;
-
-	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
-		vdisplay = DIV_ROUND_UP(vdisplay, 2);
-
-	return vdisplay;
-}
-
-int intel_mode_vblank_start(const struct drm_display_mode *mode)
+static int intel_mode_vblank_start(const struct drm_display_mode *mode)
 {
 	int vblank_start = mode->crtc_vblank_start;
 
@@ -575,26 +591,6 @@ int intel_mode_vblank_start(const struct drm_display_mode *mode)
 		vblank_start = DIV_ROUND_UP(vblank_start, 2);
 
 	return vblank_start;
-}
-
-int intel_mode_vblank_end(const struct drm_display_mode *mode)
-{
-	int vblank_end = mode->crtc_vblank_end;
-
-	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
-		vblank_end /= 2;
-
-	return vblank_end;
-}
-
-int intel_mode_vtotal(const struct drm_display_mode *mode)
-{
-	int vtotal = mode->crtc_vtotal;
-
-	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
-		vtotal /= 2;
-
-	return vtotal;
 }
 
 void intel_vblank_evade_init(const struct intel_crtc_state *old_crtc_state,
@@ -650,17 +646,15 @@ void intel_vblank_evade_init(const struct intel_crtc_state *old_crtc_state,
 	 * DSB execution waits for the transcoder's undelayed vblank,
 	 * hence we must kick off the commit before that.
 	 */
-	if (intel_color_uses_dsb(new_crtc_state) ||
-	    new_crtc_state->update_m_n || new_crtc_state->update_lrr)
-		evade->min -= intel_mode_vblank_start(adjusted_mode) -
-			intel_mode_vdisplay(adjusted_mode);
+	if (new_crtc_state->dsb || new_crtc_state->update_m_n || new_crtc_state->update_lrr)
+		evade->min -= adjusted_mode->crtc_vblank_start - adjusted_mode->crtc_vdisplay;
 }
 
 /* must be called with vblank interrupt already enabled! */
 int intel_vblank_evade(struct intel_vblank_evade_ctx *evade)
 {
 	struct intel_crtc *crtc = evade->crtc;
-	struct intel_display *display = to_intel_display(crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
 	long timeout = msecs_to_jiffies_timeout(1);
 	wait_queue_head_t *wq = drm_crtc_vblank_waitqueue(&crtc->base);
 	DEFINE_WAIT(wait);
@@ -682,7 +676,7 @@ int intel_vblank_evade(struct intel_vblank_evade_ctx *evade)
 			break;
 
 		if (!timeout) {
-			drm_err(display->drm,
+			drm_err(&i915->drm,
 				"Potential atomic update failure on pipe %c\n",
 				pipe_name(crtc->pipe));
 			break;

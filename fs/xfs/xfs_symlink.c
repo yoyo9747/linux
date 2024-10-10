@@ -90,25 +90,19 @@ xfs_symlink(
 	struct xfs_inode	**ipp)
 {
 	struct xfs_mount	*mp = dp->i_mount;
-	struct xfs_icreate_args	args = {
-		.idmap		= idmap,
-		.pip		= dp,
-		.mode		= S_IFLNK | (mode & ~S_IFMT),
-	};
-	struct xfs_dir_update	du = {
-		.dp		= dp,
-		.name		= link_name,
-	};
 	struct xfs_trans	*tp = NULL;
+	struct xfs_inode	*ip = NULL;
 	int			error = 0;
 	int			pathlen;
 	bool                    unlock_dp_on_error = false;
 	xfs_filblks_t		fs_blocks;
-	struct xfs_dquot	*udqp;
-	struct xfs_dquot	*gdqp;
-	struct xfs_dquot	*pdqp;
+	prid_t			prid;
+	struct xfs_dquot	*udqp = NULL;
+	struct xfs_dquot	*gdqp = NULL;
+	struct xfs_dquot	*pdqp = NULL;
 	uint			resblks;
 	xfs_ino_t		ino;
+	struct xfs_parent_args	*ppargs;
 
 	*ipp = NULL;
 
@@ -125,8 +119,15 @@ xfs_symlink(
 		return -ENAMETOOLONG;
 	ASSERT(pathlen > 0);
 
-	/* Make sure that we have allocated dquot(s) on disk. */
-	error = xfs_icreate_dqalloc(&args, &udqp, &gdqp, &pdqp);
+	prid = xfs_get_initial_prid(dp);
+
+	/*
+	 * Make sure that we have allocated dquot(s) on disk.
+	 */
+	error = xfs_qm_vop_dqalloc(dp, mapped_fsuid(idmap, &init_user_ns),
+			mapped_fsgid(idmap, &init_user_ns), prid,
+			XFS_QMOPT_QUOTALL | XFS_QMOPT_INHERIT,
+			&udqp, &gdqp, &pdqp);
 	if (error)
 		return error;
 
@@ -142,7 +143,7 @@ xfs_symlink(
 		fs_blocks = xfs_symlink_blocks(mp, pathlen);
 	resblks = xfs_symlink_space_res(mp, link_name->len, fs_blocks);
 
-	error = xfs_parent_start(mp, &du.ppargs);
+	error = xfs_parent_start(mp, &ppargs);
 	if (error)
 		goto out_release_dquots;
 
@@ -165,9 +166,11 @@ xfs_symlink(
 	/*
 	 * Allocate an inode for the symlink.
 	 */
-	error = xfs_dialloc(&tp, &args, &ino);
+	error = xfs_dialloc(&tp, dp->i_ino, S_IFLNK, &ino);
 	if (!error)
-		error = xfs_icreate(tp, ino, &args, &du.ip);
+		error = xfs_init_new_inode(idmap, tp, dp, ino,
+				S_IFLNK | (mode & ~S_IFMT), 1, 0, prid,
+				xfs_has_parent(mp), &ip);
 	if (error)
 		goto out_trans_cancel;
 
@@ -183,22 +186,33 @@ xfs_symlink(
 	/*
 	 * Also attach the dquot(s) to it, if applicable.
 	 */
-	xfs_qm_vop_create_dqattach(tp, du.ip, udqp, gdqp, pdqp);
+	xfs_qm_vop_create_dqattach(tp, ip, udqp, gdqp, pdqp);
 
 	resblks -= XFS_IALLOC_SPACE_RES(mp);
-	error = xfs_symlink_write_target(tp, du.ip, du.ip->i_ino, target_path,
+	error = xfs_symlink_write_target(tp, ip, ip->i_ino, target_path,
 			pathlen, fs_blocks, resblks);
 	if (error)
 		goto out_trans_cancel;
 	resblks -= fs_blocks;
-	i_size_write(VFS_I(du.ip), du.ip->i_disk_size);
+	i_size_write(VFS_I(ip), ip->i_disk_size);
 
 	/*
 	 * Create the directory entry for the symlink.
 	 */
-	error = xfs_dir_create_child(tp, resblks, &du);
+	error = xfs_dir_createname(tp, dp, link_name, ip->i_ino, resblks);
 	if (error)
 		goto out_trans_cancel;
+	xfs_trans_ichgtime(tp, dp, XFS_ICHGTIME_MOD | XFS_ICHGTIME_CHG);
+	xfs_trans_log_inode(tp, dp, XFS_ILOG_CORE);
+
+	/* Add parent pointer for the new symlink. */
+	if (ppargs) {
+		error = xfs_parent_addname(tp, ppargs, dp, link_name, ip);
+		if (error)
+			goto out_trans_cancel;
+	}
+
+	xfs_dir_update_hook(dp, ip, 1, link_name);
 
 	/*
 	 * If this is a synchronous mount, make sure that the
@@ -216,10 +230,10 @@ xfs_symlink(
 	xfs_qm_dqrele(gdqp);
 	xfs_qm_dqrele(pdqp);
 
-	*ipp = du.ip;
-	xfs_iunlock(du.ip, XFS_ILOCK_EXCL);
+	*ipp = ip;
+	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	xfs_iunlock(dp, XFS_ILOCK_EXCL);
-	xfs_parent_finish(mp, du.ppargs);
+	xfs_parent_finish(mp, ppargs);
 	return 0;
 
 out_trans_cancel:
@@ -230,13 +244,13 @@ out_release_inode:
 	 * setup of the inode and release the inode.  This prevents recursive
 	 * transactions and deadlocks from xfs_inactive.
 	 */
-	if (du.ip) {
-		xfs_iunlock(du.ip, XFS_ILOCK_EXCL);
-		xfs_finish_inode_setup(du.ip);
-		xfs_irele(du.ip);
+	if (ip) {
+		xfs_iunlock(ip, XFS_ILOCK_EXCL);
+		xfs_finish_inode_setup(ip);
+		xfs_irele(ip);
 	}
 out_parent:
-	xfs_parent_finish(mp, du.ppargs);
+	xfs_parent_finish(mp, ppargs);
 out_release_dquots:
 	xfs_qm_dqrele(udqp);
 	xfs_qm_dqrele(gdqp);

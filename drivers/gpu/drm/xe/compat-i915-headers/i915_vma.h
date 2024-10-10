@@ -7,8 +7,7 @@
 #define I915_VMA_H
 
 #include <uapi/drm/i915_drm.h>
-
-#include "xe_ggtt_types.h"
+#include <drm/drm_mm.h>
 
 /* We don't want these from i915_drm.h in case of Xe */
 #undef I915_TILING_X
@@ -20,7 +19,7 @@ struct xe_bo;
 
 struct i915_vma {
 	struct xe_bo *bo, *dpt;
-	struct xe_ggtt_node *node;
+	struct drm_mm_node node;
 };
 
 #define i915_ggtt_clear_scanout(bo) do { } while (0)
@@ -29,7 +28,7 @@ struct i915_vma {
 
 static inline u32 i915_ggtt_offset(const struct i915_vma *vma)
 {
-	return vma->node->base.start;
+	return vma->node.start;
 }
 
 #endif

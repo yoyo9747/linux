@@ -200,7 +200,7 @@ static void cs53l32a_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id cs53l32a_id[] = {
-	{ "cs53l32a" },
+	{ "cs53l32a", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, cs53l32a_id);

@@ -69,8 +69,6 @@ properties:
     const: 1
     deprecated: true
 
-  '#power-domain-cells': false
-
 required:
   - compatible
 
@@ -83,6 +81,7 @@ examples:
       reg = <0x00900000 0x4000>;
       #clock-cells = <1>;
       #reset-cells = <1>;
+      #power-domain-cells = <1>;
 
       thermal-sensor {
         compatible = "qcom,msm8960-tsens";

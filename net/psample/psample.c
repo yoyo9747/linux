@@ -360,9 +360,8 @@ static int psample_tunnel_meta_len(struct ip_tunnel_info *tun_info)
 }
 #endif
 
-void psample_sample_packet(struct psample_group *group,
-			   const struct sk_buff *skb, u32 sample_rate,
-			   const struct psample_metadata *md)
+void psample_sample_packet(struct psample_group *group, struct sk_buff *skb,
+			   u32 sample_rate, const struct psample_metadata *md)
 {
 	ktime_t tstamp = ktime_get_real();
 	int out_ifindex = md->out_ifindex;
@@ -377,10 +376,6 @@ void psample_sample_packet(struct psample_group *group,
 	void *data;
 	int ret;
 
-	if (!genl_has_listeners(&psample_nl_family, group->net,
-				PSAMPLE_NL_MCGRP_SAMPLE))
-		return;
-
 	meta_len = (in_ifindex ? nla_total_size(sizeof(u16)) : 0) +
 		   (out_ifindex ? nla_total_size(sizeof(u16)) : 0) +
 		   (md->out_tc_valid ? nla_total_size(sizeof(u16)) : 0) +
@@ -391,9 +386,7 @@ void psample_sample_packet(struct psample_group *group,
 		   nla_total_size(sizeof(u32)) +	/* group_num */
 		   nla_total_size(sizeof(u32)) +	/* seq */
 		   nla_total_size_64bit(sizeof(u64)) +	/* timestamp */
-		   nla_total_size(sizeof(u16)) +	/* protocol */
-		   (md->user_cookie_len ?
-		    nla_total_size(md->user_cookie_len) : 0); /* user cookie */
+		   nla_total_size(sizeof(u16));		/* protocol */
 
 #ifdef CONFIG_INET
 	tun_info = skb_tunnel_info(skb);
@@ -492,14 +485,6 @@ void psample_sample_packet(struct psample_group *group,
 			goto error;
 	}
 #endif
-
-	if (md->user_cookie && md->user_cookie_len &&
-	    nla_put(nl_skb, PSAMPLE_ATTR_USER_COOKIE, md->user_cookie_len,
-		    md->user_cookie))
-		goto error;
-
-	if (md->rate_as_probability)
-		nla_put_flag(nl_skb, PSAMPLE_ATTR_SAMPLE_PROBABILITY);
 
 	genlmsg_end(nl_skb, data);
 	genlmsg_multicast_netns(&psample_nl_family, group->net, nl_skb, 0,

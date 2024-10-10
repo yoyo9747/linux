@@ -293,8 +293,7 @@ def skb__kfree_skb(name, context, cpu, sec, nsec, pid, comm, callchain,
 			skbaddr, location, protocol, reason)
 	all_event_list.append(event_info)
 
-def skb__consume_skb(name, context, cpu, sec, nsec, pid, comm, callchain,
-			skbaddr, location):
+def skb__consume_skb(name, context, cpu, sec, nsec, pid, comm, callchain, skbaddr):
 	event_info = (name, context, cpu, nsecs(sec, nsec), pid, comm,
 			skbaddr)
 	all_event_list.append(event_info)

@@ -23,9 +23,7 @@ properties:
               - atmel,sama5d2-pwm
               - microchip,sam9x60-pwm
       - items:
-          - enum:
-              - microchip,sama7d65-pwm
-              - microchip,sama7g5-pwm
+          - const: microchip,sama7g5-pwm
           - const: atmel,sama5d2-pwm
       - items:
           - const: microchip,sam9x7-pwm

@@ -365,30 +365,30 @@ static sector_t raid0_size(struct mddev *mddev, sector_t sectors, int raid_disks
 	return array_sectors;
 }
 
-static void raid0_free(struct mddev *mddev, void *priv)
+static void free_conf(struct mddev *mddev, struct r0conf *conf)
 {
-	struct r0conf *conf = priv;
-
 	kfree(conf->strip_zone);
 	kfree(conf->devlist);
 	kfree(conf);
 }
 
+static void raid0_free(struct mddev *mddev, void *priv)
+{
+	struct r0conf *conf = priv;
+
+	free_conf(mddev, conf);
+}
+
 static int raid0_set_limits(struct mddev *mddev)
 {
 	struct queue_limits lim;
-	int err;
 
-	md_init_stacking_limits(&lim);
+	blk_set_stacking_limits(&lim);
 	lim.max_hw_sectors = mddev->chunk_sectors;
 	lim.max_write_zeroes_sectors = mddev->chunk_sectors;
 	lim.io_min = mddev->chunk_sectors << 9;
 	lim.io_opt = lim.io_min * mddev->raid_disks;
-	err = mddev_stack_rdev_limits(mddev, &lim, MDDEV_STACK_INTEGRITY);
-	if (err) {
-		queue_limits_cancel_update(mddev->gendisk->queue);
-		return err;
-	}
+	mddev_stack_rdev_limits(mddev, &lim);
 	return queue_limits_set(mddev->gendisk->queue, &lim);
 }
 
@@ -415,7 +415,7 @@ static int raid0_run(struct mddev *mddev)
 	if (!mddev_is_dm(mddev)) {
 		ret = raid0_set_limits(mddev);
 		if (ret)
-			return ret;
+			goto out_free_conf;
 	}
 
 	/* calculate array device size */
@@ -427,7 +427,13 @@ static int raid0_run(struct mddev *mddev)
 
 	dump_zones(mddev);
 
-	return md_integrity_register(mddev);
+	ret = md_integrity_register(mddev);
+	if (ret)
+		goto out_free_conf;
+	return 0;
+out_free_conf:
+	free_conf(mddev, conf);
+	return ret;
 }
 
 /*

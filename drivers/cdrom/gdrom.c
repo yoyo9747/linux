@@ -744,7 +744,6 @@ static int probe_gdrom(struct platform_device *devptr)
 		.max_segments			= 1,
 		/* set a large max size to get most from DMA */
 		.max_segment_size		= 0x40000,
-		.features			= BLK_FEAT_ROTATIONAL,
 	};
 	int err;
 

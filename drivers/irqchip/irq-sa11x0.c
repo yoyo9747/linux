@@ -127,7 +127,8 @@ static int __init sa1100irq_init_devicefs(void)
 
 device_initcall(sa1100irq_init_devicefs);
 
-static void __exception_irq_entry sa1100_handle_irq(struct pt_regs *regs)
+static asmlinkage void __exception_irq_entry
+sa1100_handle_irq(struct pt_regs *regs)
 {
 	uint32_t icip, icmr, mask;
 

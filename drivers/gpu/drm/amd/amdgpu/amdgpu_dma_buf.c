@@ -132,7 +132,8 @@ static struct sg_table *amdgpu_dma_buf_map(struct dma_buf_attachment *attach,
 		if (r)
 			return ERR_PTR(r);
 
-	} else if (bo->tbo.resource->mem_type != TTM_PL_TT) {
+	} else if (!(amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type) &
+		     AMDGPU_GEM_DOMAIN_GTT)) {
 		return ERR_PTR(-EBUSY);
 	}
 

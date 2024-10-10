@@ -37,7 +37,7 @@
 #include <linux/phy.h>
 #include <linux/platform_data/bcmgenet.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "bcmgenet.h"
 

@@ -35,8 +35,6 @@
 #include "internal.h"
 #include "mount.h"
 
-#include <asm/runtime-const.h>
-
 /*
  * Usage:
  * dcache->d_inode->i_lock protects:
@@ -96,21 +94,15 @@ EXPORT_SYMBOL(dotdot_name);
  *
  * This hash-function tries to avoid losing too many bits of hash
  * information, yet avoid using a prime hash-size or similar.
- *
- * Marking the variables "used" ensures that the compiler doesn't
- * optimize them away completely on architectures with runtime
- * constant infrastructure, this allows debuggers to see their
- * values. But updating these values has no effect on those arches.
  */
 
-static unsigned int d_hash_shift __ro_after_init __used;
+static unsigned int d_hash_shift __ro_after_init;
 
-static struct hlist_bl_head *dentry_hashtable __ro_after_init __used;
+static struct hlist_bl_head *dentry_hashtable __ro_after_init;
 
-static inline struct hlist_bl_head *d_hash(unsigned long hashlen)
+static inline struct hlist_bl_head *d_hash(unsigned int hash)
 {
-	return runtime_const_ptr(dentry_hashtable) +
-		runtime_const_shift_right_32(hashlen, d_hash_shift);
+	return dentry_hashtable + (hash >> d_hash_shift);
 }
 
 #define IN_LOOKUP_SHIFT 10
@@ -182,7 +174,7 @@ static long get_nr_dentry_negative(void)
 	return sum < 0 ? 0 : sum;
 }
 
-static int proc_nr_dentry(const struct ctl_table *table, int write, void *buffer,
+static int proc_nr_dentry(struct ctl_table *table, int write, void *buffer,
 			  size_t *lenp, loff_t *ppos)
 {
 	dentry_stat.nr_dentry = get_nr_dentry();
@@ -1560,7 +1552,7 @@ void shrink_dcache_for_umount(struct super_block *sb)
 {
 	struct dentry *dentry;
 
-	rwsem_assert_held_write(&sb->s_umount);
+	WARN(down_read_trylock(&sb->s_umount), "s_umount should've been locked");
 
 	dentry = sb->s_root;
 	sb->s_root = NULL;
@@ -1913,13 +1905,8 @@ void d_instantiate_new(struct dentry *entry, struct inode *inode)
 	__d_instantiate(entry, inode);
 	WARN_ON(!(inode->i_state & I_NEW));
 	inode->i_state &= ~I_NEW & ~I_CREATING;
-	/*
-	 * Pairs with the barrier in prepare_to_wait_event() to make sure
-	 * ___wait_var_event() either sees the bit cleared or
-	 * waitqueue_active() check in wake_up_var() sees the waiter.
-	 */
 	smp_mb();
-	inode_wake_up_bit(inode, __I_NEW);
+	wake_up_bit(&inode->i_state, __I_NEW);
 	spin_unlock(&inode->i_lock);
 }
 EXPORT_SYMBOL(d_instantiate_new);
@@ -2123,7 +2110,7 @@ static noinline struct dentry *__d_lookup_rcu_op_compare(
 	unsigned *seqp)
 {
 	u64 hashlen = name->hash_len;
-	struct hlist_bl_head *b = d_hash(hashlen);
+	struct hlist_bl_head *b = d_hash(hashlen_hash(hashlen));
 	struct hlist_bl_node *node;
 	struct dentry *dentry;
 
@@ -2173,6 +2160,9 @@ seqretry:
  * without taking d_lock and checking d_seq sequence count against @seq
  * returned here.
  *
+ * A refcount may be taken on the found dentry with the d_rcu_to_refcount
+ * function.
+ *
  * Alternatively, __d_lookup_rcu may be called again to look up the child of
  * the returned dentry, so long as its parent's seqlock is checked after the
  * child is looked up. Thus, an interlocking stepping of sequence lock checks
@@ -2187,7 +2177,7 @@ struct dentry *__d_lookup_rcu(const struct dentry *parent,
 {
 	u64 hashlen = name->hash_len;
 	const unsigned char *str = name->name;
-	struct hlist_bl_head *b = d_hash(hashlen);
+	struct hlist_bl_head *b = d_hash(hashlen_hash(hashlen));
 	struct hlist_bl_node *node;
 	struct dentry *dentry;
 
@@ -3113,34 +3103,6 @@ void d_tmpfile(struct file *file, struct inode *inode)
 }
 EXPORT_SYMBOL(d_tmpfile);
 
-/*
- * Obtain inode number of the parent dentry.
- */
-ino_t d_parent_ino(struct dentry *dentry)
-{
-	struct dentry *parent;
-	struct inode *iparent;
-	unsigned seq;
-	ino_t ret;
-
-	scoped_guard(rcu) {
-		seq = raw_seqcount_begin(&dentry->d_seq);
-		parent = READ_ONCE(dentry->d_parent);
-		iparent = d_inode_rcu(parent);
-		if (likely(iparent)) {
-			ret = iparent->i_ino;
-			if (!read_seqcount_retry(&dentry->d_seq, seq))
-				return ret;
-		}
-	}
-
-	spin_lock(&dentry->d_lock);
-	ret = dentry->d_parent->d_inode->i_ino;
-	spin_unlock(&dentry->d_lock);
-	return ret;
-}
-EXPORT_SYMBOL(d_parent_ino);
-
 static __initdata unsigned long dhash_entries;
 static int __init set_dhash_entries(char *str)
 {
@@ -3170,9 +3132,6 @@ static void __init dcache_init_early(void)
 					0,
 					0);
 	d_hash_shift = 32 - d_hash_shift;
-
-	runtime_const_init(shift, d_hash_shift);
-	runtime_const_init(ptr, dentry_hashtable);
 }
 
 static void __init dcache_init(void)
@@ -3201,9 +3160,6 @@ static void __init dcache_init(void)
 					0,
 					0);
 	d_hash_shift = 32 - d_hash_shift;
-
-	runtime_const_init(shift, d_hash_shift);
-	runtime_const_init(ptr, dentry_hashtable);
 }
 
 /* SLAB cache for __getname() consumers */

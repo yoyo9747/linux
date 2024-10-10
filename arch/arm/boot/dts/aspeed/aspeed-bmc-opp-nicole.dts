@@ -284,6 +284,10 @@
 	memory-region = <&gfx_memory>;
 };
 
+&pinctrl {
+	aspeed,external-nodes = <&gfx &lhc>;
+};
+
 &ibt {
 	status = "okay";
 };

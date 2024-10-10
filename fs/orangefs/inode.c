@@ -56,6 +56,7 @@ static int orangefs_writepage_locked(struct page *page,
 	ret = wait_for_direct_io(ORANGEFS_IO_WRITE, inode, &off, &iter, wlen,
 	    len, wr, NULL, NULL);
 	if (ret < 0) {
+		SetPageError(page);
 		mapping_set_error(page->mapping, ret);
 	} else {
 		ret = 0;
@@ -118,6 +119,7 @@ static int orangefs_writepages_work(struct orangefs_writepages *ow,
 	    0, &wr, NULL, NULL);
 	if (ret < 0) {
 		for (i = 0; i < ow->npages; i++) {
+			SetPageError(ow->pages[i]);
 			mapping_set_error(ow->pages[i]->mapping, ret);
 			if (PagePrivate(ow->pages[i])) {
 				wrp = (struct orangefs_write_range *)
@@ -301,26 +303,35 @@ static int orangefs_read_folio(struct file *file, struct folio *folio)
 	iov_iter_zero(~0U, &iter);
 	/* takes care of potential aliasing */
 	flush_dcache_folio(folio);
-	if (ret > 0)
+	if (ret < 0) {
+		folio_set_error(folio);
+	} else {
+		folio_mark_uptodate(folio);
 		ret = 0;
-	folio_end_read(folio, ret == 0);
-	return ret;
+	}
+	/* unlock the folio after the ->read_folio() routine completes */
+	folio_unlock(folio);
+        return ret;
 }
 
 static int orangefs_write_begin(struct file *file,
 		struct address_space *mapping, loff_t pos, unsigned len,
-		struct folio **foliop, void **fsdata)
+		struct page **pagep, void **fsdata)
 {
 	struct orangefs_write_range *wr;
 	struct folio *folio;
+	struct page *page;
+	pgoff_t index;
 	int ret;
 
-	folio = __filemap_get_folio(mapping, pos / PAGE_SIZE, FGP_WRITEBEGIN,
-			mapping_gfp_mask(mapping));
-	if (IS_ERR(folio))
-		return PTR_ERR(folio);
+	index = pos >> PAGE_SHIFT;
 
-	*foliop = folio;
+	page = grab_cache_page_write_begin(mapping, index);
+	if (!page)
+		return -ENOMEM;
+
+	*pagep = page;
+	folio = page_folio(page);
 
 	if (folio_test_dirty(folio) && !folio_test_private(folio)) {
 		/*
@@ -361,10 +372,9 @@ okay:
 }
 
 static int orangefs_write_end(struct file *file, struct address_space *mapping,
-		loff_t pos, unsigned len, unsigned copied, struct folio *folio,
-		void *fsdata)
+    loff_t pos, unsigned len, unsigned copied, struct page *page, void *fsdata)
 {
-	struct inode *inode = folio->mapping->host;
+	struct inode *inode = page->mapping->host;
 	loff_t last_pos = pos + copied;
 
 	/*
@@ -374,23 +384,23 @@ static int orangefs_write_end(struct file *file, struct address_space *mapping,
 	if (last_pos > inode->i_size)
 		i_size_write(inode, last_pos);
 
-	/* zero the stale part of the folio if we did a short copy */
-	if (!folio_test_uptodate(folio)) {
+	/* zero the stale part of the page if we did a short copy */
+	if (!PageUptodate(page)) {
 		unsigned from = pos & (PAGE_SIZE - 1);
 		if (copied < len) {
-			folio_zero_range(folio, from + copied, len - copied);
+			zero_user(page, from + copied, len - copied);
 		}
 		/* Set fully written pages uptodate. */
-		if (pos == folio_pos(folio) &&
+		if (pos == page_offset(page) &&
 		    (len == PAGE_SIZE || pos + len == inode->i_size)) {
-			folio_zero_segment(folio, from + copied, PAGE_SIZE);
-			folio_mark_uptodate(folio);
+			zero_user_segment(page, from + copied, PAGE_SIZE);
+			SetPageUptodate(page);
 		}
 	}
 
-	folio_mark_dirty(folio);
-	folio_unlock(folio);
-	folio_put(folio);
+	set_page_dirty(page);
+	unlock_page(page);
+	put_page(page);
 
 	mark_inode_dirty_sync(file_inode(file));
 	return copied;
