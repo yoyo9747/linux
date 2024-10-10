@@ -17,7 +17,6 @@
 #define REALTEK_HW_STOP_DELAY		25	/* msecs */
 #define REALTEK_HW_START_DELAY		100	/* msecs */
 
-struct phylink_mac_ops;
 struct realtek_ops;
 struct dentry;
 struct inode;
@@ -118,7 +117,6 @@ struct realtek_ops {
 struct realtek_variant {
 	const struct dsa_switch_ops *ds_ops;
 	const struct realtek_ops *ops;
-	const struct phylink_mac_ops *phylink_mac_ops;
 	unsigned int clk_delay;
 	u8 cmd_read;
 	u8 cmd_write;

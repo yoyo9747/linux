@@ -368,7 +368,7 @@ static void cm3232_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id cm3232_id[] = {
-	{ "cm3232" },
+	{"cm3232", 0},
 	{}
 };
 

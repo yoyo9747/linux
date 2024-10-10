@@ -10,7 +10,6 @@
 #include <linux/xxhash.h>
 #include <linux/key.h>
 #include <linux/random.h>
-#include <linux/ratelimit.h>
 #include <linux/scatterlist.h>
 #include <crypto/algapi.h>
 #include <crypto/chacha.h>
@@ -100,12 +99,13 @@ static inline int do_encrypt_sg(struct crypto_sync_skcipher *tfm,
 				struct scatterlist *sg, size_t len)
 {
 	SYNC_SKCIPHER_REQUEST_ON_STACK(req, tfm);
+	int ret;
 
 	skcipher_request_set_sync_tfm(req, tfm);
 	skcipher_request_set_callback(req, 0, NULL, NULL);
 	skcipher_request_set_crypt(req, sg, sg, len, nonce.d);
 
-	int ret = crypto_skcipher_encrypt(req);
+	ret = crypto_skcipher_encrypt(req);
 	if (ret)
 		pr_err("got error %i from crypto_skcipher_encrypt()", ret);
 
@@ -117,47 +117,38 @@ static inline int do_encrypt(struct crypto_sync_skcipher *tfm,
 			      void *buf, size_t len)
 {
 	if (!is_vmalloc_addr(buf)) {
-		struct scatterlist sg = {};
+		struct scatterlist sg;
 
-		sg_mark_end(&sg);
-		sg_set_page(&sg, virt_to_page(buf), len, offset_in_page(buf));
+		sg_init_table(&sg, 1);
+		sg_set_page(&sg,
+			    is_vmalloc_addr(buf)
+			    ? vmalloc_to_page(buf)
+			    : virt_to_page(buf),
+			    len, offset_in_page(buf));
 		return do_encrypt_sg(tfm, nonce, &sg, len);
 	} else {
-		DARRAY_PREALLOCATED(struct scatterlist, 4) sgl;
-		size_t sgl_len = 0;
-		int ret;
+		unsigned pages = buf_pages(buf, len);
+		struct scatterlist *sg;
+		size_t orig_len = len;
+		int ret, i;
 
-		darray_init(&sgl);
+		sg = kmalloc_array(pages, sizeof(*sg), GFP_KERNEL);
+		if (!sg)
+			return -BCH_ERR_ENOMEM_do_encrypt;
 
-		while (len) {
+		sg_init_table(sg, pages);
+
+		for (i = 0; i < pages; i++) {
 			unsigned offset = offset_in_page(buf);
-			struct scatterlist sg = {
-				.page_link	= (unsigned long) vmalloc_to_page(buf),
-				.offset		= offset,
-				.length		= min(len, PAGE_SIZE - offset),
-			};
+			unsigned pg_len = min_t(size_t, len, PAGE_SIZE - offset);
 
-			if (darray_push(&sgl, sg)) {
-				sg_mark_end(&darray_last(sgl));
-				ret = do_encrypt_sg(tfm, nonce, sgl.data, sgl_len);
-				if (ret)
-					goto err;
-
-				nonce = nonce_add(nonce, sgl_len);
-				sgl_len = 0;
-				sgl.nr = 0;
-				BUG_ON(darray_push(&sgl, sg));
-			}
-
-			buf += sg.length;
-			len -= sg.length;
-			sgl_len += sg.length;
+			sg_set_page(sg + i, vmalloc_to_page(buf), pg_len, offset);
+			buf += pg_len;
+			len -= pg_len;
 		}
 
-		sg_mark_end(&darray_last(sgl));
-		ret = do_encrypt_sg(tfm, nonce, sgl.data, sgl_len);
-err:
-		darray_exit(&sgl);
+		ret = do_encrypt_sg(tfm, nonce, sg, orig_len);
+		kfree(sg);
 		return ret;
 	}
 }
@@ -242,7 +233,7 @@ struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
 		return ret;
 	}
 	default:
-		return (struct bch_csum) {};
+		BUG();
 	}
 }
 
@@ -316,7 +307,7 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 		return ret;
 	}
 	default:
-		return (struct bch_csum) {};
+		BUG();
 	}
 }
 
@@ -333,43 +324,36 @@ int __bch2_encrypt_bio(struct bch_fs *c, unsigned type,
 {
 	struct bio_vec bv;
 	struct bvec_iter iter;
-	DARRAY_PREALLOCATED(struct scatterlist, 4) sgl;
-	size_t sgl_len = 0;
+	struct scatterlist sgl[16], *sg = sgl;
+	size_t bytes = 0;
 	int ret = 0;
 
 	if (!bch2_csum_type_is_encryption(type))
 		return 0;
 
-	darray_init(&sgl);
+	sg_init_table(sgl, ARRAY_SIZE(sgl));
 
 	bio_for_each_segment(bv, bio, iter) {
-		struct scatterlist sg = {
-			.page_link	= (unsigned long) bv.bv_page,
-			.offset		= bv.bv_offset,
-			.length		= bv.bv_len,
-		};
+		if (sg == sgl + ARRAY_SIZE(sgl)) {
+			sg_mark_end(sg - 1);
 
-		if (darray_push(&sgl, sg)) {
-			sg_mark_end(&darray_last(sgl));
-			ret = do_encrypt_sg(c->chacha20, nonce, sgl.data, sgl_len);
+			ret = do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
 			if (ret)
-				goto err;
+				return ret;
 
-			nonce = nonce_add(nonce, sgl_len);
-			sgl_len = 0;
-			sgl.nr = 0;
+			nonce = nonce_add(nonce, bytes);
+			bytes = 0;
 
-			BUG_ON(darray_push(&sgl, sg));
+			sg_init_table(sgl, ARRAY_SIZE(sgl));
+			sg = sgl;
 		}
 
-		sgl_len += sg.length;
+		sg_set_page(sg++, bv.bv_page, bv.bv_len, bv.bv_offset);
+		bytes += bv.bv_len;
 	}
 
-	sg_mark_end(&darray_last(sgl));
-	ret = do_encrypt_sg(c->chacha20, nonce, sgl.data, sgl_len);
-err:
-	darray_exit(&sgl);
-	return ret;
+	sg_mark_end(sg - 1);
+	return do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
 }
 
 struct bch_csum bch2_checksum_merge(unsigned type, struct bch_csum a,
@@ -448,7 +432,7 @@ int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
 	if (bch2_crc_cmp(merged, crc_old.csum) && !c->opts.no_data_io) {
 		struct printbuf buf = PRINTBUF;
 		prt_printf(&buf, "checksum error in %s() (memory corruption or bug?)\n"
-			   "  expected %0llx:%0llx got %0llx:%0llx (old type ",
+			   "expected %0llx:%0llx got %0llx:%0llx (old type ",
 			   __func__,
 			   crc_old.csum.hi,
 			   crc_old.csum.lo,
@@ -458,7 +442,7 @@ int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
 		prt_str(&buf, " new type ");
 		bch2_prt_csum_type(&buf, new_csum_type);
 		prt_str(&buf, ")");
-		WARN_RATELIMIT(1, "%s", buf.buf);
+		bch_err(c, "%s", buf.buf);
 		printbuf_exit(&buf);
 		return -EIO;
 	}
@@ -485,8 +469,9 @@ int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
 
 /* BCH_SB_FIELD_crypt: */
 
-static int bch2_sb_crypt_validate(struct bch_sb *sb, struct bch_sb_field *f,
-				  enum bch_validate_flags flags, struct printbuf *err)
+static int bch2_sb_crypt_validate(struct bch_sb *sb,
+				  struct bch_sb_field *f,
+				  struct printbuf *err)
 {
 	struct bch_sb_field_crypt *crypt = field_to_type(f, crypt);
 
@@ -509,10 +494,14 @@ static void bch2_sb_crypt_to_text(struct printbuf *out, struct bch_sb *sb,
 {
 	struct bch_sb_field_crypt *crypt = field_to_type(f, crypt);
 
-	prt_printf(out, "KFD:               %llu\n", BCH_CRYPT_KDF_TYPE(crypt));
-	prt_printf(out, "scrypt n:          %llu\n", BCH_KDF_SCRYPT_N(crypt));
-	prt_printf(out, "scrypt r:          %llu\n", BCH_KDF_SCRYPT_R(crypt));
-	prt_printf(out, "scrypt p:          %llu\n", BCH_KDF_SCRYPT_P(crypt));
+	prt_printf(out, "KFD:               %llu", BCH_CRYPT_KDF_TYPE(crypt));
+	prt_newline(out);
+	prt_printf(out, "scrypt n:          %llu", BCH_KDF_SCRYPT_N(crypt));
+	prt_newline(out);
+	prt_printf(out, "scrypt r:          %llu", BCH_KDF_SCRYPT_R(crypt));
+	prt_newline(out);
+	prt_printf(out, "scrypt p:          %llu", BCH_KDF_SCRYPT_P(crypt));
+	prt_newline(out);
 }
 
 const struct bch_sb_field_ops bch_sb_field_ops_crypt = {
@@ -664,26 +653,26 @@ err:
 
 static int bch2_alloc_ciphers(struct bch_fs *c)
 {
-	if (c->chacha20)
-		return 0;
+	int ret;
 
-	struct crypto_sync_skcipher *chacha20 = crypto_alloc_sync_skcipher("chacha20", 0, 0);
-	int ret = PTR_ERR_OR_ZERO(chacha20);
+	if (!c->chacha20)
+		c->chacha20 = crypto_alloc_sync_skcipher("chacha20", 0, 0);
+	ret = PTR_ERR_OR_ZERO(c->chacha20);
+
 	if (ret) {
 		bch_err(c, "error requesting chacha20 module: %s", bch2_err_str(ret));
 		return ret;
 	}
 
-	struct crypto_shash *poly1305 = crypto_alloc_shash("poly1305", 0, 0);
-	ret = PTR_ERR_OR_ZERO(poly1305);
+	if (!c->poly1305)
+		c->poly1305 = crypto_alloc_shash("poly1305", 0, 0);
+	ret = PTR_ERR_OR_ZERO(c->poly1305);
+
 	if (ret) {
 		bch_err(c, "error requesting poly1305 module: %s", bch2_err_str(ret));
-		crypto_free_sync_skcipher(chacha20);
 		return ret;
 	}
 
-	c->chacha20	= chacha20;
-	c->poly1305	= poly1305;
 	return 0;
 }
 
@@ -778,11 +767,11 @@ err:
 
 void bch2_fs_encryption_exit(struct bch_fs *c)
 {
-	if (c->poly1305)
+	if (!IS_ERR_OR_NULL(c->poly1305))
 		crypto_free_shash(c->poly1305);
-	if (c->chacha20)
+	if (!IS_ERR_OR_NULL(c->chacha20))
 		crypto_free_sync_skcipher(c->chacha20);
-	if (c->sha256)
+	if (!IS_ERR_OR_NULL(c->sha256))
 		crypto_free_shash(c->sha256);
 }
 
@@ -795,7 +784,6 @@ int bch2_fs_encryption_init(struct bch_fs *c)
 	c->sha256 = crypto_alloc_shash("sha256", 0, 0);
 	ret = PTR_ERR_OR_ZERO(c->sha256);
 	if (ret) {
-		c->sha256 = NULL;
 		bch_err(c, "error requesting sha256 module: %s", bch2_err_str(ret));
 		goto out;
 	}

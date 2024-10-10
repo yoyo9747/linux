@@ -140,7 +140,7 @@ struct mapped_device {
 
 #ifdef CONFIG_BLK_DEV_ZONED
 	unsigned int nr_zones;
-	void *zone_revalidate_map;
+	unsigned int *zwp_offset;
 #endif
 
 #ifdef CONFIG_IMA
@@ -206,8 +206,7 @@ struct dm_table {
 
 	bool integrity_supported:1;
 	bool singleton:1;
-	/* set if all the targets in the table have "flush_bypasses_map" set */
-	bool flush_bypasses_map:1;
+	unsigned integrity_added:1;
 
 	/*
 	 * Indicates the rw permissions for the new logical device.  This

@@ -17,10 +17,7 @@ properties:
     enum:
       - leadtek,ltk101b4029w
       - leadtek,ltk500hd1829
-
-  reg:
-    maxItems: 1
-
+  reg: true
   backlight: true
   reset-gpios: true
   iovcc-supply:

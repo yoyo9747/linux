@@ -10,6 +10,7 @@
 #include <linux/init.h>
 #include <linux/input.h>
 #include <linux/module.h>
+#include <linux/of_gpio.h>
 #include <linux/regmap.h>
 #include <linux/acpi.h>
 
@@ -426,7 +427,7 @@ static const struct dev_pm_ops ts3a227e_pm = {
 };
 
 static const struct i2c_device_id ts3a227e_i2c_ids[] = {
-	{ "ts3a227e" },
+	{ "ts3a227e", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ts3a227e_i2c_ids);

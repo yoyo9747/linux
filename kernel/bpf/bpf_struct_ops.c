@@ -12,7 +12,6 @@
 #include <linux/mutex.h>
 #include <linux/btf_ids.h>
 #include <linux/rcupdate_wait.h>
-#include <linux/poll.h>
 
 struct bpf_struct_ops_value {
 	struct bpf_struct_ops_common_value common;
@@ -57,7 +56,6 @@ struct bpf_struct_ops_map {
 struct bpf_struct_ops_link {
 	struct bpf_link link;
 	struct bpf_map __rcu *map;
-	wait_queue_head_t wait_hup;
 };
 
 static DEFINE_MUTEX(update_mutex);
@@ -573,7 +571,7 @@ int bpf_struct_ops_prepare_trampoline(struct bpf_tramp_links *tlinks,
 	}
 
 	size = arch_prepare_bpf_trampoline(NULL, image + image_off,
-					   image + image_off + size,
+					   image + PAGE_SIZE,
 					   model, flags, tlinks, stub_func);
 	if (size <= 0) {
 		if (image != *_image)
@@ -730,6 +728,8 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 			cur_image = image;
 			trampoline_start = 0;
 		}
+		if (err < 0)
+			goto reset_unlock;
 
 		*(void **)(kdata + moff) = image + trampoline_start + cfi_get_offset();
 
@@ -742,12 +742,8 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 		if (err)
 			goto reset_unlock;
 	}
-	for (i = 0; i < st_map->image_pages_cnt; i++) {
-		err = arch_protect_bpf_trampoline(st_map->image_pages[i],
-						  PAGE_SIZE);
-		if (err)
-			goto reset_unlock;
-	}
+	for (i = 0; i < st_map->image_pages_cnt; i++)
+		arch_protect_bpf_trampoline(st_map->image_pages[i], PAGE_SIZE);
 
 	if (st_map->map.map_flags & BPF_F_LINK) {
 		err = 0;
@@ -759,7 +755,7 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 		goto unlock;
 	}
 
-	err = st_ops->reg(kdata, NULL);
+	err = st_ops->reg(kdata);
 	if (likely(!err)) {
 		/* This refcnt increment on the map here after
 		 * 'st_ops->reg()' is secure since the state of the
@@ -807,7 +803,7 @@ static long bpf_struct_ops_map_delete_elem(struct bpf_map *map, void *key)
 			     BPF_STRUCT_OPS_STATE_TOBEFREE);
 	switch (prev_state) {
 	case BPF_STRUCT_OPS_STATE_INUSE:
-		st_map->st_ops_desc->st_ops->unreg(&st_map->kvalue.data, NULL);
+		st_map->st_ops_desc->st_ops->unreg(&st_map->kvalue.data);
 		bpf_map_put(map);
 		return 0;
 	case BPF_STRUCT_OPS_STATE_TOBEFREE:
@@ -837,7 +833,7 @@ static void bpf_struct_ops_map_seq_show_elem(struct bpf_map *map, void *key,
 		btf_type_seq_show(st_map->btf,
 				  map->btf_vmlinux_value_type_id,
 				  value, m);
-		seq_putc(m, '\n');
+		seq_puts(m, "\n");
 	}
 
 	kfree(value);
@@ -1040,13 +1036,6 @@ void bpf_struct_ops_put(const void *kdata)
 	bpf_map_put(&st_map->map);
 }
 
-int bpf_struct_ops_supported(const struct bpf_struct_ops *st_ops, u32 moff)
-{
-	void *func_ptr = *(void **)(st_ops->cfi_stubs + moff);
-
-	return func_ptr ? 0 : -ENOTSUPP;
-}
-
 static bool bpf_struct_ops_valid_to_reg(struct bpf_map *map)
 {
 	struct bpf_struct_ops_map *st_map = (struct bpf_struct_ops_map *)map;
@@ -1066,7 +1055,10 @@ static void bpf_struct_ops_map_link_dealloc(struct bpf_link *link)
 	st_map = (struct bpf_struct_ops_map *)
 		rcu_dereference_protected(st_link->map, true);
 	if (st_map) {
-		st_map->st_ops_desc->st_ops->unreg(&st_map->kvalue.data, link);
+		/* st_link->map can be NULL if
+		 * bpf_struct_ops_link_create() fails to register.
+		 */
+		st_map->st_ops_desc->st_ops->unreg(&st_map->kvalue.data);
 		bpf_map_put(&st_map->map);
 	}
 	kfree(st_link);
@@ -1081,8 +1073,7 @@ static void bpf_struct_ops_map_link_show_fdinfo(const struct bpf_link *link,
 	st_link = container_of(link, struct bpf_struct_ops_link, link);
 	rcu_read_lock();
 	map = rcu_dereference(st_link->map);
-	if (map)
-		seq_printf(seq, "map_id:\t%d\n", map->id);
+	seq_printf(seq, "map_id:\t%d\n", map->id);
 	rcu_read_unlock();
 }
 
@@ -1095,8 +1086,7 @@ static int bpf_struct_ops_map_link_fill_link_info(const struct bpf_link *link,
 	st_link = container_of(link, struct bpf_struct_ops_link, link);
 	rcu_read_lock();
 	map = rcu_dereference(st_link->map);
-	if (map)
-		info->struct_ops.map_id = map->id;
+	info->struct_ops.map_id = map->id;
 	rcu_read_unlock();
 	return 0;
 }
@@ -1121,10 +1111,6 @@ static int bpf_struct_ops_map_link_update(struct bpf_link *link, struct bpf_map 
 	mutex_lock(&update_mutex);
 
 	old_map = rcu_dereference_protected(st_link->map, lockdep_is_held(&update_mutex));
-	if (!old_map) {
-		err = -ENOLINK;
-		goto err_out;
-	}
 	if (expected_old_map && old_map != expected_old_map) {
 		err = -EPERM;
 		goto err_out;
@@ -1137,7 +1123,7 @@ static int bpf_struct_ops_map_link_update(struct bpf_link *link, struct bpf_map 
 		goto err_out;
 	}
 
-	err = st_map->st_ops_desc->st_ops->update(st_map->kvalue.data, old_st_map->kvalue.data, link);
+	err = st_map->st_ops_desc->st_ops->update(st_map->kvalue.data, old_st_map->kvalue.data);
 	if (err)
 		goto err_out;
 
@@ -1151,53 +1137,11 @@ err_out:
 	return err;
 }
 
-static int bpf_struct_ops_map_link_detach(struct bpf_link *link)
-{
-	struct bpf_struct_ops_link *st_link = container_of(link, struct bpf_struct_ops_link, link);
-	struct bpf_struct_ops_map *st_map;
-	struct bpf_map *map;
-
-	mutex_lock(&update_mutex);
-
-	map = rcu_dereference_protected(st_link->map, lockdep_is_held(&update_mutex));
-	if (!map) {
-		mutex_unlock(&update_mutex);
-		return 0;
-	}
-	st_map = container_of(map, struct bpf_struct_ops_map, map);
-
-	st_map->st_ops_desc->st_ops->unreg(&st_map->kvalue.data, link);
-
-	RCU_INIT_POINTER(st_link->map, NULL);
-	/* Pair with bpf_map_get() in bpf_struct_ops_link_create() or
-	 * bpf_map_inc() in bpf_struct_ops_map_link_update().
-	 */
-	bpf_map_put(&st_map->map);
-
-	mutex_unlock(&update_mutex);
-
-	wake_up_interruptible_poll(&st_link->wait_hup, EPOLLHUP);
-
-	return 0;
-}
-
-static __poll_t bpf_struct_ops_map_link_poll(struct file *file,
-					     struct poll_table_struct *pts)
-{
-	struct bpf_struct_ops_link *st_link = file->private_data;
-
-	poll_wait(file, &st_link->wait_hup, pts);
-
-	return rcu_access_pointer(st_link->map) ? 0 : EPOLLHUP;
-}
-
 static const struct bpf_link_ops bpf_struct_ops_map_lops = {
 	.dealloc = bpf_struct_ops_map_link_dealloc,
-	.detach = bpf_struct_ops_map_link_detach,
 	.show_fdinfo = bpf_struct_ops_map_link_show_fdinfo,
 	.fill_link_info = bpf_struct_ops_map_link_fill_link_info,
 	.update_map = bpf_struct_ops_map_link_update,
-	.poll = bpf_struct_ops_map_link_poll,
 };
 
 int bpf_struct_ops_link_create(union bpf_attr *attr)
@@ -1230,21 +1174,13 @@ int bpf_struct_ops_link_create(union bpf_attr *attr)
 	if (err)
 		goto err_out;
 
-	init_waitqueue_head(&link->wait_hup);
-
-	/* Hold the update_mutex such that the subsystem cannot
-	 * do link->ops->detach() before the link is fully initialized.
-	 */
-	mutex_lock(&update_mutex);
-	err = st_map->st_ops_desc->st_ops->reg(st_map->kvalue.data, &link->link);
+	err = st_map->st_ops_desc->st_ops->reg(st_map->kvalue.data);
 	if (err) {
-		mutex_unlock(&update_mutex);
 		bpf_link_cleanup(&link_primer);
 		link = NULL;
 		goto err_out;
 	}
 	RCU_INIT_POINTER(link->map, map);
-	mutex_unlock(&update_mutex);
 
 	return bpf_link_settle(&link_primer);
 

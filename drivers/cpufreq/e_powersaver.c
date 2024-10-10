@@ -360,13 +360,14 @@ static int eps_cpu_init(struct cpufreq_policy *policy)
 	return 0;
 }
 
-static void eps_cpu_exit(struct cpufreq_policy *policy)
+static int eps_cpu_exit(struct cpufreq_policy *policy)
 {
 	unsigned int cpu = policy->cpu;
 
 	/* Bye */
 	kfree(eps_cpu[cpu]);
 	eps_cpu[cpu] = NULL;
+	return 0;
 }
 
 static struct cpufreq_driver eps_driver = {

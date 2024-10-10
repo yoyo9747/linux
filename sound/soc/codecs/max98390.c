@@ -13,6 +13,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/of_gpio.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/time.h>
@@ -1103,7 +1104,7 @@ static int max98390_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id max98390_i2c_id[] = {
-	{ "max98390"},
+	{ "max98390", 0},
 	{},
 };
 

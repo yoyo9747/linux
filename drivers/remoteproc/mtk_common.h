@@ -78,6 +78,7 @@
 #define MT8195_L2TCM_OFFSET			0x850d0
 
 #define SCP_FW_VER_LEN			32
+#define SCP_SHARE_BUFFER_SIZE		288
 
 struct scp_run {
 	u32 signaled;
@@ -96,11 +97,6 @@ struct scp_ipi_desc {
 
 struct mtk_scp;
 
-struct mtk_scp_sizes_data {
-	size_t max_dram_size;
-	size_t ipi_share_buffer_size;
-};
-
 struct mtk_scp_of_data {
 	int (*scp_clk_get)(struct mtk_scp *scp);
 	int (*scp_before_load)(struct mtk_scp *scp);
@@ -114,7 +110,6 @@ struct mtk_scp_of_data {
 	u32 host_to_scp_int_bit;
 
 	size_t ipi_buf_offset;
-	const struct mtk_scp_sizes_data *scp_sizes;
 };
 
 struct mtk_scp_of_cluster {
@@ -146,10 +141,10 @@ struct mtk_scp {
 	struct scp_ipi_desc ipi_desc[SCP_IPI_MAX];
 	bool ipi_id_ack[SCP_IPI_MAX];
 	wait_queue_head_t ack_wq;
-	u8 *share_buf;
 
 	void *cpu_addr;
 	dma_addr_t dma_addr;
+	size_t dram_size;
 
 	struct rproc_subdev *rpmsg_subdev;
 
@@ -167,7 +162,7 @@ struct mtk_scp {
 struct mtk_share_obj {
 	u32 id;
 	u32 len;
-	u8 *share_buf;
+	u8 share_buf[SCP_SHARE_BUFFER_SIZE];
 };
 
 void scp_memcpy_aligned(void __iomem *dst, const void *src, unsigned int len);

@@ -987,8 +987,7 @@ struct netvsc_device_info *netvsc_devinfo_get(struct netvsc_device *nvdev)
 			dev_info->bprog = prog;
 		}
 	} else {
-		dev_info->num_chn = max(VRSS_CHANNEL_DEFAULT,
-					netif_get_num_default_rss_queues());
+		dev_info->num_chn = VRSS_CHANNEL_DEFAULT;
 		dev_info->send_sections = NETVSC_DEFAULT_TX;
 		dev_info->send_section_size = NETVSC_SEND_SECTION_SIZE;
 		dev_info->recv_sections = NETVSC_DEFAULT_RX;
@@ -1234,14 +1233,14 @@ static int netvsc_change_mtu(struct net_device *ndev, int mtu)
 	if (ret)
 		goto rollback_vf;
 
-	WRITE_ONCE(ndev->mtu, mtu);
+	ndev->mtu = mtu;
 
 	ret = netvsc_attach(ndev, device_info);
 	if (!ret)
 		goto out;
 
 	/* Attempt rollback to original MTU */
-	WRITE_ONCE(ndev->mtu, orig_mtu);
+	ndev->mtu = orig_mtu;
 
 	if (netvsc_attach(ndev, device_info))
 		netdev_err(ndev, "restoring mtu failed\n");

@@ -4,14 +4,15 @@
 
 #include "str_hash.h"
 
-enum bch_validate_flags;
+enum bkey_invalid_flags;
 extern const struct bch_hash_desc bch2_dirent_hash_desc;
 
-int bch2_dirent_validate(struct bch_fs *, struct bkey_s_c, enum bch_validate_flags);
+int bch2_dirent_invalid(struct bch_fs *, struct bkey_s_c,
+			enum bkey_invalid_flags, struct printbuf *);
 void bch2_dirent_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_dirent ((struct bkey_ops) {	\
-	.key_validate	= bch2_dirent_validate,		\
+	.key_invalid	= bch2_dirent_invalid,		\
 	.val_to_text	= bch2_dirent_to_text,		\
 	.min_val_size	= 16,				\
 })
@@ -37,11 +38,11 @@ int bch2_dirent_read_target(struct btree_trans *, subvol_inum,
 int bch2_dirent_create_snapshot(struct btree_trans *, u32, u64, u32,
 			const struct bch_hash_info *, u8,
 			const struct qstr *, u64, u64 *,
-			enum btree_iter_update_trigger_flags);
+			bch_str_hash_flags_t);
 int bch2_dirent_create(struct btree_trans *, subvol_inum,
 		       const struct bch_hash_info *, u8,
 		       const struct qstr *, u64, u64 *,
-		       enum btree_iter_update_trigger_flags);
+		       bch_str_hash_flags_t);
 
 static inline unsigned vfs_d_type(unsigned type)
 {

@@ -23,7 +23,6 @@ Linux驱动实现者的API指南
 
    gpio/index
    io_ordering
-   phy/index
 
 Todolist:
 
@@ -104,6 +103,7 @@ Todolist:
 *   parport-lowlevel
 *   pps
 *   ptp
+*   phy/index
 *   pwm
 *   pldmfw/index
 *   rfkill

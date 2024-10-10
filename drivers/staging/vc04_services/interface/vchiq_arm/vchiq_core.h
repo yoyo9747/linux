@@ -11,7 +11,6 @@
 #include <linux/kthread.h>
 #include <linux/kref.h>
 #include <linux/rcupdate.h>
-#include <linux/spinlock_types.h>
 #include <linux/wait.h>
 
 #include "../../include/linux/raspberrypi/vchiq.h"
@@ -347,11 +346,7 @@ struct vchiq_state {
 
 	struct mutex sync_mutex;
 
-	spinlock_t msg_queue_spinlock;
-
-	spinlock_t bulk_waiter_spinlock;
-
-	spinlock_t quota_spinlock;
+	struct mutex bulk_transfer_mutex;
 
 	/*
 	 * Indicates the byte position within the stream from where the next
@@ -391,6 +386,8 @@ struct vchiq_state {
 	/* Signalled when a free slot becomes available. */
 	struct completion slot_available_event;
 
+	struct completion slot_remove_event;
+
 	/* Signalled when a free data slot becomes available. */
 	struct completion data_quota_event;
 
@@ -408,11 +405,6 @@ struct vchiq_state {
 
 	struct opaque_platform_state *platform_state;
 };
-
-static inline bool vchiq_remote_initialised(const struct vchiq_state *state)
-{
-	return state->remote && state->remote->initialised;
-}
 
 struct bulk_waiter {
 	struct vchiq_bulk *bulk;
@@ -471,22 +463,18 @@ extern void
 remote_event_pollall(struct vchiq_state *state);
 
 extern int
-vchiq_bulk_xfer_waiting_interruptible(struct vchiq_instance *instance,
-				      unsigned int handle, struct bulk_waiter *userdata);
-
-extern int
-vchiq_bulk_xfer_blocking_interruptible(struct vchiq_instance *instance, unsigned int handle,
-				       void *offset, void __user *uoffset, int size,
-				       void __user *userdata, enum vchiq_bulk_dir dir);
-
-extern int
-vchiq_bulk_xfer_callback_interruptible(struct vchiq_instance *instance, unsigned int handle,
-				       void *offset, void __user *uoffset, int size,
-				       enum vchiq_bulk_mode mode, void *userdata,
-				       enum vchiq_bulk_dir dir);
+vchiq_bulk_transfer(struct vchiq_instance *instance, unsigned int handle, void *offset,
+		    void __user *uoffset, int size, void *userdata, enum vchiq_bulk_mode mode,
+		    enum vchiq_bulk_dir dir);
 
 extern void
 vchiq_dump_state(struct seq_file *f, struct vchiq_state *state);
+
+extern void
+vchiq_loud_error_header(void);
+
+extern void
+vchiq_loud_error_footer(void);
 
 extern void
 request_poll(struct vchiq_state *state, struct vchiq_service *service,
@@ -534,11 +522,11 @@ int vchiq_prepare_bulk_data(struct vchiq_instance *instance, struct vchiq_bulk *
 
 void vchiq_complete_bulk(struct vchiq_instance *instance, struct vchiq_bulk *bulk);
 
-void remote_event_signal(struct vchiq_state *state, struct remote_event *event);
+void remote_event_signal(struct remote_event *event);
 
 void vchiq_dump_platform_state(struct seq_file *f);
 
-void vchiq_dump_platform_instances(struct vchiq_state *state, struct seq_file *f);
+void vchiq_dump_platform_instances(struct seq_file *f);
 
 void vchiq_dump_platform_service_state(struct seq_file *f, struct vchiq_service *service);
 
@@ -553,6 +541,8 @@ void vchiq_on_remote_release(struct vchiq_state *state);
 int vchiq_platform_init_state(struct vchiq_state *state);
 
 int vchiq_check_service(struct vchiq_service *service);
+
+void vchiq_on_remote_use_active(struct vchiq_state *state);
 
 int vchiq_send_remote_use(struct vchiq_state *state);
 

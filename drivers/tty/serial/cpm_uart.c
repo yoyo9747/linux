@@ -648,7 +648,7 @@ static int cpm_uart_tx_pump(struct uart_port *port)
 	int count;
 	struct uart_cpm_port *pinfo =
 		container_of(port, struct uart_cpm_port, port);
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 
 	/* Handle xon/xoff */
 	if (port->x_char) {
@@ -673,7 +673,7 @@ static int cpm_uart_tx_pump(struct uart_port *port)
 		return 1;
 	}
 
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
 		cpm_uart_stop_tx(port);
 		return 0;
 	}
@@ -681,10 +681,16 @@ static int cpm_uart_tx_pump(struct uart_port *port)
 	/* Pick next descriptor and fill from buffer */
 	bdp = pinfo->tx_cur;
 
-	while (!(in_be16(&bdp->cbd_sc) & BD_SC_READY) &&
-			!kfifo_is_empty(&tport->xmit_fifo)) {
+	while (!(in_be16(&bdp->cbd_sc) & BD_SC_READY) && !uart_circ_empty(xmit)) {
+		count = 0;
 		p = cpm2cpu_addr(in_be32(&bdp->cbd_bufaddr), pinfo);
-		count = uart_fifo_out(port, p, pinfo->tx_fifosize);
+		while (count < pinfo->tx_fifosize) {
+			*p++ = xmit->buf[xmit->tail];
+			uart_xmit_advance(port, 1);
+			count++;
+			if (uart_circ_empty(xmit))
+				break;
+		}
 		out_be16(&bdp->cbd_datlen, count);
 		setbits16(&bdp->cbd_sc, BD_SC_READY);
 		/* Get next BD. */
@@ -695,10 +701,10 @@ static int cpm_uart_tx_pump(struct uart_port *port)
 	}
 	pinfo->tx_cur = bdp;
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 
-	if (kfifo_is_empty(&tport->xmit_fifo)) {
+	if (uart_circ_empty(xmit)) {
 		cpm_uart_stop_tx(port);
 		return 0;
 	}

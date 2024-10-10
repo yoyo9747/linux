@@ -338,8 +338,6 @@ static struct platform_driver axg_aoclkc_driver = {
 		.of_match_table = axg_aoclkc_match_table,
 	},
 };
-module_platform_driver(axg_aoclkc_driver);
 
-MODULE_DESCRIPTION("Amlogic AXG Always-ON Clock Controller driver");
-MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(CLK_MESON);
+module_platform_driver(axg_aoclkc_driver);
+MODULE_LICENSE("GPL v2");

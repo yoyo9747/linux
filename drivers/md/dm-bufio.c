@@ -529,6 +529,9 @@ static struct dm_buffer *list_to_buffer(struct list_head *l)
 {
 	struct lru_entry *le = list_entry(l, struct lru_entry, list);
 
+	if (!le)
+		return NULL;
+
 	return le_to_buffer(le);
 }
 

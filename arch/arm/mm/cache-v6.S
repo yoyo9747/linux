@@ -8,7 +8,6 @@
  */
 #include <linux/linkage.h>
 #include <linux/init.h>
-#include <linux/cfi_types.h>
 #include <asm/assembler.h>
 #include <asm/errno.h>
 #include <asm/unwind.h>
@@ -35,7 +34,7 @@
  *	r0 - set to 0
  *	r1 - corrupted
  */
-SYM_TYPED_FUNC_START(v6_flush_icache_all)
+ENTRY(v6_flush_icache_all)
 	mov	r0, #0
 #ifdef CONFIG_ARM_ERRATA_411920
 	mrs	r1, cpsr
@@ -52,7 +51,7 @@ SYM_TYPED_FUNC_START(v6_flush_icache_all)
 	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I-cache
 #endif
 	ret	lr
-SYM_FUNC_END(v6_flush_icache_all)
+ENDPROC(v6_flush_icache_all)
 
 /*
  *	v6_flush_cache_all()
@@ -61,7 +60,7 @@ SYM_FUNC_END(v6_flush_icache_all)
  *
  *	It is assumed that:
  */
-SYM_TYPED_FUNC_START(v6_flush_kern_cache_all)
+ENTRY(v6_flush_kern_cache_all)
 	mov	r0, #0
 #ifdef HARVARD_CACHE
 	mcr	p15, 0, r0, c7, c14, 0		@ D cache clean+invalidate
@@ -74,7 +73,6 @@ SYM_TYPED_FUNC_START(v6_flush_kern_cache_all)
 	mcr	p15, 0, r0, c7, c15, 0		@ Cache clean+invalidate
 #endif
 	ret	lr
-SYM_FUNC_END(v6_flush_kern_cache_all)
 
 /*
  *	v6_flush_cache_all()
@@ -83,9 +81,8 @@ SYM_FUNC_END(v6_flush_kern_cache_all)
  *
  *	- mm    - mm_struct describing address space
  */
-SYM_TYPED_FUNC_START(v6_flush_user_cache_all)
-	ret	lr
-SYM_FUNC_END(v6_flush_user_cache_all)
+ENTRY(v6_flush_user_cache_all)
+	/*FALLTHROUGH*/
 
 /*
  *	v6_flush_cache_range(start, end, flags)
@@ -99,9 +96,8 @@ SYM_FUNC_END(v6_flush_user_cache_all)
  *	It is assumed that:
  *	- we have a VIPT cache.
  */
-SYM_TYPED_FUNC_START(v6_flush_user_cache_range)
+ENTRY(v6_flush_user_cache_range)
 	ret	lr
-SYM_FUNC_END(v6_flush_user_cache_range)
 
 /*
  *	v6_coherent_kern_range(start,end)
@@ -116,11 +112,8 @@ SYM_FUNC_END(v6_flush_user_cache_range)
  *	It is assumed that:
  *	- the Icache does not read data from the write buffer
  */
-SYM_TYPED_FUNC_START(v6_coherent_kern_range)
-#ifdef CONFIG_CFI_CLANG /* Fallthrough if !CFI */
-	b	v6_coherent_user_range
-#endif
-SYM_FUNC_END(v6_coherent_kern_range)
+ENTRY(v6_coherent_kern_range)
+	/* FALLTHROUGH */
 
 /*
  *	v6_coherent_user_range(start,end)
@@ -135,7 +128,7 @@ SYM_FUNC_END(v6_coherent_kern_range)
  *	It is assumed that:
  *	- the Icache does not read data from the write buffer
  */
-SYM_TYPED_FUNC_START(v6_coherent_user_range)
+ENTRY(v6_coherent_user_range)
  UNWIND(.fnstart		)
 #ifdef HARVARD_CACHE
 	bic	r0, r0, #CACHE_LINE_SIZE - 1
@@ -166,7 +159,8 @@ SYM_TYPED_FUNC_START(v6_coherent_user_range)
 	mov	r0, #-EFAULT
 	ret	lr
  UNWIND(.fnend		)
-SYM_FUNC_END(v6_coherent_user_range)
+ENDPROC(v6_coherent_user_range)
+ENDPROC(v6_coherent_kern_range)
 
 /*
  *	v6_flush_kern_dcache_area(void *addr, size_t size)
@@ -177,7 +171,7 @@ SYM_FUNC_END(v6_coherent_user_range)
  *	- addr	- kernel address
  *	- size	- region size
  */
-SYM_TYPED_FUNC_START(v6_flush_kern_dcache_area)
+ENTRY(v6_flush_kern_dcache_area)
 	add	r1, r0, r1
 	bic	r0, r0, #D_CACHE_LINE_SIZE - 1
 1:
@@ -194,7 +188,7 @@ SYM_TYPED_FUNC_START(v6_flush_kern_dcache_area)
 	mcr	p15, 0, r0, c7, c10, 4
 #endif
 	ret	lr
-SYM_FUNC_END(v6_flush_kern_dcache_area)
+
 
 /*
  *	v6_dma_inv_range(start,end)
@@ -259,7 +253,7 @@ v6_dma_clean_range:
  *	- start   - virtual start address of region
  *	- end     - virtual end address of region
  */
-SYM_TYPED_FUNC_START(v6_dma_flush_range)
+ENTRY(v6_dma_flush_range)
 	bic	r0, r0, #D_CACHE_LINE_SIZE - 1
 1:
 #ifdef HARVARD_CACHE
@@ -273,7 +267,6 @@ SYM_TYPED_FUNC_START(v6_dma_flush_range)
 	mov	r0, #0
 	mcr	p15, 0, r0, c7, c10, 4		@ drain write buffer
 	ret	lr
-SYM_FUNC_END(v6_dma_flush_range)
 
 /*
  *	dma_map_area(start, size, dir)
@@ -281,12 +274,12 @@ SYM_FUNC_END(v6_dma_flush_range)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(v6_dma_map_area)
+ENTRY(v6_dma_map_area)
 	add	r1, r1, r0
 	teq	r2, #DMA_FROM_DEVICE
 	beq	v6_dma_inv_range
 	b	v6_dma_clean_range
-SYM_FUNC_END(v6_dma_map_area)
+ENDPROC(v6_dma_map_area)
 
 /*
  *	dma_unmap_area(start, size, dir)
@@ -294,9 +287,17 @@ SYM_FUNC_END(v6_dma_map_area)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(v6_dma_unmap_area)
+ENTRY(v6_dma_unmap_area)
 	add	r1, r1, r0
 	teq	r2, #DMA_TO_DEVICE
 	bne	v6_dma_inv_range
 	ret	lr
-SYM_FUNC_END(v6_dma_unmap_area)
+ENDPROC(v6_dma_unmap_area)
+
+	.globl	v6_flush_kern_cache_louis
+	.equ	v6_flush_kern_cache_louis, v6_flush_kern_cache_all
+
+	__INITDATA
+
+	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
+	define_cache_functions v6

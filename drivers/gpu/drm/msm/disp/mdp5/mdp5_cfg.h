@@ -69,16 +69,6 @@ struct mdp5_mdp_block {
 	uint32_t caps;			/* MDP capabilities: MDP_CAP_xxx bits */
 };
 
-struct mdp5_wb_instance {
-	int id;
-	int lm;
-};
-
-struct mdp5_wb_block {
-	MDP5_SUB_BLOCK_DEFINITION;
-	struct mdp5_wb_instance instances[MAX_BASES];
-};
-
 #define MDP5_INTF_NUM_MAX	5
 
 struct mdp5_intf_block {
@@ -108,7 +98,6 @@ struct mdp5_cfg_hw {
 	struct mdp5_sub_block pp;
 	struct mdp5_sub_block dsc;
 	struct mdp5_sub_block cdm;
-	struct mdp5_wb_block wb;
 	struct mdp5_intf_block intf;
 	struct mdp5_perf_block perf;
 

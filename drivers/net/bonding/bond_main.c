@@ -419,41 +419,6 @@ static int bond_vlan_rx_kill_vid(struct net_device *bond_dev,
 
 #ifdef CONFIG_XFRM_OFFLOAD
 /**
- * bond_ipsec_dev - Get active device for IPsec offload
- * @xs: pointer to transformer state struct
- *
- * Context: caller must hold rcu_read_lock.
- *
- * Return: the device for ipsec offload, or NULL if not exist.
- **/
-static struct net_device *bond_ipsec_dev(struct xfrm_state *xs)
-{
-	struct net_device *bond_dev = xs->xso.dev;
-	struct bonding *bond;
-	struct slave *slave;
-
-	if (!bond_dev)
-		return NULL;
-
-	bond = netdev_priv(bond_dev);
-	if (BOND_MODE(bond) != BOND_MODE_ACTIVEBACKUP)
-		return NULL;
-
-	slave = rcu_dereference(bond->curr_active_slave);
-	if (!slave)
-		return NULL;
-
-	if (!xs->xso.real_dev)
-		return NULL;
-
-	if (xs->xso.real_dev != slave->dev)
-		pr_warn_ratelimited("%s: (slave %s): not same with IPsec offload real dev %s\n",
-				    bond_dev->name, slave->dev->name, xs->xso.real_dev->name);
-
-	return slave->dev;
-}
-
-/**
  * bond_ipsec_add_sa - program device with a security association
  * @xs: pointer to transformer state struct
  * @extack: extack point to fill failure reason
@@ -462,8 +427,6 @@ static int bond_ipsec_add_sa(struct xfrm_state *xs,
 			     struct netlink_ext_ack *extack)
 {
 	struct net_device *bond_dev = xs->xso.dev;
-	struct net_device *real_dev;
-	netdevice_tracker tracker;
 	struct bond_ipsec *ipsec;
 	struct bonding *bond;
 	struct slave *slave;
@@ -475,80 +438,74 @@ static int bond_ipsec_add_sa(struct xfrm_state *xs,
 	rcu_read_lock();
 	bond = netdev_priv(bond_dev);
 	slave = rcu_dereference(bond->curr_active_slave);
-	real_dev = slave ? slave->dev : NULL;
-	netdev_hold(real_dev, &tracker, GFP_ATOMIC);
-	rcu_read_unlock();
-	if (!real_dev) {
-		err = -ENODEV;
-		goto out;
+	if (!slave) {
+		rcu_read_unlock();
+		return -ENODEV;
 	}
 
-	if (!real_dev->xfrmdev_ops ||
-	    !real_dev->xfrmdev_ops->xdo_dev_state_add ||
-	    netif_is_bond_master(real_dev)) {
+	if (!slave->dev->xfrmdev_ops ||
+	    !slave->dev->xfrmdev_ops->xdo_dev_state_add ||
+	    netif_is_bond_master(slave->dev)) {
 		NL_SET_ERR_MSG_MOD(extack, "Slave does not support ipsec offload");
-		err = -EINVAL;
-		goto out;
+		rcu_read_unlock();
+		return -EINVAL;
 	}
 
-	ipsec = kmalloc(sizeof(*ipsec), GFP_KERNEL);
+	ipsec = kmalloc(sizeof(*ipsec), GFP_ATOMIC);
 	if (!ipsec) {
-		err = -ENOMEM;
-		goto out;
+		rcu_read_unlock();
+		return -ENOMEM;
 	}
+	xs->xso.real_dev = slave->dev;
 
-	xs->xso.real_dev = real_dev;
-	err = real_dev->xfrmdev_ops->xdo_dev_state_add(xs, extack);
+	err = slave->dev->xfrmdev_ops->xdo_dev_state_add(xs, extack);
 	if (!err) {
 		ipsec->xs = xs;
 		INIT_LIST_HEAD(&ipsec->list);
-		mutex_lock(&bond->ipsec_lock);
+		spin_lock_bh(&bond->ipsec_lock);
 		list_add(&ipsec->list, &bond->ipsec_list);
-		mutex_unlock(&bond->ipsec_lock);
+		spin_unlock_bh(&bond->ipsec_lock);
 	} else {
 		kfree(ipsec);
 	}
-out:
-	netdev_put(real_dev, &tracker);
+	rcu_read_unlock();
 	return err;
 }
 
 static void bond_ipsec_add_sa_all(struct bonding *bond)
 {
 	struct net_device *bond_dev = bond->dev;
-	struct net_device *real_dev;
 	struct bond_ipsec *ipsec;
 	struct slave *slave;
 
-	slave = rtnl_dereference(bond->curr_active_slave);
-	real_dev = slave ? slave->dev : NULL;
-	if (!real_dev)
-		return;
+	rcu_read_lock();
+	slave = rcu_dereference(bond->curr_active_slave);
+	if (!slave)
+		goto out;
 
-	mutex_lock(&bond->ipsec_lock);
-	if (!real_dev->xfrmdev_ops ||
-	    !real_dev->xfrmdev_ops->xdo_dev_state_add ||
-	    netif_is_bond_master(real_dev)) {
+	if (!slave->dev->xfrmdev_ops ||
+	    !slave->dev->xfrmdev_ops->xdo_dev_state_add ||
+	    netif_is_bond_master(slave->dev)) {
+		spin_lock_bh(&bond->ipsec_lock);
 		if (!list_empty(&bond->ipsec_list))
-			slave_warn(bond_dev, real_dev,
+			slave_warn(bond_dev, slave->dev,
 				   "%s: no slave xdo_dev_state_add\n",
 				   __func__);
+		spin_unlock_bh(&bond->ipsec_lock);
 		goto out;
 	}
 
+	spin_lock_bh(&bond->ipsec_lock);
 	list_for_each_entry(ipsec, &bond->ipsec_list, list) {
-		/* If new state is added before ipsec_lock acquired */
-		if (ipsec->xs->xso.real_dev == real_dev)
-			continue;
-
-		ipsec->xs->xso.real_dev = real_dev;
-		if (real_dev->xfrmdev_ops->xdo_dev_state_add(ipsec->xs, NULL)) {
-			slave_warn(bond_dev, real_dev, "%s: failed to add SA\n", __func__);
+		ipsec->xs->xso.real_dev = slave->dev;
+		if (slave->dev->xfrmdev_ops->xdo_dev_state_add(ipsec->xs, NULL)) {
+			slave_warn(bond_dev, slave->dev, "%s: failed to add SA\n", __func__);
 			ipsec->xs->xso.real_dev = NULL;
 		}
 	}
+	spin_unlock_bh(&bond->ipsec_lock);
 out:
-	mutex_unlock(&bond->ipsec_lock);
+	rcu_read_unlock();
 }
 
 /**
@@ -558,8 +515,6 @@ out:
 static void bond_ipsec_del_sa(struct xfrm_state *xs)
 {
 	struct net_device *bond_dev = xs->xso.dev;
-	struct net_device *real_dev;
-	netdevice_tracker tracker;
 	struct bond_ipsec *ipsec;
 	struct bonding *bond;
 	struct slave *slave;
@@ -570,9 +525,6 @@ static void bond_ipsec_del_sa(struct xfrm_state *xs)
 	rcu_read_lock();
 	bond = netdev_priv(bond_dev);
 	slave = rcu_dereference(bond->curr_active_slave);
-	real_dev = slave ? slave->dev : NULL;
-	netdev_hold(real_dev, &tracker, GFP_ATOMIC);
-	rcu_read_unlock();
 
 	if (!slave)
 		goto out;
@@ -580,19 +532,18 @@ static void bond_ipsec_del_sa(struct xfrm_state *xs)
 	if (!xs->xso.real_dev)
 		goto out;
 
-	WARN_ON(xs->xso.real_dev != real_dev);
+	WARN_ON(xs->xso.real_dev != slave->dev);
 
-	if (!real_dev->xfrmdev_ops ||
-	    !real_dev->xfrmdev_ops->xdo_dev_state_delete ||
-	    netif_is_bond_master(real_dev)) {
-		slave_warn(bond_dev, real_dev, "%s: no slave xdo_dev_state_delete\n", __func__);
+	if (!slave->dev->xfrmdev_ops ||
+	    !slave->dev->xfrmdev_ops->xdo_dev_state_delete ||
+	    netif_is_bond_master(slave->dev)) {
+		slave_warn(bond_dev, slave->dev, "%s: no slave xdo_dev_state_delete\n", __func__);
 		goto out;
 	}
 
-	real_dev->xfrmdev_ops->xdo_dev_state_delete(xs);
+	slave->dev->xfrmdev_ops->xdo_dev_state_delete(xs);
 out:
-	netdev_put(real_dev, &tracker);
-	mutex_lock(&bond->ipsec_lock);
+	spin_lock_bh(&bond->ipsec_lock);
 	list_for_each_entry(ipsec, &bond->ipsec_list, list) {
 		if (ipsec->xs == xs) {
 			list_del(&ipsec->list);
@@ -600,72 +551,41 @@ out:
 			break;
 		}
 	}
-	mutex_unlock(&bond->ipsec_lock);
+	spin_unlock_bh(&bond->ipsec_lock);
+	rcu_read_unlock();
 }
 
 static void bond_ipsec_del_sa_all(struct bonding *bond)
 {
 	struct net_device *bond_dev = bond->dev;
-	struct net_device *real_dev;
 	struct bond_ipsec *ipsec;
 	struct slave *slave;
 
-	slave = rtnl_dereference(bond->curr_active_slave);
-	real_dev = slave ? slave->dev : NULL;
-	if (!real_dev)
+	rcu_read_lock();
+	slave = rcu_dereference(bond->curr_active_slave);
+	if (!slave) {
+		rcu_read_unlock();
 		return;
+	}
 
-	mutex_lock(&bond->ipsec_lock);
+	spin_lock_bh(&bond->ipsec_lock);
 	list_for_each_entry(ipsec, &bond->ipsec_list, list) {
 		if (!ipsec->xs->xso.real_dev)
 			continue;
 
-		if (!real_dev->xfrmdev_ops ||
-		    !real_dev->xfrmdev_ops->xdo_dev_state_delete ||
-		    netif_is_bond_master(real_dev)) {
-			slave_warn(bond_dev, real_dev,
+		if (!slave->dev->xfrmdev_ops ||
+		    !slave->dev->xfrmdev_ops->xdo_dev_state_delete ||
+		    netif_is_bond_master(slave->dev)) {
+			slave_warn(bond_dev, slave->dev,
 				   "%s: no slave xdo_dev_state_delete\n",
 				   __func__);
 		} else {
-			real_dev->xfrmdev_ops->xdo_dev_state_delete(ipsec->xs);
-			if (real_dev->xfrmdev_ops->xdo_dev_state_free)
-				real_dev->xfrmdev_ops->xdo_dev_state_free(ipsec->xs);
+			slave->dev->xfrmdev_ops->xdo_dev_state_delete(ipsec->xs);
 		}
+		ipsec->xs->xso.real_dev = NULL;
 	}
-	mutex_unlock(&bond->ipsec_lock);
-}
-
-static void bond_ipsec_free_sa(struct xfrm_state *xs)
-{
-	struct net_device *bond_dev = xs->xso.dev;
-	struct net_device *real_dev;
-	netdevice_tracker tracker;
-	struct bonding *bond;
-	struct slave *slave;
-
-	if (!bond_dev)
-		return;
-
-	rcu_read_lock();
-	bond = netdev_priv(bond_dev);
-	slave = rcu_dereference(bond->curr_active_slave);
-	real_dev = slave ? slave->dev : NULL;
-	netdev_hold(real_dev, &tracker, GFP_ATOMIC);
+	spin_unlock_bh(&bond->ipsec_lock);
 	rcu_read_unlock();
-
-	if (!slave)
-		goto out;
-
-	if (!xs->xso.real_dev)
-		goto out;
-
-	WARN_ON(xs->xso.real_dev != real_dev);
-
-	if (real_dev && real_dev->xfrmdev_ops &&
-	    real_dev->xfrmdev_ops->xdo_dev_state_free)
-		real_dev->xfrmdev_ops->xdo_dev_state_free(xs);
-out:
-	netdev_put(real_dev, &tracker);
 }
 
 /**
@@ -675,80 +595,44 @@ out:
  **/
 static bool bond_ipsec_offload_ok(struct sk_buff *skb, struct xfrm_state *xs)
 {
+	struct net_device *bond_dev = xs->xso.dev;
 	struct net_device *real_dev;
-	bool ok = false;
+	struct slave *curr_active;
+	struct bonding *bond;
+	int err;
 
+	bond = netdev_priv(bond_dev);
 	rcu_read_lock();
-	real_dev = bond_ipsec_dev(xs);
-	if (!real_dev)
+	curr_active = rcu_dereference(bond->curr_active_slave);
+	real_dev = curr_active->dev;
+
+	if (BOND_MODE(bond) != BOND_MODE_ACTIVEBACKUP) {
+		err = false;
 		goto out;
+	}
+
+	if (!xs->xso.real_dev) {
+		err = false;
+		goto out;
+	}
 
 	if (!real_dev->xfrmdev_ops ||
 	    !real_dev->xfrmdev_ops->xdo_dev_offload_ok ||
-	    netif_is_bond_master(real_dev))
-		goto out;
-
-	ok = real_dev->xfrmdev_ops->xdo_dev_offload_ok(skb, xs);
-out:
-	rcu_read_unlock();
-	return ok;
-}
-
-/**
- * bond_advance_esn_state - ESN support for IPSec HW offload
- * @xs: pointer to transformer state struct
- **/
-static void bond_advance_esn_state(struct xfrm_state *xs)
-{
-	struct net_device *real_dev;
-
-	rcu_read_lock();
-	real_dev = bond_ipsec_dev(xs);
-	if (!real_dev)
-		goto out;
-
-	if (!real_dev->xfrmdev_ops ||
-	    !real_dev->xfrmdev_ops->xdo_dev_state_advance_esn) {
-		pr_warn_ratelimited("%s: %s doesn't support xdo_dev_state_advance_esn\n", __func__, real_dev->name);
+	    netif_is_bond_master(real_dev)) {
+		err = false;
 		goto out;
 	}
 
-	real_dev->xfrmdev_ops->xdo_dev_state_advance_esn(xs);
+	err = real_dev->xfrmdev_ops->xdo_dev_offload_ok(skb, xs);
 out:
 	rcu_read_unlock();
-}
-
-/**
- * bond_xfrm_update_stats - Update xfrm state
- * @xs: pointer to transformer state struct
- **/
-static void bond_xfrm_update_stats(struct xfrm_state *xs)
-{
-	struct net_device *real_dev;
-
-	rcu_read_lock();
-	real_dev = bond_ipsec_dev(xs);
-	if (!real_dev)
-		goto out;
-
-	if (!real_dev->xfrmdev_ops ||
-	    !real_dev->xfrmdev_ops->xdo_dev_state_update_stats) {
-		pr_warn_ratelimited("%s: %s doesn't support xdo_dev_state_update_stats\n", __func__, real_dev->name);
-		goto out;
-	}
-
-	real_dev->xfrmdev_ops->xdo_dev_state_update_stats(xs);
-out:
-	rcu_read_unlock();
+	return err;
 }
 
 static const struct xfrmdev_ops bond_xfrmdev_ops = {
 	.xdo_dev_state_add = bond_ipsec_add_sa,
 	.xdo_dev_state_delete = bond_ipsec_del_sa,
-	.xdo_dev_state_free = bond_ipsec_free_sa,
 	.xdo_dev_offload_ok = bond_ipsec_offload_ok,
-	.xdo_dev_state_advance_esn = bond_advance_esn_state,
-	.xdo_dev_state_update_stats = bond_xfrm_update_stats,
 };
 #endif /* CONFIG_XFRM_OFFLOAD */
 
@@ -1237,10 +1121,13 @@ static struct slave *bond_find_best_slave(struct bonding *bond)
 	return bestslave;
 }
 
-/* must be called in RCU critical section or with RTNL held */
 static bool bond_should_notify_peers(struct bonding *bond)
 {
-	struct slave *slave = rcu_dereference_rtnl(bond->curr_active_slave);
+	struct slave *slave;
+
+	rcu_read_lock();
+	slave = rcu_dereference(bond->curr_active_slave);
+	rcu_read_unlock();
 
 	if (!slave || !bond->send_peer_notif ||
 	    bond->send_peer_notif %
@@ -2374,7 +2261,7 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev,
 			goto err_sysfs_del;
 		}
 
-		res = dev_xdp_propagate(slave_dev, &xdp);
+		res = slave_dev->netdev_ops->ndo_bpf(slave_dev, &xdp);
 		if (res < 0) {
 			/* ndo_bpf() sets extack error message */
 			slave_dbg(bond_dev, slave_dev, "Error %d calling ndo_bpf\n", res);
@@ -2510,7 +2397,7 @@ static int __bond_release_one(struct net_device *bond_dev,
 			.prog	 = NULL,
 			.extack  = NULL,
 		};
-		if (dev_xdp_propagate(slave_dev, &xdp))
+		if (slave_dev->netdev_ops->ndo_bpf(slave_dev, &xdp))
 			slave_warn(bond_dev, slave_dev, "failed to unload XDP program\n");
 	}
 
@@ -3127,8 +3014,8 @@ static void bond_arp_send_all(struct bonding *bond, struct slave *slave)
 		tags = NULL;
 
 		/* Find out through which dev should the packet go */
-		rt = ip_route_output(dev_net(bond->dev), targets[i], 0, 0, 0,
-				     RT_SCOPE_LINK);
+		rt = ip_route_output(dev_net(bond->dev), targets[i], 0,
+				     RTO_ONLINK, 0);
 		if (IS_ERR(rt)) {
 			/* there's no route to target - try to send arp
 			 * probe to generate any traffic (arp_validate=0)
@@ -4823,7 +4710,7 @@ static int bond_change_mtu(struct net_device *bond_dev, int new_mtu)
 		}
 	}
 
-	WRITE_ONCE(bond_dev->mtu, new_mtu);
+	bond_dev->mtu = new_mtu;
 
 	return 0;
 
@@ -5358,7 +5245,7 @@ static inline int bond_slave_override(struct bonding *bond,
 
 	/* Find out if any slaves have the same mapping as this skb. */
 	bond_for_each_slave_rcu(bond, slave, iter) {
-		if (READ_ONCE(slave->queue_id) == skb_get_queue_mapping(skb)) {
+		if (slave->queue_id == skb_get_queue_mapping(skb)) {
 			if (bond_slave_is_up(slave) &&
 			    slave->link == BOND_LINK_UP) {
 				bond_dev_queue_xmit(bond, skb, slave->dev);
@@ -5610,9 +5497,9 @@ bond_xdp_get_xmit_slave(struct net_device *bond_dev, struct xdp_buff *xdp)
 		break;
 
 	default:
-		if (net_ratelimit())
-			netdev_err(bond_dev, "Unknown bonding mode %d for xdp xmit\n",
-				   BOND_MODE(bond));
+		/* Should never happen. Mode guarded by bond_xdp_check() */
+		netdev_err(bond_dev, "Unknown bonding mode %d for xdp xmit\n", BOND_MODE(bond));
+		WARN_ON_ONCE(1);
 		return NULL;
 	}
 
@@ -5700,7 +5587,7 @@ static int bond_xdp_set(struct net_device *dev, struct bpf_prog *prog,
 			goto err;
 		}
 
-		err = dev_xdp_propagate(slave_dev, &xdp);
+		err = slave_dev->netdev_ops->ndo_bpf(slave_dev, &xdp);
 		if (err < 0) {
 			/* ndo_bpf() sets extack error message */
 			slave_err(dev, slave_dev, "Error %d calling ndo_bpf\n", err);
@@ -5732,7 +5619,7 @@ err:
 		if (slave == rollback_slave)
 			break;
 
-		err_unwind = dev_xdp_propagate(slave_dev, &xdp);
+		err_unwind = slave_dev->netdev_ops->ndo_bpf(slave_dev, &xdp);
 		if (err_unwind < 0)
 			slave_err(dev, slave_dev,
 				  "Error %d when unwinding XDP program change\n", err_unwind);
@@ -5868,10 +5755,10 @@ static void bond_ethtool_get_drvinfo(struct net_device *bond_dev,
 }
 
 static int bond_ethtool_get_ts_info(struct net_device *bond_dev,
-				    struct kernel_ethtool_ts_info *info)
+				    struct ethtool_ts_info *info)
 {
 	struct bonding *bond = netdev_priv(bond_dev);
-	struct kernel_ethtool_ts_info ts_info;
+	struct ethtool_ts_info ts_info;
 	struct net_device *real_dev;
 	bool sw_tx_support = false;
 	struct list_head *iter;
@@ -5995,14 +5882,11 @@ void bond_setup(struct net_device *bond_dev)
 	/* set up xfrm device ops (only supported in active-backup right now) */
 	bond_dev->xfrmdev_ops = &bond_xfrmdev_ops;
 	INIT_LIST_HEAD(&bond->ipsec_list);
-	mutex_init(&bond->ipsec_lock);
+	spin_lock_init(&bond->ipsec_lock);
 #endif /* CONFIG_XFRM_OFFLOAD */
 
 	/* don't acquire bond device's netif_tx_lock when transmitting */
-	bond_dev->lltx = true;
-
-	/* Don't allow bond devices to change network namespaces. */
-	bond_dev->netns_local = true;
+	bond_dev->features |= NETIF_F_LLTX;
 
 	/* By default, we declare the bond to be fully
 	 * VLAN hardware accelerated capable. Special
@@ -6010,6 +5894,9 @@ void bond_setup(struct net_device *bond_dev)
 	 * when there are slaves that are not hw accel
 	 * capable
 	 */
+
+	/* Don't allow bond devices to change network namespaces. */
+	bond_dev->features |= NETIF_F_NETNS_LOCAL;
 
 	bond_dev->hw_features = BOND_VLAN_FEATURES |
 				NETIF_F_HW_VLAN_CTAG_RX |
@@ -6044,13 +5931,9 @@ static void bond_uninit(struct net_device *bond_dev)
 		__bond_release_one(bond_dev, slave->dev, true, true);
 	netdev_info(bond_dev, "Released all slaves\n");
 
-#ifdef CONFIG_XFRM_OFFLOAD
-	mutex_destroy(&bond->ipsec_lock);
-#endif /* CONFIG_XFRM_OFFLOAD */
-
 	bond_set_slave_arr(bond, NULL, NULL);
 
-	list_del_rcu(&bond->bond_list);
+	list_del(&bond->bond_list);
 
 	bond_debug_unregister(bond);
 }
@@ -6455,8 +6338,7 @@ static int bond_init(struct net_device *bond_dev)
 
 	netdev_dbg(bond_dev, "Begin bond_init\n");
 
-	bond->wq = alloc_ordered_workqueue("%s", WQ_MEM_RECLAIM,
-					   bond_dev->name);
+	bond->wq = alloc_ordered_workqueue(bond_dev->name, WQ_MEM_RECLAIM);
 	if (!bond->wq)
 		return -ENOMEM;
 
@@ -6465,7 +6347,7 @@ static int bond_init(struct net_device *bond_dev)
 	spin_lock_init(&bond->stats_lock);
 	netdev_lockdep_set_classes(bond_dev);
 
-	list_add_tail_rcu(&bond->bond_list, &bn->dev_list);
+	list_add_tail(&bond->bond_list, &bn->dev_list);
 
 	bond_prepare_sysfs_group(bond);
 
@@ -6595,15 +6477,15 @@ static int __init bonding_init(void)
 	if (res)
 		goto out;
 
-	bond_create_debugfs();
-
 	res = register_pernet_subsys(&bond_net_ops);
 	if (res)
-		goto err_net_ops;
+		goto out;
 
 	res = bond_netlink_init();
 	if (res)
 		goto err_link;
+
+	bond_create_debugfs();
 
 	for (i = 0; i < max_bonds; i++) {
 		res = bond_create(&init_net, NULL);
@@ -6619,11 +6501,10 @@ static int __init bonding_init(void)
 out:
 	return res;
 err:
+	bond_destroy_debugfs();
 	bond_netlink_fini();
 err_link:
 	unregister_pernet_subsys(&bond_net_ops);
-err_net_ops:
-	bond_destroy_debugfs();
 	goto out;
 
 }
@@ -6632,10 +6513,10 @@ static void __exit bonding_exit(void)
 {
 	unregister_netdevice_notifier(&bond_netdev_notifier);
 
+	bond_destroy_debugfs();
+
 	bond_netlink_fini();
 	unregister_pernet_subsys(&bond_net_ops);
-
-	bond_destroy_debugfs();
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	/* Make sure we don't have an imbalance on our netpoll blocking */

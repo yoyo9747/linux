@@ -13,6 +13,8 @@
 #include <asm/mm_hooks.h>
 #include <asm/mmu.h>
 
+extern void force_flush_all(void);
+
 #define activate_mm activate_mm
 static inline void activate_mm(struct mm_struct *old, struct mm_struct *new)
 {

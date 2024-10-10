@@ -8,7 +8,7 @@
 #include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/sched.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "common.h"
 

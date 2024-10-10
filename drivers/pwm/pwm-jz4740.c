@@ -201,11 +201,12 @@ static int jz4740_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	 * state instead of its inactive state.
 	 */
 	if ((state->polarity == PWM_POLARITY_NORMAL) ^ state->enabled)
-		regmap_clear_bits(jz->map, TCU_REG_TCSRc(pwm->hwpwm),
-				  TCU_TCSR_PWM_INITL_HIGH);
+		regmap_update_bits(jz->map, TCU_REG_TCSRc(pwm->hwpwm),
+				   TCU_TCSR_PWM_INITL_HIGH, 0);
 	else
-		regmap_set_bits(jz->map, TCU_REG_TCSRc(pwm->hwpwm),
-				TCU_TCSR_PWM_INITL_HIGH);
+		regmap_update_bits(jz->map, TCU_REG_TCSRc(pwm->hwpwm),
+				   TCU_TCSR_PWM_INITL_HIGH,
+				   TCU_TCSR_PWM_INITL_HIGH);
 
 	if (state->enabled)
 		jz4740_pwm_enable(chip, pwm);

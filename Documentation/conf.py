@@ -75,8 +75,6 @@ if major >= 3:
             "__rcu",
             "__user",
             "__force",
-            "__counted_by_le",
-            "__counted_by_be",
 
             # include/linux/compiler_attributes.h:
             "__alias",

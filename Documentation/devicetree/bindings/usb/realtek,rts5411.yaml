@@ -65,7 +65,6 @@ patternProperties:
     description: The hard wired USB devices
     type: object
     $ref: /schemas/usb/usb-device.yaml
-    additionalProperties: true
 
 required:
   - peer-hub

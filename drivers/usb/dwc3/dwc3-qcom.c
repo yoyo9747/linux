@@ -4,7 +4,6 @@
  * Inspired by dwc3-of-simple.c
  */
 
-#include <linux/cleanup.h>
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/clk.h>
@@ -37,6 +36,7 @@
 #define PIPE3_PHYSTATUS_SW			BIT(3)
 #define PIPE_UTMI_CLK_DIS			BIT(8)
 
+#define PWR_EVNT_IRQ_STAT_REG			0x58
 #define PWR_EVNT_LPM_IN_L2_MASK			BIT(4)
 #define PWR_EVNT_LPM_OUT_L2_MASK		BIT(5)
 
@@ -52,24 +52,6 @@
 #define APPS_USB_AVG_BW 0
 #define APPS_USB_PEAK_BW MBps_to_icc(40)
 
-/* Qualcomm SoCs with multiport support has up to 4 ports */
-#define DWC3_QCOM_MAX_PORTS	4
-
-static const u32 pwr_evnt_irq_stat_reg[DWC3_QCOM_MAX_PORTS] = {
-	0x58,
-	0x1dc,
-	0x228,
-	0x238,
-};
-
-struct dwc3_qcom_port {
-	int			qusb2_phy_irq;
-	int			dp_hs_phy_irq;
-	int			dm_hs_phy_irq;
-	int			ss_phy_irq;
-	enum usb_device_speed	usb2_speed;
-};
-
 struct dwc3_qcom {
 	struct device		*dev;
 	void __iomem		*qscratch_base;
@@ -77,8 +59,12 @@ struct dwc3_qcom {
 	struct clk		**clks;
 	int			num_clocks;
 	struct reset_control	*resets;
-	struct dwc3_qcom_port	ports[DWC3_QCOM_MAX_PORTS];
-	u8			num_ports;
+
+	int			qusb2_phy_irq;
+	int			dp_hs_phy_irq;
+	int			dm_hs_phy_irq;
+	int			ss_phy_irq;
+	enum usb_device_speed	usb2_speed;
 
 	struct extcon_dev	*edev;
 	struct extcon_dev	*host_edev;
@@ -317,7 +303,7 @@ static bool dwc3_qcom_is_host(struct dwc3_qcom *qcom)
 	return dwc->xhci;
 }
 
-static enum usb_device_speed dwc3_qcom_read_usb2_speed(struct dwc3_qcom *qcom, int port_index)
+static enum usb_device_speed dwc3_qcom_read_usb2_speed(struct dwc3_qcom *qcom)
 {
 	struct dwc3 *dwc = platform_get_drvdata(qcom->dwc3);
 	struct usb_device *udev;
@@ -328,8 +314,14 @@ static enum usb_device_speed dwc3_qcom_read_usb2_speed(struct dwc3_qcom *qcom, i
 	 */
 	hcd = platform_get_drvdata(dwc->xhci);
 
+	/*
+	 * It is possible to query the speed of all children of
+	 * USB2.0 root hub via usb_hub_for_each_child(). DWC3 code
+	 * currently supports only 1 port per controller. So
+	 * this is sufficient.
+	 */
 #ifdef CONFIG_USB
-	udev = usb_hub_find_child(hcd->self.root_hub, port_index + 1);
+	udev = usb_hub_find_child(hcd->self.root_hub, 1);
 #else
 	udev = NULL;
 #endif
@@ -360,26 +352,26 @@ static void dwc3_qcom_disable_wakeup_irq(int irq)
 	disable_irq_nosync(irq);
 }
 
-static void dwc3_qcom_disable_port_interrupts(struct dwc3_qcom_port *port)
+static void dwc3_qcom_disable_interrupts(struct dwc3_qcom *qcom)
 {
-	dwc3_qcom_disable_wakeup_irq(port->qusb2_phy_irq);
+	dwc3_qcom_disable_wakeup_irq(qcom->qusb2_phy_irq);
 
-	if (port->usb2_speed == USB_SPEED_LOW) {
-		dwc3_qcom_disable_wakeup_irq(port->dm_hs_phy_irq);
-	} else if ((port->usb2_speed == USB_SPEED_HIGH) ||
-			(port->usb2_speed == USB_SPEED_FULL)) {
-		dwc3_qcom_disable_wakeup_irq(port->dp_hs_phy_irq);
+	if (qcom->usb2_speed == USB_SPEED_LOW) {
+		dwc3_qcom_disable_wakeup_irq(qcom->dm_hs_phy_irq);
+	} else if ((qcom->usb2_speed == USB_SPEED_HIGH) ||
+			(qcom->usb2_speed == USB_SPEED_FULL)) {
+		dwc3_qcom_disable_wakeup_irq(qcom->dp_hs_phy_irq);
 	} else {
-		dwc3_qcom_disable_wakeup_irq(port->dp_hs_phy_irq);
-		dwc3_qcom_disable_wakeup_irq(port->dm_hs_phy_irq);
+		dwc3_qcom_disable_wakeup_irq(qcom->dp_hs_phy_irq);
+		dwc3_qcom_disable_wakeup_irq(qcom->dm_hs_phy_irq);
 	}
 
-	dwc3_qcom_disable_wakeup_irq(port->ss_phy_irq);
+	dwc3_qcom_disable_wakeup_irq(qcom->ss_phy_irq);
 }
 
-static void dwc3_qcom_enable_port_interrupts(struct dwc3_qcom_port *port)
+static void dwc3_qcom_enable_interrupts(struct dwc3_qcom *qcom)
 {
-	dwc3_qcom_enable_wakeup_irq(port->qusb2_phy_irq, 0);
+	dwc3_qcom_enable_wakeup_irq(qcom->qusb2_phy_irq, 0);
 
 	/*
 	 * Configure DP/DM line interrupts based on the USB2 device attached to
@@ -390,37 +382,21 @@ static void dwc3_qcom_enable_port_interrupts(struct dwc3_qcom_port *port)
 	 * DP and DM lines as rising edge to detect HS/HS/LS device connect scenario.
 	 */
 
-	if (port->usb2_speed == USB_SPEED_LOW) {
-		dwc3_qcom_enable_wakeup_irq(port->dm_hs_phy_irq,
-					    IRQ_TYPE_EDGE_FALLING);
-	} else if ((port->usb2_speed == USB_SPEED_HIGH) ||
-			(port->usb2_speed == USB_SPEED_FULL)) {
-		dwc3_qcom_enable_wakeup_irq(port->dp_hs_phy_irq,
-					    IRQ_TYPE_EDGE_FALLING);
+	if (qcom->usb2_speed == USB_SPEED_LOW) {
+		dwc3_qcom_enable_wakeup_irq(qcom->dm_hs_phy_irq,
+						IRQ_TYPE_EDGE_FALLING);
+	} else if ((qcom->usb2_speed == USB_SPEED_HIGH) ||
+			(qcom->usb2_speed == USB_SPEED_FULL)) {
+		dwc3_qcom_enable_wakeup_irq(qcom->dp_hs_phy_irq,
+						IRQ_TYPE_EDGE_FALLING);
 	} else {
-		dwc3_qcom_enable_wakeup_irq(port->dp_hs_phy_irq,
-					    IRQ_TYPE_EDGE_RISING);
-		dwc3_qcom_enable_wakeup_irq(port->dm_hs_phy_irq,
-					    IRQ_TYPE_EDGE_RISING);
+		dwc3_qcom_enable_wakeup_irq(qcom->dp_hs_phy_irq,
+						IRQ_TYPE_EDGE_RISING);
+		dwc3_qcom_enable_wakeup_irq(qcom->dm_hs_phy_irq,
+						IRQ_TYPE_EDGE_RISING);
 	}
 
-	dwc3_qcom_enable_wakeup_irq(port->ss_phy_irq, 0);
-}
-
-static void dwc3_qcom_disable_interrupts(struct dwc3_qcom *qcom)
-{
-	int i;
-
-	for (i = 0; i < qcom->num_ports; i++)
-		dwc3_qcom_disable_port_interrupts(&qcom->ports[i]);
-}
-
-static void dwc3_qcom_enable_interrupts(struct dwc3_qcom *qcom)
-{
-	int i;
-
-	for (i = 0; i < qcom->num_ports; i++)
-		dwc3_qcom_enable_port_interrupts(&qcom->ports[i]);
+	dwc3_qcom_enable_wakeup_irq(qcom->ss_phy_irq, 0);
 }
 
 static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
@@ -431,11 +407,9 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
 	if (qcom->is_suspended)
 		return 0;
 
-	for (i = 0; i < qcom->num_ports; i++) {
-		val = readl(qcom->qscratch_base + pwr_evnt_irq_stat_reg[i]);
-		if (!(val & PWR_EVNT_LPM_IN_L2_MASK))
-			dev_err(qcom->dev, "port-%d HS-PHY not in L2\n", i + 1);
-	}
+	val = readl(qcom->qscratch_base + PWR_EVNT_IRQ_STAT_REG);
+	if (!(val & PWR_EVNT_LPM_IN_L2_MASK))
+		dev_err(qcom->dev, "HS-PHY not in L2\n");
 
 	for (i = qcom->num_clocks - 1; i >= 0; i--)
 		clk_disable_unprepare(qcom->clks[i]);
@@ -449,8 +423,7 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
 	 * freezable workqueue.
 	 */
 	if (dwc3_qcom_is_host(qcom) && wakeup) {
-		for (i = 0; i < qcom->num_ports; i++)
-			qcom->ports[i].usb2_speed = dwc3_qcom_read_usb2_speed(qcom, i);
+		qcom->usb2_speed = dwc3_qcom_read_usb2_speed(qcom);
 		dwc3_qcom_enable_interrupts(qcom);
 	}
 
@@ -484,11 +457,8 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
 		dev_warn(qcom->dev, "failed to enable interconnect: %d\n", ret);
 
 	/* Clear existing events from PHY related to L2 in/out */
-	for (i = 0; i < qcom->num_ports; i++) {
-		dwc3_qcom_setbits(qcom->qscratch_base,
-				  pwr_evnt_irq_stat_reg[i],
-				  PWR_EVNT_LPM_IN_L2_MASK | PWR_EVNT_LPM_OUT_L2_MASK);
-	}
+	dwc3_qcom_setbits(qcom->qscratch_base, PWR_EVNT_IRQ_STAT_REG,
+			  PWR_EVNT_LPM_IN_L2_MASK | PWR_EVNT_LPM_OUT_L2_MASK);
 
 	qcom->is_suspended = false;
 
@@ -531,123 +501,63 @@ static void dwc3_qcom_select_utmi_clk(struct dwc3_qcom *qcom)
 			  PIPE_UTMI_CLK_DIS);
 }
 
-static int dwc3_qcom_request_irq(struct dwc3_qcom *qcom, int irq,
-				 const char *name)
-{
-	int ret;
-
-	/* Keep wakeup interrupts disabled until suspend */
-	ret = devm_request_threaded_irq(qcom->dev, irq, NULL,
-					qcom_dwc3_resume_irq,
-					IRQF_ONESHOT | IRQF_NO_AUTOEN,
-					name, qcom);
-	if (ret)
-		dev_err(qcom->dev, "failed to request irq %s: %d\n", name, ret);
-
-	return ret;
-}
-
-static int dwc3_qcom_setup_port_irq(struct platform_device *pdev, int port_index, bool is_multiport)
-{
-	struct dwc3_qcom *qcom = platform_get_drvdata(pdev);
-	const char *irq_name;
-	int irq;
-	int ret;
-
-	if (is_multiport)
-		irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "dp_hs_phy_%d", port_index + 1);
-	else
-		irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "dp_hs_phy_irq");
-	if (!irq_name)
-		return -ENOMEM;
-
-	irq = platform_get_irq_byname_optional(pdev, irq_name);
-	if (irq > 0) {
-		ret = dwc3_qcom_request_irq(qcom, irq, irq_name);
-		if (ret)
-			return ret;
-		qcom->ports[port_index].dp_hs_phy_irq = irq;
-	}
-
-	if (is_multiport)
-		irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "dm_hs_phy_%d", port_index + 1);
-	else
-		irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "dm_hs_phy_irq");
-	if (!irq_name)
-		return -ENOMEM;
-
-	irq = platform_get_irq_byname_optional(pdev, irq_name);
-	if (irq > 0) {
-		ret = dwc3_qcom_request_irq(qcom, irq, irq_name);
-		if (ret)
-			return ret;
-		qcom->ports[port_index].dm_hs_phy_irq = irq;
-	}
-
-	if (is_multiport)
-		irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "ss_phy_%d", port_index + 1);
-	else
-		irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "ss_phy_irq");
-	if (!irq_name)
-		return -ENOMEM;
-
-	irq = platform_get_irq_byname_optional(pdev, irq_name);
-	if (irq > 0) {
-		ret = dwc3_qcom_request_irq(qcom, irq, irq_name);
-		if (ret)
-			return ret;
-		qcom->ports[port_index].ss_phy_irq = irq;
-	}
-
-	if (is_multiport)
-		return 0;
-
-	irq = platform_get_irq_byname_optional(pdev, "qusb2_phy");
-	if (irq > 0) {
-		ret = dwc3_qcom_request_irq(qcom, irq, "qusb2_phy");
-		if (ret)
-			return ret;
-		qcom->ports[port_index].qusb2_phy_irq = irq;
-	}
-
-	return 0;
-}
-
-static int dwc3_qcom_find_num_ports(struct platform_device *pdev)
-{
-	char irq_name[14];
-	int port_num;
-	int irq;
-
-	irq = platform_get_irq_byname_optional(pdev, "dp_hs_phy_1");
-	if (irq <= 0)
-		return 1;
-
-	for (port_num = 2; port_num <= DWC3_QCOM_MAX_PORTS; port_num++) {
-		sprintf(irq_name, "dp_hs_phy_%d", port_num);
-
-		irq = platform_get_irq_byname_optional(pdev, irq_name);
-		if (irq <= 0)
-			return port_num - 1;
-	}
-
-	return DWC3_QCOM_MAX_PORTS;
-}
-
 static int dwc3_qcom_setup_irq(struct platform_device *pdev)
 {
 	struct dwc3_qcom *qcom = platform_get_drvdata(pdev);
-	bool is_multiport;
+	int irq;
 	int ret;
-	int i;
 
-	qcom->num_ports = dwc3_qcom_find_num_ports(pdev);
-	is_multiport = (qcom->num_ports > 1);
-
-	for (i = 0; i < qcom->num_ports; i++) {
-		ret = dwc3_qcom_setup_port_irq(pdev, i, is_multiport);
-		if (ret)
+	irq = platform_get_irq_byname_optional(pdev, "qusb2_phy");
+	if (irq > 0) {
+		/* Keep wakeup interrupts disabled until suspend */
+		ret = devm_request_threaded_irq(qcom->dev, irq, NULL,
+					qcom_dwc3_resume_irq,
+					IRQF_ONESHOT | IRQF_NO_AUTOEN,
+					"qcom_dwc3 QUSB2", qcom);
+		if (ret) {
+			dev_err(qcom->dev, "qusb2_phy_irq failed: %d\n", ret);
 			return ret;
+		}
+		qcom->qusb2_phy_irq = irq;
+	}
+
+	irq = platform_get_irq_byname_optional(pdev, "dp_hs_phy_irq");
+	if (irq > 0) {
+		ret = devm_request_threaded_irq(qcom->dev, irq, NULL,
+					qcom_dwc3_resume_irq,
+					IRQF_ONESHOT | IRQF_NO_AUTOEN,
+					"qcom_dwc3 DP_HS", qcom);
+		if (ret) {
+			dev_err(qcom->dev, "dp_hs_phy_irq failed: %d\n", ret);
+			return ret;
+		}
+		qcom->dp_hs_phy_irq = irq;
+	}
+
+	irq = platform_get_irq_byname_optional(pdev, "dm_hs_phy_irq");
+	if (irq > 0) {
+		ret = devm_request_threaded_irq(qcom->dev, irq, NULL,
+					qcom_dwc3_resume_irq,
+					IRQF_ONESHOT | IRQF_NO_AUTOEN,
+					"qcom_dwc3 DM_HS", qcom);
+		if (ret) {
+			dev_err(qcom->dev, "dm_hs_phy_irq failed: %d\n", ret);
+			return ret;
+		}
+		qcom->dm_hs_phy_irq = irq;
+	}
+
+	irq = platform_get_irq_byname_optional(pdev, "ss_phy_irq");
+	if (irq > 0) {
+		ret = devm_request_threaded_irq(qcom->dev, irq, NULL,
+					qcom_dwc3_resume_irq,
+					IRQF_ONESHOT | IRQF_NO_AUTOEN,
+					"qcom_dwc3 SS", qcom);
+		if (ret) {
+			dev_err(qcom->dev, "ss_phy_irq failed: %d\n", ret);
+			return ret;
+		}
+		qcom->ss_phy_irq = irq;
 	}
 
 	return 0;
@@ -703,12 +613,11 @@ static int dwc3_qcom_clk_init(struct dwc3_qcom *qcom, int count)
 static int dwc3_qcom_of_register_core(struct platform_device *pdev)
 {
 	struct dwc3_qcom	*qcom = platform_get_drvdata(pdev);
-	struct device_node	*np = pdev->dev.of_node;
+	struct device_node	*np = pdev->dev.of_node, *dwc3_np;
 	struct device		*dev = &pdev->dev;
 	int			ret;
 
-	struct device_node *dwc3_np __free(device_node) = of_get_compatible_child(np,
-										  "snps,dwc3");
+	dwc3_np = of_get_compatible_child(np, "snps,dwc3");
 	if (!dwc3_np) {
 		dev_err(dev, "failed to find dwc3 core child\n");
 		return -ENODEV;
@@ -717,7 +626,7 @@ static int dwc3_qcom_of_register_core(struct platform_device *pdev)
 	ret = of_platform_populate(np, NULL, NULL, dev);
 	if (ret) {
 		dev_err(dev, "failed to register dwc3 core - %d\n", ret);
-		return ret;
+		goto node_put;
 	}
 
 	qcom->dwc3 = of_find_device_by_node(dwc3_np);
@@ -727,6 +636,9 @@ static int dwc3_qcom_of_register_core(struct platform_device *pdev)
 		of_platform_depopulate(dev);
 	}
 
+node_put:
+	of_node_put(dwc3_np);
+
 	return ret;
 }
 
@@ -735,6 +647,7 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	struct device_node	*np = pdev->dev.of_node;
 	struct device		*dev = &pdev->dev;
 	struct dwc3_qcom	*qcom;
+	struct resource		*res;
 	int			ret, i;
 	bool			ignore_pipe_clk;
 	bool			wakeup_source;
@@ -772,7 +685,9 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 		goto reset_assert;
 	}
 
-	qcom->qscratch_base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+	qcom->qscratch_base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(qcom->qscratch_base)) {
 		ret = PTR_ERR(qcom->qscratch_base);
 		goto clk_disable;

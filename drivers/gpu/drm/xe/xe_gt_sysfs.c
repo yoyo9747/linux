@@ -22,14 +22,14 @@ static const struct kobj_type xe_gt_sysfs_kobj_type = {
 	.sysfs_ops = &kobj_sysfs_ops,
 };
 
-static void gt_sysfs_fini(void *arg)
+static void gt_sysfs_fini(struct drm_device *drm, void *arg)
 {
 	struct xe_gt *gt = arg;
 
 	kobject_put(gt->sysfs);
 }
 
-int xe_gt_sysfs_init(struct xe_gt *gt)
+void xe_gt_sysfs_init(struct xe_gt *gt)
 {
 	struct xe_tile *tile = gt_to_tile(gt);
 	struct xe_device *xe = gt_to_xe(gt);
@@ -38,18 +38,24 @@ int xe_gt_sysfs_init(struct xe_gt *gt)
 
 	kg = kzalloc(sizeof(*kg), GFP_KERNEL);
 	if (!kg)
-		return -ENOMEM;
+		return;
 
 	kobject_init(&kg->base, &xe_gt_sysfs_kobj_type);
 	kg->gt = gt;
 
 	err = kobject_add(&kg->base, tile->sysfs, "gt%d", gt->info.id);
 	if (err) {
+		drm_warn(&xe->drm, "failed to add GT sysfs directory, err: %d\n", err);
 		kobject_put(&kg->base);
-		return err;
+		return;
 	}
 
 	gt->sysfs = &kg->base;
 
-	return devm_add_action_or_reset(xe->drm.dev, gt_sysfs_fini, gt);
+	err = drmm_add_action_or_reset(&xe->drm, gt_sysfs_fini, gt);
+	if (err) {
+		drm_warn(&xe->drm, "%s: drmm_add_action_or_reset failed, err: %d\n",
+			 __func__, err);
+		return;
+	}
 }

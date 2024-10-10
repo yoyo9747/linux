@@ -466,5 +466,4 @@ static struct platform_driver tps65910_rtc_driver = {
 module_platform_driver(tps65910_rtc_driver);
 MODULE_ALIAS("platform:tps65910-rtc");
 MODULE_AUTHOR("Venu Byravarasu <vbyravarasu@nvidia.com>");
-MODULE_DESCRIPTION("TI TPS65910 RTC driver");
 MODULE_LICENSE("GPL");

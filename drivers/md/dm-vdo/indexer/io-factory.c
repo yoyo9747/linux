@@ -90,7 +90,7 @@ void uds_put_io_factory(struct io_factory *factory)
 
 size_t uds_get_writable_size(struct io_factory *factory)
 {
-	return bdev_nr_bytes(factory->bdev);
+	return i_size_read(factory->bdev->bd_inode);
 }
 
 /* Create a struct dm_bufio_client for an index region starting at offset. */

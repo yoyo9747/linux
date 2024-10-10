@@ -15,6 +15,4 @@ amd_atl-y		+= map.o
 amd_atl-y		+= system.o
 amd_atl-y		+= umc.o
 
-amd_atl-$(CONFIG_AMD_ATL_PRM) += prm.o
-
 obj-$(CONFIG_AMD_ATL)	+= amd_atl.o

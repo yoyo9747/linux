@@ -85,7 +85,7 @@
 	DSU_EXT_ATTR(_name, dsu_pmu_sysfs_event_show, (unsigned long)_config)
 
 #define DSU_FORMAT_ATTR(_name, _config)		\
-	DSU_EXT_ATTR(_name, device_show_string, _config)
+	DSU_EXT_ATTR(_name, dsu_pmu_sysfs_format_show, (char *)_config)
 
 #define DSU_CPUMASK_ATTR(_name, _config)	\
 	DSU_EXT_ATTR(_name, dsu_pmu_cpumask_show, (unsigned long)_config)
@@ -137,6 +137,15 @@ static ssize_t dsu_pmu_sysfs_event_show(struct device *dev,
 	struct dev_ext_attribute *eattr = container_of(attr,
 					struct dev_ext_attribute, attr);
 	return sysfs_emit(buf, "event=0x%lx\n", (unsigned long)eattr->var);
+}
+
+static ssize_t dsu_pmu_sysfs_format_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct dev_ext_attribute *eattr = container_of(attr,
+					struct dev_ext_attribute, attr);
+	return sysfs_emit(buf, "%s\n", (char *)eattr->var);
 }
 
 static ssize_t dsu_pmu_cpumask_show(struct device *dev,
@@ -220,6 +229,15 @@ static const struct attribute_group *dsu_pmu_attr_groups[] = {
 	&dsu_pmu_format_attr_group,
 	NULL,
 };
+
+static int dsu_pmu_get_online_cpu_any_but(struct dsu_pmu *dsu_pmu, int cpu)
+{
+	struct cpumask online_supported;
+
+	cpumask_and(&online_supported,
+			 &dsu_pmu->associated_cpus, cpu_online_mask);
+	return cpumask_any_but(&online_supported, cpu);
+}
 
 static inline bool dsu_pmu_counter_valid(struct dsu_pmu *dsu_pmu, u32 idx)
 {
@@ -733,7 +751,6 @@ static int dsu_pmu_device_probe(struct platform_device *pdev)
 
 	dsu_pmu->pmu = (struct pmu) {
 		.task_ctx_nr	= perf_invalid_context,
-		.parent		= &pdev->dev,
 		.module		= THIS_MODULE,
 		.pmu_enable	= dsu_pmu_enable,
 		.pmu_disable	= dsu_pmu_disable,
@@ -810,16 +827,14 @@ static int dsu_pmu_cpu_online(unsigned int cpu, struct hlist_node *node)
 
 static int dsu_pmu_cpu_teardown(unsigned int cpu, struct hlist_node *node)
 {
-	struct dsu_pmu *dsu_pmu;
-	unsigned int dst;
-
-	dsu_pmu = hlist_entry_safe(node, struct dsu_pmu, cpuhp_node);
+	int dst;
+	struct dsu_pmu *dsu_pmu = hlist_entry_safe(node, struct dsu_pmu,
+						   cpuhp_node);
 
 	if (!cpumask_test_and_clear_cpu(cpu, &dsu_pmu->active_cpu))
 		return 0;
 
-	dst = cpumask_any_and_but(&dsu_pmu->associated_cpus,
-				  cpu_online_mask, cpu);
+	dst = dsu_pmu_get_online_cpu_any_but(dsu_pmu, cpu);
 	/* If there are no active CPUs in the DSU, leave IRQ disabled */
 	if (dst >= nr_cpu_ids)
 		return 0;

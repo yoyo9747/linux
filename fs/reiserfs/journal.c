@@ -2626,7 +2626,8 @@ static int journal_init_dev(struct super_block *super,
 					 MAJOR(jdev), MINOR(jdev), result);
 			return result;
 		} else if (jdev != super->s_dev)
-			set_blocksize(journal->j_bdev_file, super->s_blocksize);
+			set_blocksize(file_bdev(journal->j_bdev_file),
+				      super->s_blocksize);
 
 		return 0;
 	}
@@ -2642,7 +2643,7 @@ static int journal_init_dev(struct super_block *super,
 		return result;
 	}
 
-	set_blocksize(journal->j_bdev_file, super->s_blocksize);
+	set_blocksize(file_bdev(journal->j_bdev_file), super->s_blocksize);
 	reiserfs_info(super,
 		      "journal_init_dev: journal device: %pg\n",
 		      file_bdev(journal->j_bdev_file));

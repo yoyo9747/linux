@@ -19,14 +19,17 @@ static inline bool seqmutex_trylock(struct seqmutex *lock)
 static inline void seqmutex_lock(struct seqmutex *lock)
 {
 	mutex_lock(&lock->lock);
-	lock->seq++;
 }
 
-static inline u32 seqmutex_unlock(struct seqmutex *lock)
+static inline void seqmutex_unlock(struct seqmutex *lock)
 {
-	u32 seq = lock->seq;
+	lock->seq++;
 	mutex_unlock(&lock->lock);
-	return seq;
+}
+
+static inline u32 seqmutex_seq(struct seqmutex *lock)
+{
+	return lock->seq;
 }
 
 static inline bool seqmutex_relock(struct seqmutex *lock, u32 seq)

@@ -813,6 +813,7 @@ static int ina3221_probe_child_from_dt(struct device *dev,
 static int ina3221_probe_from_dt(struct device *dev, struct ina3221_data *ina)
 {
 	const struct device_node *np = dev->of_node;
+	struct device_node *child;
 	int ret;
 
 	/* Compatible with non-DT platforms */
@@ -821,10 +822,12 @@ static int ina3221_probe_from_dt(struct device *dev, struct ina3221_data *ina)
 
 	ina->single_shot = of_property_read_bool(np, "ti,single-shot");
 
-	for_each_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		ret = ina3221_probe_child_from_dt(dev, child, ina);
-		if (ret)
+		if (ret) {
+			of_node_put(child);
 			return ret;
+		}
 	}
 
 	return 0;
@@ -1028,7 +1031,7 @@ static const struct of_device_id ina3221_of_match_table[] = {
 MODULE_DEVICE_TABLE(of, ina3221_of_match_table);
 
 static const struct i2c_device_id ina3221_ids[] = {
-	{ "ina3221" },
+	{ "ina3221", 0 },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(i2c, ina3221_ids);

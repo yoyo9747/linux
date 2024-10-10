@@ -16,7 +16,7 @@
 #include <linux/mod_devicetable.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "adxl367.h"
 
@@ -621,7 +621,7 @@ static int _adxl367_set_odr(struct adxl367_state *st, enum adxl367_odr odr)
 static int adxl367_set_odr(struct iio_dev *indio_dev, enum adxl367_odr odr)
 {
 	iio_device_claim_direct_scoped(return -EBUSY, indio_dev) {
-		struct adxl367_state *st = iio_priv(indio_dev);
+		struct adxl367_state *st = iio_priv(indio_dev);;
 		int ret;
 
 		guard(mutex)(&st->lock);
@@ -1220,7 +1220,7 @@ static int adxl367_update_scan_mode(struct iio_dev *indio_dev,
 		return ret;
 
 	st->fifo_set_size = bitmap_weight(active_scan_mask,
-					  iio_get_masklength(indio_dev));
+					  indio_dev->masklength);
 
 	return 0;
 }

@@ -8,7 +8,6 @@
 #include <linux/mm_types.h>
 #include <linux/gfp.h>
 #include <linux/sync_core.h>
-#include <linux/sched/coredump.h>
 
 /*
  * Routines for handling mm_structs
@@ -179,36 +178,22 @@ static inline void mm_update_next_owner(struct mm_struct *mm)
 
 extern void arch_pick_mmap_layout(struct mm_struct *mm,
 				  struct rlimit *rlim_stack);
-
-unsigned long
-arch_get_unmapped_area(struct file *filp, unsigned long addr,
-		       unsigned long len, unsigned long pgoff,
-		       unsigned long flags, vm_flags_t vm_flags);
-unsigned long
+extern unsigned long
+arch_get_unmapped_area(struct file *, unsigned long, unsigned long,
+		       unsigned long, unsigned long);
+extern unsigned long
 arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
-			       unsigned long len, unsigned long pgoff,
-			       unsigned long flags, vm_flags_t);
-
-unsigned long mm_get_unmapped_area(struct mm_struct *mm, struct file *filp,
-				   unsigned long addr, unsigned long len,
-				   unsigned long pgoff, unsigned long flags);
-
-unsigned long mm_get_unmapped_area_vmflags(struct mm_struct *mm,
-					   struct file *filp,
-					   unsigned long addr,
-					   unsigned long len,
-					   unsigned long pgoff,
-					   unsigned long flags,
-					   vm_flags_t vm_flags);
+			  unsigned long len, unsigned long pgoff,
+			  unsigned long flags);
 
 unsigned long
 generic_get_unmapped_area(struct file *filp, unsigned long addr,
 			  unsigned long len, unsigned long pgoff,
-			  unsigned long flags, vm_flags_t vm_flags);
+			  unsigned long flags);
 unsigned long
 generic_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
 				  unsigned long len, unsigned long pgoff,
-				  unsigned long flags, vm_flags_t vm_flags);
+				  unsigned long flags);
 #else
 static inline void arch_pick_mmap_layout(struct mm_struct *mm,
 					 struct rlimit *rlim_stack) {}
@@ -251,15 +236,24 @@ static inline gfp_t current_gfp_context(gfp_t flags)
 {
 	unsigned int pflags = READ_ONCE(current->flags);
 
-	if (unlikely(pflags & (PF_MEMALLOC_NOIO | PF_MEMALLOC_NOFS | PF_MEMALLOC_PIN))) {
+	if (unlikely(pflags & (PF_MEMALLOC_NOIO |
+			       PF_MEMALLOC_NOFS |
+			       PF_MEMALLOC_NORECLAIM |
+			       PF_MEMALLOC_NOWARN |
+			       PF_MEMALLOC_PIN))) {
 		/*
-		 * NOIO implies both NOIO and NOFS and it is a weaker context
-		 * so always make sure it makes precedence
+		 * Stronger flags before weaker flags:
+		 * NORECLAIM implies NOIO, which in turn implies NOFS
 		 */
-		if (pflags & PF_MEMALLOC_NOIO)
+		if (pflags & PF_MEMALLOC_NORECLAIM)
+			flags &= ~__GFP_DIRECT_RECLAIM;
+		else if (pflags & PF_MEMALLOC_NOIO)
 			flags &= ~(__GFP_IO | __GFP_FS);
 		else if (pflags & PF_MEMALLOC_NOFS)
 			flags &= ~__GFP_FS;
+
+		if (pflags & PF_MEMALLOC_NOWARN)
+			flags |= __GFP_NOWARN;
 
 		if (pflags & PF_MEMALLOC_PIN)
 			flags &= ~__GFP_MOVABLE;

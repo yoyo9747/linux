@@ -20,9 +20,7 @@
 
 #include "rpmsg_internal.h"
 
-const struct class rpmsg_class = {
-	.name = "rpmsg",
-};
+struct class *rpmsg_class;
 EXPORT_SYMBOL(rpmsg_class);
 
 /**
@@ -493,10 +491,10 @@ static inline int rpmsg_id_match(const struct rpmsg_device *rpdev,
 }
 
 /* match rpmsg channel and rpmsg driver */
-static int rpmsg_dev_match(struct device *dev, const struct device_driver *drv)
+static int rpmsg_dev_match(struct device *dev, struct device_driver *drv)
 {
 	struct rpmsg_device *rpdev = to_rpmsg_device(dev);
-	const struct rpmsg_driver *rpdrv = to_rpmsg_driver(drv);
+	struct rpmsg_driver *rpdrv = to_rpmsg_driver(drv);
 	const struct rpmsg_device_id *ids = rpdrv->id_table;
 	unsigned int i;
 
@@ -717,16 +715,16 @@ static int __init rpmsg_init(void)
 {
 	int ret;
 
-	ret = class_register(&rpmsg_class);
-	if (ret) {
-		pr_err("failed to register rpmsg class\n");
-		return ret;
+	rpmsg_class = class_create("rpmsg");
+	if (IS_ERR(rpmsg_class)) {
+		pr_err("failed to create rpmsg class\n");
+		return PTR_ERR(rpmsg_class);
 	}
 
 	ret = bus_register(&rpmsg_bus);
 	if (ret) {
 		pr_err("failed to register rpmsg bus: %d\n", ret);
-		class_destroy(&rpmsg_class);
+		class_destroy(rpmsg_class);
 	}
 	return ret;
 }
@@ -735,7 +733,7 @@ postcore_initcall(rpmsg_init);
 static void __exit rpmsg_fini(void)
 {
 	bus_unregister(&rpmsg_bus);
-	class_destroy(&rpmsg_class);
+	class_destroy(rpmsg_class);
 }
 module_exit(rpmsg_fini);
 

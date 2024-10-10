@@ -644,7 +644,7 @@ static int powernow_cpu_init(struct cpufreq_policy *policy)
 	return 0;
 }
 
-static void powernow_cpu_exit(struct cpufreq_policy *policy)
+static int powernow_cpu_exit(struct cpufreq_policy *policy)
 {
 #ifdef CONFIG_X86_POWERNOW_K7_ACPI
 	if (acpi_processor_perf) {
@@ -655,6 +655,7 @@ static void powernow_cpu_exit(struct cpufreq_policy *policy)
 #endif
 
 	kfree(powernow_table);
+	return 0;
 }
 
 static struct cpufreq_driver powernow_driver = {

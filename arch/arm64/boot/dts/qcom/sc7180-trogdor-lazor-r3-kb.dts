@@ -21,6 +21,6 @@
 		"qcom,sc7180";
 };
 
-&pwmleds {
+&keyboard_backlight {
 	status = "okay";
 };

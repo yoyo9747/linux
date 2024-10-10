@@ -8,12 +8,9 @@
 #include <unistd.h>
 #include <api/fs/fs.h>
 #include <linux/kernel.h>
-#include "cpumap.h"
 #include "map_symbol.h"
 #include "mem-events.h"
-#include "mem-info.h"
 #include "debug.h"
-#include "evsel.h"
 #include "symbol.h"
 #include "pmu.h"
 #include "pmus.h"
@@ -28,8 +25,6 @@ struct perf_mem_event perf_mem_events[PERF_MEM_EVENTS__MAX] = {
 	E(NULL,			NULL,				NULL,		false,	0),
 };
 #undef E
-
-bool perf_mem_record[PERF_MEM_EVENTS__MAX] = { 0 };
 
 static char mem_loads_name[100];
 static char mem_stores_name[100];
@@ -89,7 +84,7 @@ static const char *perf_pmu__mem_events_name(int i, struct perf_pmu *pmu)
 		return NULL;
 
 	e = &pmu->mem_events[i];
-	if (!e || !e->name)
+	if (!e)
 		return NULL;
 
 	if (i == PERF_MEM_EVENTS__LOAD || i == PERF_MEM_EVENTS__LOAD_STORE) {
@@ -165,7 +160,7 @@ int perf_pmu__mem_events_parse(struct perf_pmu *pmu, const char *str)
 				continue;
 
 			if (strstr(e->tag, tok))
-				perf_mem_record[j] = found = true;
+				e->record = found = true;
 		}
 
 		tok = strtok_r(NULL, ",", &saveptr);
@@ -194,7 +189,7 @@ static bool perf_pmu__mem_events_supported(const char *mnt, struct perf_pmu *pmu
 	return !stat(path, &st);
 }
 
-static int __perf_pmu__mem_events_init(struct perf_pmu *pmu)
+int perf_pmu__mem_events_init(struct perf_pmu *pmu)
 {
 	const char *mnt = sysfs__mount();
 	bool found = false;
@@ -221,18 +216,6 @@ static int __perf_pmu__mem_events_init(struct perf_pmu *pmu)
 	return found ? 0 : -ENOENT;
 }
 
-int perf_pmu__mem_events_init(void)
-{
-	struct perf_pmu *pmu = NULL;
-
-	while ((pmu = perf_pmus__scan_mem(pmu)) != NULL) {
-		if (__perf_pmu__mem_events_init(pmu))
-			return -ENOENT;
-	}
-
-	return 0;
-}
-
 void perf_pmu__mem_events_list(struct perf_pmu *pmu)
 {
 	int j;
@@ -257,13 +240,12 @@ int perf_mem_events__record_args(const char **rec_argv, int *argv_nr)
 	int i = *argv_nr;
 	const char *s;
 	char *copy;
-	struct perf_cpu_map *cpu_map = NULL;
 
 	while ((pmu = perf_pmus__scan_mem(pmu)) != NULL) {
 		for (int j = 0; j < PERF_MEM_EVENTS__MAX; j++) {
 			e = perf_pmu__mem_events_ptr(pmu, j);
 
-			if (!perf_mem_record[j])
+			if (!e->record)
 				continue;
 
 			if (!e->supported) {
@@ -282,19 +264,7 @@ int perf_mem_events__record_args(const char **rec_argv, int *argv_nr)
 
 			rec_argv[i++] = "-e";
 			rec_argv[i++] = copy;
-
-			cpu_map = perf_cpu_map__merge(cpu_map, pmu->cpus);
 		}
-	}
-
-	if (cpu_map) {
-		if (!perf_cpu_map__equal(cpu_map, cpu_map__online())) {
-			char buf[200];
-
-			cpu_map__snprint(cpu_map, buf, sizeof(buf));
-			pr_warning("Memory events are enabled on a subset of CPUs: %s\n", buf);
-		}
-		perf_cpu_map__put(cpu_map);
 	}
 
 	*argv_nr = i;
@@ -311,7 +281,7 @@ static const char * const tlb_access[] = {
 	"Fault",
 };
 
-int perf_mem__tlb_scnprintf(char *out, size_t sz, const struct mem_info *mem_info)
+int perf_mem__tlb_scnprintf(char *out, size_t sz, struct mem_info *mem_info)
 {
 	size_t l = 0, i;
 	u64 m = PERF_MEM_TLB_NA;
@@ -321,7 +291,7 @@ int perf_mem__tlb_scnprintf(char *out, size_t sz, const struct mem_info *mem_inf
 	out[0] = '\0';
 
 	if (mem_info)
-		m = mem_info__const_data_src(mem_info)->mem_dtlb;
+		m = mem_info->data_src.mem_dtlb;
 
 	hit = m & PERF_MEM_TLB_HIT;
 	miss = m & PERF_MEM_TLB_MISS;
@@ -389,13 +359,13 @@ static const char * const mem_hops[] = {
 	"board",
 };
 
-static int perf_mem__op_scnprintf(char *out, size_t sz, const struct mem_info *mem_info)
+static int perf_mem__op_scnprintf(char *out, size_t sz, struct mem_info *mem_info)
 {
 	u64 op = PERF_MEM_LOCK_NA;
 	int l;
 
 	if (mem_info)
-		op = mem_info__const_data_src(mem_info)->mem_op;
+		op = mem_info->data_src.mem_op;
 
 	if (op & PERF_MEM_OP_NA)
 		l = scnprintf(out, sz, "N/A");
@@ -413,7 +383,7 @@ static int perf_mem__op_scnprintf(char *out, size_t sz, const struct mem_info *m
 	return l;
 }
 
-int perf_mem__lvl_scnprintf(char *out, size_t sz, const struct mem_info *mem_info)
+int perf_mem__lvl_scnprintf(char *out, size_t sz, struct mem_info *mem_info)
 {
 	union perf_mem_data_src data_src;
 	int printed = 0;
@@ -428,7 +398,7 @@ int perf_mem__lvl_scnprintf(char *out, size_t sz, const struct mem_info *mem_inf
 	if (!mem_info)
 		goto na;
 
-	data_src = *mem_info__const_data_src(mem_info);
+	data_src = mem_info->data_src;
 
 	if (data_src.mem_lvl & PERF_MEM_LVL_HIT)
 		memcpy(hit_miss, "hit", 3);
@@ -495,7 +465,7 @@ static const char * const snoopx_access[] = {
 	"Peer",
 };
 
-int perf_mem__snp_scnprintf(char *out, size_t sz, const struct mem_info *mem_info)
+int perf_mem__snp_scnprintf(char *out, size_t sz, struct mem_info *mem_info)
 {
 	size_t i, l = 0;
 	u64 m = PERF_MEM_SNOOP_NA;
@@ -504,7 +474,7 @@ int perf_mem__snp_scnprintf(char *out, size_t sz, const struct mem_info *mem_inf
 	out[0] = '\0';
 
 	if (mem_info)
-		m = mem_info__const_data_src(mem_info)->mem_snoop;
+		m = mem_info->data_src.mem_snoop;
 
 	for (i = 0; m && i < ARRAY_SIZE(snoop_access); i++, m >>= 1) {
 		if (!(m & 0x1))
@@ -518,7 +488,7 @@ int perf_mem__snp_scnprintf(char *out, size_t sz, const struct mem_info *mem_inf
 
 	m = 0;
 	if (mem_info)
-		m = mem_info__const_data_src(mem_info)->mem_snoopx;
+		m = mem_info->data_src.mem_snoopx;
 
 	for (i = 0; m && i < ARRAY_SIZE(snoopx_access); i++, m >>= 1) {
 		if (!(m & 0x1))
@@ -537,13 +507,13 @@ int perf_mem__snp_scnprintf(char *out, size_t sz, const struct mem_info *mem_inf
 	return l;
 }
 
-int perf_mem__lck_scnprintf(char *out, size_t sz, const struct mem_info *mem_info)
+int perf_mem__lck_scnprintf(char *out, size_t sz, struct mem_info *mem_info)
 {
 	u64 mask = PERF_MEM_LOCK_NA;
 	int l;
 
 	if (mem_info)
-		mask = mem_info__const_data_src(mem_info)->mem_lock;
+		mask = mem_info->data_src.mem_lock;
 
 	if (mask & PERF_MEM_LOCK_NA)
 		l = scnprintf(out, sz, "N/A");
@@ -555,7 +525,7 @@ int perf_mem__lck_scnprintf(char *out, size_t sz, const struct mem_info *mem_inf
 	return l;
 }
 
-int perf_mem__blk_scnprintf(char *out, size_t sz, const struct mem_info *mem_info)
+int perf_mem__blk_scnprintf(char *out, size_t sz, struct mem_info *mem_info)
 {
 	size_t l = 0;
 	u64 mask = PERF_MEM_BLK_NA;
@@ -564,7 +534,7 @@ int perf_mem__blk_scnprintf(char *out, size_t sz, const struct mem_info *mem_inf
 	out[0] = '\0';
 
 	if (mem_info)
-		mask = mem_info__const_data_src(mem_info)->mem_blk;
+		mask = mem_info->data_src.mem_blk;
 
 	if (!mask || (mask & PERF_MEM_BLK_NA)) {
 		l += scnprintf(out + l, sz - l, " N/A");
@@ -578,7 +548,7 @@ int perf_mem__blk_scnprintf(char *out, size_t sz, const struct mem_info *mem_inf
 	return l;
 }
 
-int perf_script__meminfo_scnprintf(char *out, size_t sz, const struct mem_info *mem_info)
+int perf_script__meminfo_scnprintf(char *out, size_t sz, struct mem_info *mem_info)
 {
 	int i = 0;
 
@@ -600,8 +570,8 @@ int perf_script__meminfo_scnprintf(char *out, size_t sz, const struct mem_info *
 
 int c2c_decode_stats(struct c2c_stats *stats, struct mem_info *mi)
 {
-	union perf_mem_data_src *data_src = mem_info__data_src(mi);
-	u64 daddr  = mem_info__daddr(mi)->addr;
+	union perf_mem_data_src *data_src = &mi->data_src;
+	u64 daddr  = mi->daddr.addr;
 	u64 op     = data_src->mem_op;
 	u64 lvl    = data_src->mem_lvl;
 	u64 snoop  = data_src->mem_snoop;
@@ -728,7 +698,7 @@ do {				\
 		return -1;
 	}
 
-	if (!mem_info__daddr(mi)->ms.map || !mem_info__iaddr(mi)->ms.map) {
+	if (!mi->daddr.ms.map || !mi->iaddr.ms.map) {
 		stats->nomap++;
 		return -1;
 	}

@@ -1150,8 +1150,9 @@ static int ext4_ioctl_getlabel(struct ext4_sb_info *sbi, char __user *user_label
 	 */
 	BUILD_BUG_ON(EXT4_LABEL_MAX >= FSLABEL_MAX);
 
+	memset(label, 0, sizeof(label));
 	lock_buffer(sbi->s_sbh);
-	memtostr_pad(label, sbi->s_es->s_volume_name);
+	strncpy(label, sbi->s_es->s_volume_name, EXT4_LABEL_MAX);
 	unlock_buffer(sbi->s_sbh);
 
 	if (copy_to_user(user_label, label, sizeof(label)))
@@ -1343,10 +1344,10 @@ group_extend_out:
 		me.moved_len = 0;
 
 		donor = fdget(me.donor_fd);
-		if (!fd_file(donor))
+		if (!donor.file)
 			return -EBADF;
 
-		if (!(fd_file(donor)->f_mode & FMODE_WRITE)) {
+		if (!(donor.file->f_mode & FMODE_WRITE)) {
 			err = -EBADF;
 			goto mext_out;
 		}
@@ -1367,7 +1368,7 @@ group_extend_out:
 		if (err)
 			goto mext_out;
 
-		err = ext4_move_extents(filp, fd_file(donor), me.orig_start,
+		err = ext4_move_extents(filp, donor.file, me.orig_start,
 					me.donor_start, me.len, &me.moved_len);
 		mnt_drop_write_file(filp);
 

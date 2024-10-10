@@ -156,11 +156,8 @@ void v4l2_device_unregister(struct v4l2_device *v4l2_dev);
  * An error is returned if the module is no longer loaded on any attempts
  * to register it.
  */
-#define v4l2_device_register_subdev(v4l2_dev, sd) \
-	__v4l2_device_register_subdev(v4l2_dev, sd, THIS_MODULE)
-int __must_check __v4l2_device_register_subdev(struct v4l2_device *v4l2_dev,
-					       struct v4l2_subdev *sd,
-					       struct module *module);
+int __must_check v4l2_device_register_subdev(struct v4l2_device *v4l2_dev,
+					     struct v4l2_subdev *sd);
 
 /**
  * v4l2_device_unregister_subdev - Unregisters a subdev with a v4l2 device.

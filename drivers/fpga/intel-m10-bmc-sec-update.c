@@ -529,12 +529,11 @@ static enum fw_upload_err m10bmc_sec_prepare(struct fw_upload *fwl,
 					     const u8 *data, u32 size)
 {
 	struct m10bmc_sec *sec = fwl->dd_handle;
-	const struct m10bmc_csr_map *csr_map = sec->m10bmc->info->csr_map;
 	u32 ret;
 
 	sec->cancel_request = false;
 
-	if (!size || size > csr_map->staging_size)
+	if (!size || size > M10BMC_STAGING_SIZE)
 		return FW_UPLOAD_ERR_INVALID_SIZE;
 
 	if (sec->m10bmc->flash_bulk_ops)

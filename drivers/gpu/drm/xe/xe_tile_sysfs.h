@@ -8,7 +8,7 @@
 
 #include "xe_tile_sysfs_types.h"
 
-int xe_tile_sysfs_init(struct xe_tile *tile);
+void xe_tile_sysfs_init(struct xe_tile *tile);
 
 static inline struct xe_tile *
 kobj_to_tile(struct kobject *kobj)

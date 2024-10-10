@@ -66,10 +66,8 @@ int sdw_master_read_prop(struct sdw_bus *bus)
 		prop->clk_freq = devm_kcalloc(bus->dev, prop->num_clk_freq,
 					      sizeof(*prop->clk_freq),
 					      GFP_KERNEL);
-		if (!prop->clk_freq) {
-			fwnode_handle_put(link);
+		if (!prop->clk_freq)
 			return -ENOMEM;
-		}
 
 		fwnode_property_read_u32_array(link,
 				"mipi-sdw-clock-frequencies-supported",
@@ -94,10 +92,8 @@ int sdw_master_read_prop(struct sdw_bus *bus)
 		prop->clk_gears = devm_kcalloc(bus->dev, prop->num_clk_gears,
 					       sizeof(*prop->clk_gears),
 					       GFP_KERNEL);
-		if (!prop->clk_gears) {
-			fwnode_handle_put(link);
+		if (!prop->clk_gears)
 			return -ENOMEM;
-		}
 
 		fwnode_property_read_u32_array(link,
 					       "mipi-sdw-supported-clock-gears",
@@ -119,8 +115,6 @@ int sdw_master_read_prop(struct sdw_bus *bus)
 
 	fwnode_property_read_u32(link, "mipi-sdw-command-error-threshold",
 				 &prop->err_threshold);
-
-	fwnode_handle_put(link);
 
 	return 0;
 }
@@ -203,10 +197,8 @@ static int sdw_slave_read_dpn(struct sdw_slave *slave,
 						    dpn[i].num_words,
 						    sizeof(*dpn[i].words),
 						    GFP_KERNEL);
-			if (!dpn[i].words) {
-				fwnode_handle_put(node);
+			if (!dpn[i].words)
 				return -ENOMEM;
-			}
 
 			fwnode_property_read_u32_array(node,
 					"mipi-sdw-port-wordlength-configs",
@@ -244,10 +236,8 @@ static int sdw_slave_read_dpn(struct sdw_slave *slave,
 						       dpn[i].num_channels,
 						       sizeof(*dpn[i].channels),
 						 GFP_KERNEL);
-			if (!dpn[i].channels) {
-				fwnode_handle_put(node);
+			if (!dpn[i].channels)
 				return -ENOMEM;
-			}
 
 			fwnode_property_read_u32_array(node,
 					"mipi-sdw-channel-number-list",
@@ -261,10 +251,8 @@ static int sdw_slave_read_dpn(struct sdw_slave *slave,
 					dpn[i].num_ch_combinations,
 					sizeof(*dpn[i].ch_combinations),
 					GFP_KERNEL);
-			if (!dpn[i].ch_combinations) {
-				fwnode_handle_put(node);
+			if (!dpn[i].ch_combinations)
 				return -ENOMEM;
-			}
 
 			fwnode_property_read_u32_array(node,
 					"mipi-sdw-channel-combination-list",
@@ -285,8 +273,6 @@ static int sdw_slave_read_dpn(struct sdw_slave *slave,
 					 &dpn[i].port_encoding);
 
 		/* TODO: Read audio mode */
-
-		fwnode_handle_put(node);
 
 		i++;
 	}
@@ -362,14 +348,10 @@ int sdw_slave_read_prop(struct sdw_slave *slave)
 		prop->dp0_prop = devm_kzalloc(&slave->dev,
 					      sizeof(*prop->dp0_prop),
 					      GFP_KERNEL);
-		if (!prop->dp0_prop) {
-			fwnode_handle_put(port);
+		if (!prop->dp0_prop)
 			return -ENOMEM;
-		}
 
 		sdw_slave_read_dp0(slave, port, prop->dp0_prop);
-
-		fwnode_handle_put(port);
 	}
 
 	/*

@@ -18,8 +18,6 @@
 #include "../kselftest.h"
 #include "cgroup_util.h"
 
-static bool nsdelegate;
-
 static int touch_anon(char *buf, size_t size)
 {
 	int fd;
@@ -777,9 +775,6 @@ static int test_cgcore_lesser_ns_open(const char *root)
 	pid_t pid;
 	int status;
 
-	if (!nsdelegate)
-		return KSFT_SKIP;
-
 	cg_test_a = cg_name(root, "cg_test_a");
 	cg_test_b = cg_name(root, "cg_test_b");
 
@@ -867,7 +862,7 @@ int main(int argc, char *argv[])
 	char root[PATH_MAX];
 	int i, ret = EXIT_SUCCESS;
 
-	if (cg_find_unified_root(root, sizeof(root), &nsdelegate))
+	if (cg_find_unified_root(root, sizeof(root)))
 		ksft_exit_skip("cgroup v2 isn't mounted\n");
 
 	if (cg_read_strstr(root, "cgroup.subtree_control", "memory"))

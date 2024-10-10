@@ -122,11 +122,11 @@ static bool valid_kwork_class_type(enum kwork_class_type type)
 
 static int setup_filters(struct perf_kwork *kwork)
 {
-	if (kwork->cpu_list) {
-		int idx, nr_cpus, fd;
-		struct perf_cpu_map *map;
-		struct perf_cpu cpu;
+	u8 val = 1;
+	int i, nr_cpus, fd;
+	struct perf_cpu_map *map;
 
+	if (kwork->cpu_list) {
 		fd = bpf_map__fd(skel->maps.kwork_top_cpu_filter);
 		if (fd < 0) {
 			pr_debug("Invalid cpu filter fd\n");
@@ -140,8 +140,8 @@ static int setup_filters(struct perf_kwork *kwork)
 		}
 
 		nr_cpus = libbpf_num_possible_cpus();
-		perf_cpu_map__for_each_cpu(cpu, idx, map) {
-			u8 val = 1;
+		for (i = 0; i < perf_cpu_map__nr(map); i++) {
+			struct perf_cpu cpu = perf_cpu_map__cpu(map, i);
 
 			if (cpu.cpu >= nr_cpus) {
 				perf_cpu_map__put(map);
@@ -151,12 +151,14 @@ static int setup_filters(struct perf_kwork *kwork)
 			bpf_map_update_elem(fd, &cpu.cpu, &val, BPF_ANY);
 		}
 		perf_cpu_map__put(map);
+
+		skel->bss->has_cpu_filter = 1;
 	}
 
 	return 0;
 }
 
-int perf_kwork__top_prepare_bpf(struct perf_kwork *kwork)
+int perf_kwork__top_prepare_bpf(struct perf_kwork *kwork __maybe_unused)
 {
 	struct bpf_program *prog;
 	struct kwork_class *class;
@@ -190,9 +192,6 @@ int perf_kwork__top_prepare_bpf(struct perf_kwork *kwork)
 		if (class_bpf->load_prepare)
 			class_bpf->load_prepare();
 	}
-
-	if (kwork->cpu_list)
-		skel->rodata->has_cpu_filter = 1;
 
 	if (kwork_top_bpf__load(skel)) {
 		pr_debug("Failed to load kwork top skeleton\n");

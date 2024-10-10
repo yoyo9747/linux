@@ -31,14 +31,12 @@ EXPORT_SYMBOL_GPL(crypto_alg_sem);
 BLOCKING_NOTIFIER_HEAD(crypto_chain);
 EXPORT_SYMBOL_GPL(crypto_chain);
 
-#if IS_BUILTIN(CONFIG_CRYPTO_ALGAPI) && \
-    !IS_ENABLED(CONFIG_CRYPTO_MANAGER_DISABLE_TESTS)
+#ifndef CONFIG_CRYPTO_MANAGER_DISABLE_TESTS
 DEFINE_STATIC_KEY_FALSE(__crypto_boot_test_finished);
+EXPORT_SYMBOL_GPL(__crypto_boot_test_finished);
 #endif
 
 static struct crypto_alg *crypto_larval_wait(struct crypto_alg *alg);
-static struct crypto_alg *crypto_alg_lookup(const char *name, u32 type,
-					    u32 mask);
 
 struct crypto_alg *crypto_mod_get(struct crypto_alg *alg)
 {
@@ -68,6 +66,11 @@ static struct crypto_alg *__crypto_alg_lookup(const char *name, u32 type,
 			continue;
 
 		if ((q->cra_flags ^ type) & mask)
+			continue;
+
+		if (crypto_is_larval(q) &&
+		    !crypto_is_test_larval((struct crypto_larval *)q) &&
+		    ((struct crypto_larval *)q)->mask != mask)
 			continue;
 
 		exact = !strcmp(q->cra_driver_name, name);
@@ -107,8 +110,6 @@ struct crypto_larval *crypto_larval_alloc(const char *name, u32 type, u32 mask)
 	larval = kzalloc(sizeof(*larval), GFP_KERNEL);
 	if (!larval)
 		return ERR_PTR(-ENOMEM);
-
-	type &= ~CRYPTO_ALG_TYPE_MASK | (mask ?: CRYPTO_ALG_TYPE_MASK);
 
 	larval->mask = mask;
 	larval->alg.cra_flags = CRYPTO_ALG_LARVAL | type;
@@ -151,31 +152,32 @@ static struct crypto_alg *crypto_larval_add(const char *name, u32 type,
 	return alg;
 }
 
-static void crypto_larval_kill(struct crypto_larval *larval)
+void crypto_larval_kill(struct crypto_alg *alg)
 {
-	bool unlinked;
+	struct crypto_larval *larval = (void *)alg;
 
 	down_write(&crypto_alg_sem);
-	unlinked = list_empty(&larval->alg.cra_list);
-	if (!unlinked)
-		list_del_init(&larval->alg.cra_list);
+	list_del(&alg->cra_list);
 	up_write(&crypto_alg_sem);
-
-	if (unlinked)
-		return;
-
 	complete_all(&larval->completion);
-	crypto_alg_put(&larval->alg);
+	crypto_alg_put(alg);
 }
+EXPORT_SYMBOL_GPL(crypto_larval_kill);
 
-void crypto_schedule_test(struct crypto_larval *larval)
+void crypto_wait_for_test(struct crypto_larval *larval)
 {
 	int err;
 
 	err = crypto_probing_notify(CRYPTO_MSG_ALG_REGISTER, larval->adult);
-	WARN_ON_ONCE(err != NOTIFY_STOP);
+	if (WARN_ON_ONCE(err != NOTIFY_STOP))
+		goto out;
+
+	err = wait_for_completion_killable(&larval->completion);
+	WARN_ON(err);
+out:
+	crypto_larval_kill(&larval->alg);
 }
-EXPORT_SYMBOL_GPL(crypto_schedule_test);
+EXPORT_SYMBOL_GPL(crypto_wait_for_test);
 
 static void crypto_start_test(struct crypto_larval *larval)
 {
@@ -194,40 +196,28 @@ static void crypto_start_test(struct crypto_larval *larval)
 	larval->test_started = true;
 	up_write(&crypto_alg_sem);
 
-	crypto_schedule_test(larval);
+	crypto_wait_for_test(larval);
 }
 
 static struct crypto_alg *crypto_larval_wait(struct crypto_alg *alg)
 {
-	struct crypto_larval *larval;
-	long time_left;
-
-again:
-	larval = container_of(alg, struct crypto_larval, alg);
+	struct crypto_larval *larval = (void *)alg;
+	long timeout;
 
 	if (!crypto_boot_test_finished())
 		crypto_start_test(larval);
 
-	time_left = wait_for_completion_killable_timeout(
+	timeout = wait_for_completion_killable_timeout(
 		&larval->completion, 60 * HZ);
 
 	alg = larval->adult;
-	if (time_left < 0)
+	if (timeout < 0)
 		alg = ERR_PTR(-EINTR);
-	else if (!time_left) {
-		if (crypto_is_test_larval(larval))
-			crypto_larval_kill(larval);
+	else if (!timeout)
 		alg = ERR_PTR(-ETIMEDOUT);
-	} else if (!alg) {
-		u32 type;
-		u32 mask;
-
-		alg = &larval->alg;
-		type = alg->cra_flags & ~(CRYPTO_ALG_LARVAL | CRYPTO_ALG_DEAD);
-		mask = larval->mask;
-		alg = crypto_alg_lookup(alg->cra_name, type, mask) ?:
-		      ERR_PTR(-EAGAIN);
-	} else if (IS_ERR(alg))
+	else if (!alg)
+		alg = ERR_PTR(-ENOENT);
+	else if (IS_ERR(alg))
 		;
 	else if (crypto_is_test_larval(larval) &&
 		 !(alg->cra_flags & CRYPTO_ALG_TESTED))
@@ -237,9 +227,6 @@ again:
 	else if (!crypto_mod_get(alg))
 		alg = ERR_PTR(-EAGAIN);
 	crypto_mod_put(&larval->alg);
-
-	if (!IS_ERR(alg) && crypto_is_larval(alg))
-		goto again;
 
 	return alg;
 }
@@ -305,12 +292,8 @@ static struct crypto_alg *crypto_larval_lookup(const char *name, u32 type,
 
 	if (!IS_ERR_OR_NULL(alg) && crypto_is_larval(alg))
 		alg = crypto_larval_wait(alg);
-	else if (alg)
-		;
-	else if (!(mask & CRYPTO_ALG_TESTED))
+	else if (!alg)
 		alg = crypto_larval_add(name, type, mask);
-	else
-		alg = ERR_PTR(-ENOENT);
 
 	return alg;
 }
@@ -357,7 +340,7 @@ struct crypto_alg *crypto_alg_mod_lookup(const char *name, u32 type, u32 mask)
 		crypto_mod_put(larval);
 		alg = ERR_PTR(-ENOENT);
 	}
-	crypto_larval_kill(container_of(larval, struct crypto_larval, alg));
+	crypto_larval_kill(larval);
 	return alg;
 }
 EXPORT_SYMBOL_GPL(crypto_alg_mod_lookup);

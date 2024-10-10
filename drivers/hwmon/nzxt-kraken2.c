@@ -9,7 +9,7 @@
  * Copyright 2019-2021  Jonas Malaco <jonas@protocubo.io>
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/hid.h>
 #include <linux/hwmon.h>
 #include <linux/jiffies.h>

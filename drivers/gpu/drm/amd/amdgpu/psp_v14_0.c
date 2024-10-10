@@ -32,9 +32,7 @@
 #include "mp/mp_14_0_2_sh_mask.h"
 
 MODULE_FIRMWARE("amdgpu/psp_14_0_2_sos.bin");
-MODULE_FIRMWARE("amdgpu/psp_14_0_2_ta.bin");
 MODULE_FIRMWARE("amdgpu/psp_14_0_3_sos.bin");
-MODULE_FIRMWARE("amdgpu/psp_14_0_3_ta.bin");
 
 /* For large FW files the time to complete can be very long */
 #define USBC_PD_POLLING_LIMIT_S 240
@@ -66,9 +64,6 @@ static int psp_v14_0_init_microcode(struct psp_context *psp)
 	case IP_VERSION(14, 0, 2):
 	case IP_VERSION(14, 0, 3):
 		err = psp_init_sos_microcode(psp, ucode_prefix);
-		if (err)
-			return err;
-		err = psp_init_ta_microcode(psp, ucode_prefix);
 		if (err)
 			return err;
 		break;
@@ -154,7 +149,7 @@ static int psp_v14_0_bootloader_load_kdb(struct psp_context *psp)
 
 static int psp_v14_0_bootloader_load_spl(struct psp_context *psp)
 {
-	return psp_v14_0_bootloader_load_component(psp, &psp->spl, PSP_BL__LOAD_TOS_SPL_TABLE);
+	return psp_v14_0_bootloader_load_component(psp, &psp->kdb, PSP_BL__LOAD_TOS_SPL_TABLE);
 }
 
 static int psp_v14_0_bootloader_load_sysdrv(struct psp_context *psp)
@@ -174,8 +169,7 @@ static int psp_v14_0_bootloader_load_intf_drv(struct psp_context *psp)
 
 static int psp_v14_0_bootloader_load_dbg_drv(struct psp_context *psp)
 {
-	/* dbg_drv was renamed to had_drv in psp v14 */
-	return psp_v14_0_bootloader_load_component(psp, &psp->dbg_drv, PSP_BL__LOAD_HADDRV);
+	return psp_v14_0_bootloader_load_component(psp, &psp->dbg_drv, PSP_BL__LOAD_DBGDRV);
 }
 
 static int psp_v14_0_bootloader_load_ras_drv(struct psp_context *psp)
@@ -183,10 +177,6 @@ static int psp_v14_0_bootloader_load_ras_drv(struct psp_context *psp)
 	return psp_v14_0_bootloader_load_component(psp, &psp->ras_drv, PSP_BL__LOAD_RASDRV);
 }
 
-static int psp_v14_0_bootloader_load_ipkeymgr_drv(struct psp_context *psp)
-{
-	return psp_v14_0_bootloader_load_component(psp, &psp->ipkeymgr_drv, PSP_BL__LOAD_IPKEYMGRDRV);
-}
 
 static int psp_v14_0_bootloader_load_sos(struct psp_context *psp)
 {
@@ -663,7 +653,6 @@ static const struct psp_funcs psp_v14_0_funcs = {
 	.bootloader_load_intf_drv = psp_v14_0_bootloader_load_intf_drv,
 	.bootloader_load_dbg_drv = psp_v14_0_bootloader_load_dbg_drv,
 	.bootloader_load_ras_drv = psp_v14_0_bootloader_load_ras_drv,
-	.bootloader_load_ipkeymgr_drv = psp_v14_0_bootloader_load_ipkeymgr_drv,
 	.bootloader_load_sos = psp_v14_0_bootloader_load_sos,
 	.ring_create = psp_v14_0_ring_create,
 	.ring_stop = psp_v14_0_ring_stop,

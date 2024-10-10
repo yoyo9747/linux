@@ -50,7 +50,7 @@ MODULE_PARM_DESC(slots, "Module names assigned to the slots.");
 static int module_slot_match(struct module *module, int idx)
 {
 	int match = 1;
-#ifdef CONFIG_MODULES
+#ifdef MODULE
 	const char *s1, *s2;
 
 	if (!module || !*module->name || !slots[idx])
@@ -77,7 +77,7 @@ static int module_slot_match(struct module *module, int idx)
 		if (!c1)
 			break;
 	}
-#endif /* CONFIG_MODULES */
+#endif /* MODULE */
 	return match;
 }
 
@@ -311,11 +311,13 @@ static int snd_card_init(struct snd_card *card, struct device *parent,
 	}
 	card->dev = parent;
 	card->number = idx;
-	WARN_ON(IS_MODULE(CONFIG_SND) && !module);
+#ifdef MODULE
+	WARN_ON(!module);
 	card->module = module;
+#endif
 	INIT_LIST_HEAD(&card->devices);
 	init_rwsem(&card->controls_rwsem);
-	rwlock_init(&card->controls_rwlock);
+	rwlock_init(&card->ctl_files_rwlock);
 	INIT_LIST_HEAD(&card->controls);
 	INIT_LIST_HEAD(&card->ctl_files);
 #ifdef CONFIG_SND_CTL_FAST_LOOKUP
@@ -514,14 +516,6 @@ void snd_card_disconnect(struct snd_card *card)
 		}
 	}
 
-#ifdef CONFIG_PM
-	/* wake up sleepers here before other callbacks for avoiding potential
-	 * deadlocks with other locks (e.g. in kctls);
-	 * then this notifies the shutdown and sleepers would abort immediately
-	 */
-	wake_up_all(&card->power_sleep);
-#endif
-
 	/* notify all connected devices about disconnection */
 	/* at this point, they cannot respond to any calls except release() */
 
@@ -537,11 +531,6 @@ void snd_card_disconnect(struct snd_card *card)
 		synchronize_irq(card->sync_irq);
 
 	snd_info_card_disconnect(card);
-#ifdef CONFIG_SND_DEBUG
-	debugfs_remove(card->debugfs_root);
-	card->debugfs_root = NULL;
-#endif
-
 	if (card->registered) {
 		device_del(&card->card_dev);
 		card->registered = false;
@@ -553,7 +542,10 @@ void snd_card_disconnect(struct snd_card *card)
 		clear_bit(card->number, snd_cards_lock);
 	}
 
+#ifdef CONFIG_PM
+	wake_up(&card->power_sleep);
 	snd_power_sync_ref(card);
+#endif
 }
 EXPORT_SYMBOL(snd_card_disconnect);
 
@@ -591,6 +583,10 @@ static int snd_card_do_free(struct snd_card *card)
 		dev_warn(card->dev, "unable to free card info\n");
 		/* Not fatal error */
 	}
+#ifdef CONFIG_SND_DEBUG
+	debugfs_remove(card->debugfs_root);
+	card->debugfs_root = NULL;
+#endif
 	if (card->release_completion)
 		complete(card->release_completion);
 	if (!card->managed)
@@ -654,19 +650,13 @@ void snd_card_free(struct snd_card *card)
 }
 EXPORT_SYMBOL(snd_card_free);
 
-/* check, if the character is in the valid ASCII range */
-static inline bool safe_ascii_char(char c)
-{
-	return isascii(c) && isalnum(c);
-}
-
 /* retrieve the last word of shortname or longname */
 static const char *retrieve_id_from_card_name(const char *name)
 {
 	const char *spos = name;
 
 	while (*name) {
-		if (isspace(*name) && safe_ascii_char(name[1]))
+		if (isspace(*name) && isalnum(name[1]))
 			spos = name + 1;
 		name++;
 	}
@@ -693,12 +683,12 @@ static void copy_valid_id_string(struct snd_card *card, const char *src,
 {
 	char *id = card->id;
 
-	while (*nid && !safe_ascii_char(*nid))
+	while (*nid && !isalnum(*nid))
 		nid++;
 	if (isdigit(*nid))
 		*id++ = isalpha(*src) ? *src : 'D';
 	while (*nid && (size_t)(id - card->id) < sizeof(card->id) - 1) {
-		if (safe_ascii_char(*nid))
+		if (isalnum(*nid))
 			*id++ = *nid;
 		nid++;
 	}
@@ -793,7 +783,7 @@ static ssize_t id_store(struct device *dev, struct device_attribute *attr,
 
 	for (idx = 0; idx < copy; idx++) {
 		c = buf[idx];
-		if (!safe_ascii_char(c) && c != '_' && c != '-')
+		if (!isalnum(c) && c != '_' && c != '-')
 			return -EINVAL;
 	}
 	memcpy(buf1, buf, copy);
@@ -974,7 +964,7 @@ void snd_card_info_read_oss(struct snd_info_buffer *buffer)
 
 #endif
 
-#ifdef CONFIG_MODULES
+#ifdef MODULE
 static void snd_card_module_info_read(struct snd_info_entry *entry,
 				      struct snd_info_buffer *buffer)
 {
@@ -1002,7 +992,7 @@ int __init snd_card_info_init(void)
 	if (snd_info_register(entry) < 0)
 		return -ENOMEM; /* freed in error path */
 
-#ifdef CONFIG_MODULES
+#ifdef MODULE
 	entry = snd_info_create_module_entry(THIS_MODULE, "modules", NULL);
 	if (!entry)
 		return -ENOMEM;

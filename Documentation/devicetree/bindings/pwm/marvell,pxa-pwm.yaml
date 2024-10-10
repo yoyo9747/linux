@@ -34,6 +34,7 @@ properties:
 required:
   - compatible
   - reg
+  - "#pwm-cells"
   - clocks
 
 additionalProperties: false

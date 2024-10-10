@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 OR MIT */
 /*
- * Copyright (c) 2021-2024 Broadcom. All Rights Reserved. The term
- * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.
+ * Copyright 2021-2023 VMware, Inc.
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -31,8 +30,6 @@
 #include "drm/drm_prime.h"
 #include "drm/drm_gem_ttm_helper.h"
 
-#include <linux/debugfs.h>
-
 static void vmw_gem_object_free(struct drm_gem_object *gobj)
 {
 	struct ttm_buffer_object *bo = drm_gem_ttm_of_gem(gobj);
@@ -51,20 +48,33 @@ static void vmw_gem_object_close(struct drm_gem_object *obj,
 {
 }
 
+static int vmw_gem_pin_private(struct drm_gem_object *obj, bool do_pin)
+{
+	struct ttm_buffer_object *bo = drm_gem_ttm_of_gem(obj);
+	struct vmw_bo *vbo = to_vmw_bo(obj);
+	int ret;
+
+	ret = ttm_bo_reserve(bo, false, false, NULL);
+	if (unlikely(ret != 0))
+		goto err;
+
+	vmw_bo_pin_reserved(vbo, do_pin);
+
+	ttm_bo_unreserve(bo);
+
+err:
+	return ret;
+}
+
+
 static int vmw_gem_object_pin(struct drm_gem_object *obj)
 {
-	struct vmw_bo *vbo = to_vmw_bo(obj);
-
-	vmw_bo_pin_reserved(vbo, true);
-
-	return 0;
+	return vmw_gem_pin_private(obj, true);
 }
 
 static void vmw_gem_object_unpin(struct drm_gem_object *obj)
 {
-	struct vmw_bo *vbo = to_vmw_bo(obj);
-
-	vmw_bo_pin_reserved(vbo, false);
+	vmw_gem_pin_private(obj, false);
 }
 
 static struct sg_table *vmw_gem_object_get_sg_table(struct drm_gem_object *obj)
@@ -77,59 +87,6 @@ static struct sg_table *vmw_gem_object_get_sg_table(struct drm_gem_object *obj)
 		return vmw_tt->vsgt.sgt;
 
 	return drm_prime_pages_to_sg(obj->dev, vmw_tt->dma_ttm.pages, vmw_tt->dma_ttm.num_pages);
-}
-
-static int vmw_gem_vmap(struct drm_gem_object *obj, struct iosys_map *map)
-{
-	struct ttm_buffer_object *bo = drm_gem_ttm_of_gem(obj);
-	int ret;
-
-	if (obj->import_attach) {
-		ret = dma_buf_vmap(obj->import_attach->dmabuf, map);
-		if (!ret) {
-			if (drm_WARN_ON(obj->dev, map->is_iomem)) {
-				dma_buf_vunmap(obj->import_attach->dmabuf, map);
-				return -EIO;
-			}
-		}
-	} else {
-		ret = ttm_bo_vmap(bo, map);
-	}
-
-	return ret;
-}
-
-static void vmw_gem_vunmap(struct drm_gem_object *obj, struct iosys_map *map)
-{
-	if (obj->import_attach)
-		dma_buf_vunmap(obj->import_attach->dmabuf, map);
-	else
-		drm_gem_ttm_vunmap(obj, map);
-}
-
-static int vmw_gem_mmap(struct drm_gem_object *obj, struct vm_area_struct *vma)
-{
-	int ret;
-
-	if (obj->import_attach) {
-		/*
-		 * Reset both vm_ops and vm_private_data, so we don't end up with
-		 * vm_ops pointing to our implementation if the dma-buf backend
-		 * doesn't set those fields.
-		 */
-		vma->vm_private_data = NULL;
-		vma->vm_ops = NULL;
-
-		ret = dma_buf_mmap(obj->dma_buf, vma, 0);
-
-		/* Drop the reference drm_gem_mmap_obj() acquired.*/
-		if (!ret)
-			drm_gem_object_put(obj);
-
-		return ret;
-	}
-
-	return drm_gem_ttm_mmap(obj, vma);
 }
 
 static const struct vm_operations_struct vmw_vm_ops = {
@@ -148,9 +105,9 @@ static const struct drm_gem_object_funcs vmw_gem_object_funcs = {
 	.pin = vmw_gem_object_pin,
 	.unpin = vmw_gem_object_unpin,
 	.get_sg_table = vmw_gem_object_get_sg_table,
-	.vmap = vmw_gem_vmap,
-	.vunmap = vmw_gem_vunmap,
-	.mmap = vmw_gem_mmap,
+	.vmap = drm_gem_ttm_vmap,
+	.vunmap = drm_gem_ttm_vunmap,
+	.mmap = drm_gem_ttm_mmap,
 	.vm_ops = &vmw_vm_ops,
 };
 

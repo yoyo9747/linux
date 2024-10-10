@@ -806,12 +806,6 @@ typedef struct drm_i915_irq_wait {
  */
 #define I915_PARAM_PXP_STATUS		 58
 
-/*
- * Query if kernel allows marking a context to send a Freq hint to SLPC. This
- * will enable use of the strategies allowed by the SLPC algorithm.
- */
-#define I915_PARAM_HAS_CONTEXT_FREQ_HINT	59
-
 /* Must be kept compact -- no holes and well documented */
 
 /**
@@ -2154,24 +2148,6 @@ struct drm_i915_gem_context_param {
  * -EIO: The firmware did not succeed in creating the protected context.
  */
 #define I915_CONTEXT_PARAM_PROTECTED_CONTENT    0xd
-
-/*
- * I915_CONTEXT_PARAM_LOW_LATENCY:
- *
- * Mark this context as a low latency workload which requires aggressive GT
- * frequency scaling. Use I915_PARAM_HAS_CONTEXT_FREQ_HINT to check if the kernel
- * supports this per context flag.
- */
-#define I915_CONTEXT_PARAM_LOW_LATENCY		0xe
-
-/*
- * I915_CONTEXT_PARAM_CONTEXT_IMAGE:
- *
- * Allows userspace to provide own context images.
- *
- * Note that this is a debug API not available on production kernel builds.
- */
-#define I915_CONTEXT_PARAM_CONTEXT_IMAGE	0xf
 /* Must be kept compact -- no holes and well documented */
 
 	/** @value: Context parameter value to be set or queried */
@@ -2573,24 +2549,6 @@ struct i915_context_param_engines {
 	struct i915_engine_class_instance engines[N__]; \
 } __attribute__((packed)) name__
 
-struct i915_gem_context_param_context_image {
-	/** @engine: Engine class & instance to be configured. */
-	struct i915_engine_class_instance engine;
-
-	/** @flags: One of the supported flags or zero. */
-	__u32 flags;
-#define I915_CONTEXT_IMAGE_FLAG_ENGINE_INDEX (1u << 0)
-
-	/** @size: Size of the image blob pointed to by @image. */
-	__u32 size;
-
-	/** @mbz: Must be zero. */
-	__u32 mbz;
-
-	/** @image: Userspace memory containing the context image. */
-	__u64 image;
-} __attribute__((packed));
-
 /**
  * struct drm_i915_gem_context_create_ext_setparam - Context parameter
  * to set or query during context creation.
@@ -2665,29 +2623,19 @@ struct drm_i915_reg_read {
  *
  */
 
-/*
- * struct drm_i915_reset_stats - Return global reset and other context stats
- *
- * Driver keeps few stats for each contexts and also global reset count.
- * This struct can be used to query those stats.
- */
 struct drm_i915_reset_stats {
-	/** @ctx_id: ID of the requested context */
 	__u32 ctx_id;
-
-	/** @flags: MBZ */
 	__u32 flags;
 
-	/** @reset_count: All resets since boot/module reload, for all contexts */
+	/* All resets since boot/module reload, for all contexts */
 	__u32 reset_count;
 
-	/** @batch_active: Number of batches lost when active in GPU, for this context */
+	/* Number of batches lost when active in GPU, for this context */
 	__u32 batch_active;
 
-	/** @batch_pending: Number of batches lost pending for execution, for this context */
+	/* Number of batches lost pending for execution, for this context */
 	__u32 batch_pending;
 
-	/** @pad: MBZ */
 	__u32 pad;
 };
 

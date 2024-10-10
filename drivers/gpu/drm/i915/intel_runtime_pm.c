@@ -272,11 +272,15 @@ intel_wakeref_t intel_runtime_pm_get_if_active(struct intel_runtime_pm *rpm)
  * intel_runtime_pm_get_noresume - grab a runtime pm reference
  * @rpm: the intel_runtime_pm structure
  *
- * This function grabs a device-level runtime pm reference.
+ * This function grabs a device-level runtime pm reference (mostly used for GEM
+ * code to ensure the GTT or GT is on).
  *
- * It will _not_ resume the device but instead only get an extra wakeref.
- * Therefore it is only valid to call this functions from contexts where
- * the device is known to be active and with another wakeref previously hold.
+ * It will _not_ power up the device but instead only check that it's powered
+ * on.  Therefore it is only valid to call this functions from contexts where
+ * the device is known to be powered up and where trying to power it up would
+ * result in hilarity and deadlocks. That pretty much means only the system
+ * suspend/resume code where this is used to grab runtime pm references for
+ * delayed setup down in work items.
  *
  * Any runtime pm reference obtained by this function must have a symmetric
  * call to intel_runtime_pm_put() to release the reference again.
@@ -285,7 +289,7 @@ intel_wakeref_t intel_runtime_pm_get_if_active(struct intel_runtime_pm *rpm)
  */
 intel_wakeref_t intel_runtime_pm_get_noresume(struct intel_runtime_pm *rpm)
 {
-	assert_rpm_raw_wakeref_held(rpm);
+	assert_rpm_wakelock_held(rpm);
 	pm_runtime_get_noresume(rpm->kdev);
 
 	intel_runtime_pm_acquire(rpm, true);

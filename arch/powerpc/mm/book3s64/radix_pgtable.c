@@ -17,7 +17,6 @@
 #include <linux/hugetlb.h>
 #include <linux/string_helpers.h>
 #include <linux/memory.h>
-#include <linux/kfence.h>
 
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
@@ -32,7 +31,6 @@
 #include <asm/uaccess.h>
 #include <asm/ultravisor.h>
 #include <asm/set_memory.h>
-#include <asm/kfence.h>
 
 #include <trace/events/thp.h>
 
@@ -295,8 +293,7 @@ static unsigned long next_boundary(unsigned long addr, unsigned long end)
 
 static int __meminit create_physical_mapping(unsigned long start,
 					     unsigned long end,
-					     int nid, pgprot_t _prot,
-					     unsigned long mapping_sz_limit)
+					     int nid, pgprot_t _prot)
 {
 	unsigned long vaddr, addr, mapping_size = 0;
 	bool prev_exec, exec = false;
@@ -304,10 +301,7 @@ static int __meminit create_physical_mapping(unsigned long start,
 	int psize;
 	unsigned long max_mapping_size = memory_block_size;
 
-	if (mapping_sz_limit < max_mapping_size)
-		max_mapping_size = mapping_sz_limit;
-
-	if (debug_pagealloc_enabled())
+	if (debug_pagealloc_enabled_or_kfence())
 		max_mapping_size = PAGE_SIZE;
 
 	start = ALIGN(start, PAGE_SIZE);
@@ -362,82 +356,14 @@ static int __meminit create_physical_mapping(unsigned long start,
 	return 0;
 }
 
-#ifdef CONFIG_KFENCE
-static bool __ro_after_init kfence_early_init = !!CONFIG_KFENCE_SAMPLE_INTERVAL;
-
-static int __init parse_kfence_early_init(char *arg)
-{
-	int val;
-
-	if (get_option(&arg, &val))
-		kfence_early_init = !!val;
-	return 0;
-}
-early_param("kfence.sample_interval", parse_kfence_early_init);
-
-static inline phys_addr_t alloc_kfence_pool(void)
-{
-	phys_addr_t kfence_pool;
-
-	/*
-	 * TODO: Support to enable KFENCE after bootup depends on the ability to
-	 *       split page table mappings. As such support is not currently
-	 *       implemented for radix pagetables, support enabling KFENCE
-	 *       only at system startup for now.
-	 *
-	 *       After support for splitting mappings is available on radix,
-	 *       alloc_kfence_pool() & map_kfence_pool() can be dropped and
-	 *       mapping for __kfence_pool memory can be
-	 *       split during arch_kfence_init_pool().
-	 */
-	if (!kfence_early_init)
-		goto no_kfence;
-
-	kfence_pool = memblock_phys_alloc(KFENCE_POOL_SIZE, PAGE_SIZE);
-	if (!kfence_pool)
-		goto no_kfence;
-
-	memblock_mark_nomap(kfence_pool, KFENCE_POOL_SIZE);
-	return kfence_pool;
-
-no_kfence:
-	disable_kfence();
-	return 0;
-}
-
-static inline void map_kfence_pool(phys_addr_t kfence_pool)
-{
-	if (!kfence_pool)
-		return;
-
-	if (create_physical_mapping(kfence_pool, kfence_pool + KFENCE_POOL_SIZE,
-				    -1, PAGE_KERNEL, PAGE_SIZE))
-		goto err;
-
-	memblock_clear_nomap(kfence_pool, KFENCE_POOL_SIZE);
-	__kfence_pool = __va(kfence_pool);
-	return;
-
-err:
-	memblock_phys_free(kfence_pool, KFENCE_POOL_SIZE);
-	disable_kfence();
-}
-#else
-static inline phys_addr_t alloc_kfence_pool(void) { return 0; }
-static inline void map_kfence_pool(phys_addr_t kfence_pool) { }
-#endif
-
 static void __init radix_init_pgtable(void)
 {
-	phys_addr_t kfence_pool;
 	unsigned long rts_field;
 	phys_addr_t start, end;
 	u64 i;
 
 	/* We don't support slb for radix */
 	slb_set_size(0);
-
-	kfence_pool = alloc_kfence_pool();
 
 	/*
 	 * Create the linear mapping
@@ -455,10 +381,8 @@ static void __init radix_init_pgtable(void)
 		}
 
 		WARN_ON(create_physical_mapping(start, end,
-						-1, PAGE_KERNEL, ~0UL));
+						-1, PAGE_KERNEL));
 	}
-
-	map_kfence_pool(kfence_pool);
 
 	if (!cpu_has_feature(CPU_FTR_HVMODE) &&
 			cpu_has_feature(CPU_FTR_P9_RADIX_PREFETCH_BUG)) {
@@ -951,7 +875,7 @@ int __meminit radix__create_section_mapping(unsigned long start,
 	}
 
 	return create_physical_mapping(__pa(start), __pa(end),
-				       nid, prot, ~0UL);
+				       nid, prot);
 }
 
 int __meminit radix__remove_section_mapping(unsigned long start, unsigned long end)

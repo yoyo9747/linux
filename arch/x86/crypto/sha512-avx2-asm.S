@@ -680,7 +680,6 @@ SYM_TYPED_FUNC_START(sha512_transform_rorx)
 	pop	%r12
 	pop	%rbx
 
-	vzeroupper
 	RET
 SYM_FUNC_END(sha512_transform_rorx)
 

@@ -322,7 +322,7 @@ lpfc_enable_fip_show(struct device *dev, struct device_attribute *attr,
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_hba   *phba = vport->phba;
 
-	if (test_bit(HBA_FIP_SUPPORT, &phba->hba_flag))
+	if (phba->hba_flag & HBA_FIP_SUPPORT)
 		return scnprintf(buf, PAGE_SIZE, "1\n");
 	else
 		return scnprintf(buf, PAGE_SIZE, "0\n");
@@ -1049,7 +1049,7 @@ lpfc_link_state_show(struct device *dev, struct device_attribute *attr,
 	case LPFC_INIT_MBX_CMDS:
 	case LPFC_LINK_DOWN:
 	case LPFC_HBA_ERROR:
-		if (test_bit(LINK_DISABLED, &phba->hba_flag))
+		if (phba->hba_flag & LINK_DISABLED)
 			len += scnprintf(buf + len, PAGE_SIZE-len,
 				"Link Down - User disabled\n");
 		else
@@ -1292,7 +1292,7 @@ lpfc_issue_lip(struct Scsi_Host *shost)
 	 * it doesn't make any sense to allow issue_lip
 	 */
 	if (test_bit(FC_OFFLINE_MODE, &vport->fc_flag) ||
-	    test_bit(LINK_DISABLED, &phba->hba_flag) ||
+	    (phba->hba_flag & LINK_DISABLED) ||
 	    (phba->sli.sli_flag & LPFC_BLOCK_MGMT_IO))
 		return -EPERM;
 
@@ -1831,7 +1831,6 @@ static int
 lpfc_set_trunking(struct lpfc_hba *phba, char *buff_out)
 {
 	LPFC_MBOXQ_t *mbox = NULL;
-	u32 payload_len;
 	unsigned long val = 0;
 	char *pval = NULL;
 	int rc = 0;
@@ -1870,11 +1869,9 @@ lpfc_set_trunking(struct lpfc_hba *phba, char *buff_out)
 	if (!mbox)
 		return -ENOMEM;
 
-	payload_len = sizeof(struct lpfc_mbx_set_trunk_mode) -
-		      sizeof(struct lpfc_sli4_cfg_mhdr);
 	lpfc_sli4_config(phba, mbox, LPFC_MBOX_SUBSYSTEM_FCOE,
 			 LPFC_MBOX_OPCODE_FCOE_FC_SET_TRUNK_MODE,
-			 payload_len, LPFC_SLI4_MBX_EMBED);
+			 12, LPFC_SLI4_MBX_EMBED);
 
 	bf_set(lpfc_mbx_set_trunk_mode,
 	       &mbox->u.mqe.un.set_trunk_mode,
@@ -1910,11 +1907,6 @@ lpfc_xcvr_data_show(struct device *dev, struct device_attribute *attr,
 
 	/* Get transceiver information */
 	rdp_context = kmalloc(sizeof(*rdp_context), GFP_KERNEL);
-	if (!rdp_context) {
-		len = scnprintf(buf, PAGE_SIZE - len,
-				"SPF info NA: alloc failure\n");
-		return len;
-	}
 
 	rc = lpfc_get_sfp_info_wait(phba, rdp_context);
 	if (rc) {
@@ -3643,8 +3635,7 @@ lpfc_pt_show(struct device *dev, struct device_attribute *attr, char *buf)
 	struct lpfc_hba   *phba = ((struct lpfc_vport *)shost->hostdata)->phba;
 
 	return scnprintf(buf, PAGE_SIZE, "%d\n",
-			 test_bit(HBA_PERSISTENT_TOPO,
-				  &phba->hba_flag) ? 1 : 0);
+			 (phba->hba_flag & HBA_PERSISTENT_TOPO) ? 1 : 0);
 }
 static DEVICE_ATTR(pt, 0444,
 			 lpfc_pt_show, NULL);
@@ -4214,8 +4205,8 @@ lpfc_topology_store(struct device *dev, struct device_attribute *attr,
 				    &phba->sli4_hba.sli_intf);
 		if_type = bf_get(lpfc_sli_intf_if_type,
 				 &phba->sli4_hba.sli_intf);
-		if ((test_bit(HBA_PERSISTENT_TOPO, &phba->hba_flag) ||
-		     (!phba->sli4_hba.pc_sli4_params.pls &&
+		if ((phba->hba_flag & HBA_PERSISTENT_TOPO ||
+		    (!phba->sli4_hba.pc_sli4_params.pls &&
 		     (sli_family == LPFC_SLI_INTF_FAMILY_G6 ||
 		      if_type == LPFC_SLI_INTF_IF_TYPE_6))) &&
 		    val == 4) {
@@ -4318,7 +4309,7 @@ lpfc_link_speed_store(struct device *dev, struct device_attribute *attr,
 
 	if_type = bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf);
 	if (if_type >= LPFC_SLI_INTF_IF_TYPE_2 &&
-	    test_bit(HBA_FORCED_LINK_SPEED, &phba->hba_flag))
+	    phba->hba_flag & HBA_FORCED_LINK_SPEED)
 		return -EPERM;
 
 	if (!strncmp(buf, "nolip ", strlen("nolip "))) {
@@ -6506,8 +6497,7 @@ lpfc_get_host_speed(struct Scsi_Host *shost)
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_hba   *phba = vport->phba;
 
-	if ((lpfc_is_link_up(phba)) &&
-	    !test_bit(HBA_FCOE_MODE, &phba->hba_flag)) {
+	if ((lpfc_is_link_up(phba)) && (!(phba->hba_flag & HBA_FCOE_MODE))) {
 		switch(phba->fc_linkspeed) {
 		case LPFC_LINK_SPEED_1GHZ:
 			fc_host_speed(shost) = FC_PORTSPEED_1GBIT;
@@ -6543,8 +6533,7 @@ lpfc_get_host_speed(struct Scsi_Host *shost)
 			fc_host_speed(shost) = FC_PORTSPEED_UNKNOWN;
 			break;
 		}
-	} else if (lpfc_is_link_up(phba) &&
-		   test_bit(HBA_FCOE_MODE, &phba->hba_flag)) {
+	} else if (lpfc_is_link_up(phba) && (phba->hba_flag & HBA_FCOE_MODE)) {
 		switch (phba->fc_linkspeed) {
 		case LPFC_ASYNC_LINK_SPEED_1GBPS:
 			fc_host_speed(shost) = FC_PORTSPEED_1GBIT;
@@ -6729,7 +6718,7 @@ lpfc_get_stats(struct Scsi_Host *shost)
 	hs->invalid_crc_count -= lso->invalid_crc_count;
 	hs->error_frames -= lso->error_frames;
 
-	if (test_bit(HBA_FCOE_MODE, &phba->hba_flag)) {
+	if (phba->hba_flag & HBA_FCOE_MODE) {
 		hs->lip_count = -1;
 		hs->nos_count = (phba->link_events >> 1);
 		hs->nos_count -= lso->link_events;
@@ -6827,7 +6816,7 @@ lpfc_reset_stats(struct Scsi_Host *shost)
 	lso->invalid_tx_word_count = pmb->un.varRdLnk.invalidXmitWord;
 	lso->invalid_crc_count = pmb->un.varRdLnk.crcCnt;
 	lso->error_frames = pmb->un.varRdLnk.crcCnt;
-	if (test_bit(HBA_FCOE_MODE, &phba->hba_flag))
+	if (phba->hba_flag & HBA_FCOE_MODE)
 		lso->link_events = (phba->link_events >> 1);
 	else
 		lso->link_events = (phba->fc_eventTag >> 1);
@@ -7172,11 +7161,11 @@ lpfc_get_hba_function_mode(struct lpfc_hba *phba)
 	case PCI_DEVICE_ID_ZEPHYR_DCSP:
 	case PCI_DEVICE_ID_TIGERSHARK:
 	case PCI_DEVICE_ID_TOMCAT:
-		set_bit(HBA_FCOE_MODE, &phba->hba_flag);
+		phba->hba_flag |= HBA_FCOE_MODE;
 		break;
 	default:
 	/* for others, clear the flag */
-		clear_bit(HBA_FCOE_MODE, &phba->hba_flag);
+		phba->hba_flag &= ~HBA_FCOE_MODE;
 	}
 }
 
@@ -7247,7 +7236,7 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
 	lpfc_get_hba_function_mode(phba);
 
 	/* BlockGuard allowed for FC only. */
-	if (phba->cfg_enable_bg && test_bit(HBA_FCOE_MODE, &phba->hba_flag)) {
+	if (phba->cfg_enable_bg && phba->hba_flag & HBA_FCOE_MODE) {
 		lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
 				"0581 BlockGuard feature not supported\n");
 		/* If set, clear the BlockGuard support param */

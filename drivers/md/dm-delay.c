@@ -28,8 +28,7 @@ struct delay_class {
 
 struct delay_c {
 	struct timer_list delay_timer;
-	struct mutex process_bios_lock; /* hold while removing bios to be processed from list */
-	spinlock_t delayed_bios_lock; /* hold on all accesses to delayed_bios list */
+	struct mutex timer_lock;
 	struct workqueue_struct *kdelayd_wq;
 	struct work_struct flush_expired_bios;
 	struct list_head delayed_bios;
@@ -50,6 +49,8 @@ struct dm_delay_info {
 	unsigned long expires;
 };
 
+static DEFINE_MUTEX(delayed_bios_lock);
+
 static void handle_delayed_timer(struct timer_list *t)
 {
 	struct delay_c *dc = from_timer(dc, t, delay_timer);
@@ -59,7 +60,12 @@ static void handle_delayed_timer(struct timer_list *t)
 
 static void queue_timeout(struct delay_c *dc, unsigned long expires)
 {
-	timer_reduce(&dc->delay_timer, expires);
+	mutex_lock(&dc->timer_lock);
+
+	if (!timer_pending(&dc->delay_timer) || expires < dc->delay_timer.expires)
+		mod_timer(&dc->delay_timer, expires);
+
+	mutex_unlock(&dc->timer_lock);
 }
 
 static inline bool delay_is_fast(struct delay_c *dc)
@@ -83,16 +89,12 @@ static void flush_delayed_bios(struct delay_c *dc, bool flush_all)
 {
 	struct dm_delay_info *delayed, *next;
 	struct bio_list flush_bio_list;
-	LIST_HEAD(local_list);
 	unsigned long next_expires = 0;
 	bool start_timer = false;
 	bio_list_init(&flush_bio_list);
 
-	mutex_lock(&dc->process_bios_lock);
-	spin_lock(&dc->delayed_bios_lock);
-	list_replace_init(&dc->delayed_bios, &local_list);
-	spin_unlock(&dc->delayed_bios_lock);
-	list_for_each_entry_safe(delayed, next, &local_list, list) {
+	mutex_lock(&delayed_bios_lock);
+	list_for_each_entry_safe(delayed, next, &dc->delayed_bios, list) {
 		cond_resched();
 		if (flush_all || time_after_eq(jiffies, delayed->expires)) {
 			struct bio *bio = dm_bio_from_per_bio_data(delayed,
@@ -112,10 +114,7 @@ static void flush_delayed_bios(struct delay_c *dc, bool flush_all)
 			}
 		}
 	}
-	spin_lock(&dc->delayed_bios_lock);
-	list_splice(&local_list, &dc->delayed_bios);
-	spin_unlock(&dc->delayed_bios_lock);
-	mutex_unlock(&dc->process_bios_lock);
+	mutex_unlock(&delayed_bios_lock);
 
 	if (start_timer)
 		queue_timeout(dc, next_expires);
@@ -129,13 +128,13 @@ static int flush_worker_fn(void *data)
 
 	while (!kthread_should_stop()) {
 		flush_delayed_bios(dc, false);
-		spin_lock(&dc->delayed_bios_lock);
+		mutex_lock(&delayed_bios_lock);
 		if (unlikely(list_empty(&dc->delayed_bios))) {
 			set_current_state(TASK_INTERRUPTIBLE);
-			spin_unlock(&dc->delayed_bios_lock);
+			mutex_unlock(&delayed_bios_lock);
 			schedule();
 		} else {
-			spin_unlock(&dc->delayed_bios_lock);
+			mutex_unlock(&delayed_bios_lock);
 			cond_resched();
 		}
 	}
@@ -155,10 +154,8 @@ static void delay_dtr(struct dm_target *ti)
 {
 	struct delay_c *dc = ti->private;
 
-	if (dc->kdelayd_wq) {
-		timer_shutdown_sync(&dc->delay_timer);
+	if (dc->kdelayd_wq)
 		destroy_workqueue(dc->kdelayd_wq);
-	}
 
 	if (dc->read.dev)
 		dm_put_device(ti, dc->read.dev);
@@ -169,7 +166,7 @@ static void delay_dtr(struct dm_target *ti)
 	if (dc->worker)
 		kthread_stop(dc->worker);
 
-	mutex_destroy(&dc->process_bios_lock);
+	mutex_destroy(&dc->timer_lock);
 
 	kfree(dc);
 }
@@ -227,8 +224,7 @@ static int delay_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	ti->private = dc;
 	INIT_LIST_HEAD(&dc->delayed_bios);
-	mutex_init(&dc->process_bios_lock);
-	spin_lock_init(&dc->delayed_bios_lock);
+	mutex_init(&dc->timer_lock);
 	dc->may_delay = true;
 	dc->argc = argc;
 
@@ -244,18 +240,19 @@ static int delay_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		ret = delay_class_ctr(ti, &dc->flush, argv);
 		if (ret)
 			goto bad;
+		max_delay = max(max_delay, dc->write.delay);
+		max_delay = max(max_delay, dc->flush.delay);
 		goto out;
 	}
 
 	ret = delay_class_ctr(ti, &dc->write, argv + 3);
 	if (ret)
 		goto bad;
-	max_delay = max(max_delay, dc->write.delay);
-
 	if (argc == 6) {
 		ret = delay_class_ctr(ti, &dc->flush, argv + 3);
 		if (ret)
 			goto bad;
+		max_delay = max(max_delay, dc->flush.delay);
 		goto out;
 	}
 
@@ -270,7 +267,8 @@ out:
 		 * In case of small requested delays, use kthread instead of
 		 * timers and workqueue to achieve better latency.
 		 */
-		dc->worker = kthread_run(&flush_worker_fn, dc, "dm-delay-flush-worker");
+		dc->worker = kthread_create(&flush_worker_fn, dc,
+					    "dm-delay-flush-worker");
 		if (IS_ERR(dc->worker)) {
 			ret = PTR_ERR(dc->worker);
 			dc->worker = NULL;
@@ -311,14 +309,14 @@ static int delay_bio(struct delay_c *dc, struct delay_class *c, struct bio *bio)
 	delayed->context = dc;
 	delayed->expires = expires = jiffies + msecs_to_jiffies(c->delay);
 
-	spin_lock(&dc->delayed_bios_lock);
+	mutex_lock(&delayed_bios_lock);
 	if (unlikely(!dc->may_delay)) {
-		spin_unlock(&dc->delayed_bios_lock);
+		mutex_unlock(&delayed_bios_lock);
 		return DM_MAPIO_REMAPPED;
 	}
 	c->ops++;
 	list_add_tail(&delayed->list, &dc->delayed_bios);
-	spin_unlock(&dc->delayed_bios_lock);
+	mutex_unlock(&delayed_bios_lock);
 
 	if (delay_is_fast(dc))
 		wake_up_process(dc->worker);
@@ -332,12 +330,12 @@ static void delay_presuspend(struct dm_target *ti)
 {
 	struct delay_c *dc = ti->private;
 
-	spin_lock(&dc->delayed_bios_lock);
+	mutex_lock(&delayed_bios_lock);
 	dc->may_delay = false;
-	spin_unlock(&dc->delayed_bios_lock);
+	mutex_unlock(&delayed_bios_lock);
 
 	if (!delay_is_fast(dc))
-		timer_delete(&dc->delay_timer);
+		del_timer_sync(&dc->delay_timer);
 	flush_delayed_bios(dc, true);
 }
 

@@ -79,7 +79,6 @@ struct nfsd4_callback_ops {
 	void (*prepare)(struct nfsd4_callback *);
 	int (*done)(struct nfsd4_callback *, struct rpc_task *);
 	void (*release)(struct nfsd4_callback *);
-	uint32_t opcode;
 };
 
 /*
@@ -409,8 +408,6 @@ struct nfs4_client {
 					 1 << NFSD4_CLIENT_CB_KILL)
 #define NFSD4_CLIENT_CB_RECALL_ANY	(6)
 	unsigned long		cl_flags;
-
-	struct workqueue_struct *cl_callback_wq;
 	const struct cred	*cl_cb_cred;
 	struct rpc_clnt		*cl_cb_client;
 	u32			cl_cb_ident;
@@ -489,7 +486,7 @@ struct nfs4_replay {
 	unsigned int		rp_buflen;
 	char			*rp_buf;
 	struct knfsd_fh		rp_openfh;
-	atomic_t		rp_locked;
+	struct mutex		rp_mutex;
 	char			rp_ibuf[NFSD4_REPLAY_ISIZE];
 };
 
@@ -738,6 +735,8 @@ extern void nfsd4_change_callback(struct nfs4_client *clp, struct nfs4_cb_conn *
 extern void nfsd4_init_cb(struct nfsd4_callback *cb, struct nfs4_client *clp,
 		const struct nfsd4_callback_ops *ops, enum nfsd4_cb_op op);
 extern bool nfsd4_run_cb(struct nfsd4_callback *cb);
+extern int nfsd4_create_callback_queue(void);
+extern void nfsd4_destroy_callback_queue(void);
 extern void nfsd4_shutdown_callback(struct nfs4_client *);
 extern void nfsd4_shutdown_copy(struct nfs4_client *clp);
 extern struct nfs4_client_reclaim *nfs4_client_to_reclaim(struct xdr_netobj name,
@@ -782,5 +781,5 @@ static inline bool try_to_expire_client(struct nfs4_client *clp)
 }
 
 extern __be32 nfsd4_deleg_getattr_conflict(struct svc_rqst *rqstp,
-		struct dentry *dentry, bool *file_modified, u64 *size);
+		struct inode *inode, bool *file_modified, u64 *size);
 #endif   /* NFSD4_STATE_H */

@@ -18,7 +18,6 @@
 #include <subcmd/run-command.h>
 #include "util/parse-events.h"
 #include <subcmd/parse-options.h>
-#include <subcmd/help.h>
 #include "util/debug.h"
 #include "util/event.h"
 #include "util/util.h" // usage()
@@ -52,7 +51,6 @@ static struct cmd_struct commands[] = {
 	{ "archive",	NULL,	0 },
 	{ "buildid-cache", cmd_buildid_cache, 0 },
 	{ "buildid-list", cmd_buildid_list, 0 },
-	{ "check",	cmd_check,	0 },
 	{ "config",	cmd_config,	0 },
 	{ "c2c",	cmd_c2c,	0 },
 	{ "diff",	cmd_diff,	0 },
@@ -460,7 +458,7 @@ static int libperf_print(enum libperf_print_level level,
 
 int main(int argc, const char **argv)
 {
-	int err, done_help = 0;
+	int err;
 	const char *cmd;
 	char sbuf[STRERR_BUFSIZE];
 
@@ -559,32 +557,22 @@ int main(int argc, const char **argv)
 	pthread__block_sigwinch();
 
 	while (1) {
+		static int done_help;
+
 		run_argv(&argc, &argv);
 
 		if (errno != ENOENT)
 			break;
 
 		if (!done_help) {
-			struct cmdnames main_cmds = {};
-
-			for (unsigned int i = 0; i < ARRAY_SIZE(commands); i++) {
-				add_cmdname(&main_cmds,
-					    commands[i].cmd,
-					    strlen(commands[i].cmd));
-			}
-			cmd = argv[0] = help_unknown_cmd(cmd, &main_cmds);
-			clean_cmdnames(&main_cmds);
+			cmd = argv[0] = help_unknown_cmd(cmd);
 			done_help = 1;
-			if (!cmd)
-				break;
 		} else
 			break;
 	}
 
-	if (cmd) {
-		fprintf(stderr, "Failed to run command '%s': %s\n",
-			cmd, str_error_r(errno, sbuf, sizeof(sbuf)));
-	}
+	fprintf(stderr, "Failed to run command '%s': %s\n",
+		cmd, str_error_r(errno, sbuf, sizeof(sbuf)));
 out:
 	if (debug_fp)
 		fclose(debug_fp);

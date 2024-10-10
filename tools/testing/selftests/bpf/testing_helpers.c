@@ -7,7 +7,6 @@
 #include <errno.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
-#include "disasm.h"
 #include "test_progs.h"
 #include "testing_helpers.h"
 #include <linux/membarrier.h>
@@ -221,13 +220,13 @@ int parse_test_list(const char *s,
 		    bool is_glob_pattern)
 {
 	char *input, *state = NULL, *test_spec;
-	int err = 0, cnt = 0;
+	int err = 0;
 
 	input = strdup(s);
 	if (!input)
 		return -ENOMEM;
 
-	while ((test_spec = strtok_r(cnt++ ? NULL : input, ",", &state))) {
+	while ((test_spec = strtok_r(state ? NULL : input, ",", &state))) {
 		err = insert_test(set, test_spec, is_glob_pattern);
 		if (err)
 			break;
@@ -369,23 +368,9 @@ int delete_module(const char *name, int flags)
 
 int unload_bpf_testmod(bool verbose)
 {
-	int ret, cnt = 0;
-
 	if (kern_sync_rcu())
 		fprintf(stdout, "Failed to trigger kernel-side RCU sync!\n");
-
-	for (;;) {
-		ret = delete_module("bpf_testmod", 0);
-		if (!ret || errno != EAGAIN)
-			break;
-		if (++cnt > 10000) {
-			fprintf(stdout, "Unload of bpf_testmod timed out\n");
-			break;
-		}
-		usleep(100);
-	}
-
-	if (ret) {
+	if (delete_module("bpf_testmod", 0)) {
 		if (errno == ENOENT) {
 			if (verbose)
 				fprintf(stdout, "bpf_testmod.ko is already unloaded.\n");
@@ -452,7 +437,7 @@ int get_xlated_program(int fd_prog, struct bpf_insn **buf, __u32 *cnt)
 
 	*cnt = xlated_prog_len / buf_element_size;
 	*buf = calloc(*cnt, buf_element_size);
-	if (!*buf) {
+	if (!buf) {
 		perror("can't allocate xlated program buffer");
 		return -ENOMEM;
 	}

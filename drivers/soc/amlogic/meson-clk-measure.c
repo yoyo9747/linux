@@ -688,5 +688,4 @@ static struct platform_driver meson_msr_driver = {
 	},
 };
 module_platform_driver(meson_msr_driver);
-MODULE_DESCRIPTION("Amlogic Meson SoC Clock Measure driver");
 MODULE_LICENSE("GPL v2");

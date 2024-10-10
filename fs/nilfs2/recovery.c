@@ -433,17 +433,8 @@ static int nilfs_prepare_segment_for_recovery(struct the_nilfs *nilfs,
 	 * The next segment is invalidated by this recovery.
 	 */
 	err = nilfs_sufile_free(sufile, segnum[1]);
-	if (unlikely(err)) {
-		if (err == -ENOENT) {
-			nilfs_err(sb,
-				  "checkpoint log inconsistency at block %llu (segment %llu): next segment %llu is unallocated",
-				  (unsigned long long)nilfs->ns_last_pseg,
-				  (unsigned long long)nilfs->ns_segnum,
-				  (unsigned long long)segnum[1]);
-			err = -EINVAL;
-		}
+	if (unlikely(err))
 		goto failed;
-	}
 
 	for (i = 1; i < 4; i++) {
 		err = nilfs_segment_list_add(head, segnum[i]);
@@ -507,7 +498,7 @@ static int nilfs_recover_dsync_blocks(struct the_nilfs *nilfs,
 	struct inode *inode;
 	struct nilfs_recovery_block *rb, *n;
 	unsigned int blocksize = nilfs->ns_blocksize;
-	struct folio *folio;
+	struct page *page;
 	loff_t pos;
 	int err = 0, err2 = 0;
 
@@ -521,7 +512,7 @@ static int nilfs_recover_dsync_blocks(struct the_nilfs *nilfs,
 
 		pos = rb->blkoff << inode->i_blkbits;
 		err = block_write_begin(inode->i_mapping, pos, blocksize,
-					&folio, nilfs_get_block);
+					&page, nilfs_get_block);
 		if (unlikely(err)) {
 			loff_t isize = inode->i_size;
 
@@ -531,7 +522,7 @@ static int nilfs_recover_dsync_blocks(struct the_nilfs *nilfs,
 			goto failed_inode;
 		}
 
-		err = nilfs_recovery_copy_block(nilfs, rb, pos, &folio->page);
+		err = nilfs_recovery_copy_block(nilfs, rb, pos, page);
 		if (unlikely(err))
 			goto failed_page;
 
@@ -540,17 +531,17 @@ static int nilfs_recover_dsync_blocks(struct the_nilfs *nilfs,
 			goto failed_page;
 
 		block_write_end(NULL, inode->i_mapping, pos, blocksize,
-				blocksize, folio, NULL);
+				blocksize, page, NULL);
 
-		folio_unlock(folio);
-		folio_put(folio);
+		unlock_page(page);
+		put_page(page);
 
 		(*nr_salvaged_blocks)++;
 		goto next;
 
  failed_page:
-		folio_unlock(folio);
-		folio_put(folio);
+		unlock_page(page);
+		put_page(page);
 
  failed_inode:
 		nilfs_warn(sb,
@@ -572,7 +563,6 @@ static int nilfs_recover_dsync_blocks(struct the_nilfs *nilfs,
  * checkpoint
  * @nilfs: nilfs object
  * @sb: super block instance
- * @root: NILFS root instance
  * @ri: pointer to a nilfs_recovery_info
  */
 static int nilfs_do_roll_forward(struct the_nilfs *nilfs,
@@ -708,47 +698,14 @@ static void nilfs_finish_roll_forward(struct the_nilfs *nilfs,
 		return;
 
 	bh = __getblk(nilfs->ns_bdev, ri->ri_lsegs_start, nilfs->ns_blocksize);
-	if (WARN_ON(!bh))
-		return;  /* should never happen */
-
-	lock_buffer(bh);
+	BUG_ON(!bh);
 	memset(bh->b_data, 0, bh->b_size);
-	set_buffer_uptodate(bh);
 	set_buffer_dirty(bh);
-	unlock_buffer(bh);
-
 	err = sync_dirty_buffer(bh);
 	if (unlikely(err))
 		nilfs_warn(nilfs->ns_sb,
 			   "buffer sync write failed during post-cleaning of recovery.");
 	brelse(bh);
-}
-
-/**
- * nilfs_abort_roll_forward - cleaning up after a failed rollforward recovery
- * @nilfs: nilfs object
- */
-static void nilfs_abort_roll_forward(struct the_nilfs *nilfs)
-{
-	struct nilfs_inode_info *ii, *n;
-	LIST_HEAD(head);
-
-	/* Abandon inodes that have read recovery data */
-	spin_lock(&nilfs->ns_inode_lock);
-	list_splice_init(&nilfs->ns_dirty_files, &head);
-	spin_unlock(&nilfs->ns_inode_lock);
-	if (list_empty(&head))
-		return;
-
-	set_nilfs_purging(nilfs);
-	list_for_each_entry_safe(ii, n, &head, i_dirty) {
-		spin_lock(&nilfs->ns_inode_lock);
-		list_del_init(&ii->i_dirty);
-		spin_unlock(&nilfs->ns_inode_lock);
-
-		iput(&ii->vfs_inode);
-	}
-	clear_nilfs_purging(nilfs);
 }
 
 /**
@@ -809,19 +766,15 @@ int nilfs_salvage_orphan_logs(struct the_nilfs *nilfs,
 		if (unlikely(err)) {
 			nilfs_err(sb, "error %d writing segment for recovery",
 				  err);
-			goto put_root;
+			goto failed;
 		}
 
 		nilfs_finish_roll_forward(nilfs, ri);
 	}
 
-put_root:
+ failed:
 	nilfs_put_root(root);
 	return err;
-
-failed:
-	nilfs_abort_roll_forward(nilfs);
-	goto put_root;
 }
 
 /**

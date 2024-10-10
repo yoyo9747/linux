@@ -146,7 +146,6 @@ struct ta_ras_mca_addr {
 	uint32_t ch_inst;
 	uint32_t umc_inst;
 	uint32_t node_inst;
-	uint32_t socket_id;
 };
 
 struct ta_ras_phy_addr {

@@ -1277,7 +1277,7 @@ static void pci_oxsemi_tornado_set_divisor(struct uart_port *port,
 	serial_icr_write(up, UART_TCR, tcr);
 	serial_icr_write(up, UART_CPR, cpr);
 	serial_icr_write(up, UART_CKS, cpr2);
-	serial8250_do_set_divisor(port, baud, quot);
+	serial8250_do_set_divisor(port, baud, quot, 0);
 }
 
 /*
@@ -1985,17 +1985,6 @@ enum {
 	MOXA_SUPP_RS485 = BIT(2),
 };
 
-static unsigned short moxa_get_nports(unsigned short device)
-{
-	switch (device) {
-	case PCI_DEVICE_ID_MOXA_CP116E_A_A:
-	case PCI_DEVICE_ID_MOXA_CP116E_A_B:
-		return 8;
-	}
-
-	return FIELD_GET(0x00F0, device);
-}
-
 static bool pci_moxa_is_mini_pcie(unsigned short device)
 {
 	if (device == PCI_DEVICE_ID_MOXA_CP102N	||
@@ -2049,7 +2038,7 @@ static int pci_moxa_init(struct pci_dev *dev)
 {
 	unsigned short device = dev->device;
 	resource_size_t iobar_addr = pci_resource_start(dev, 2);
-	unsigned int i, num_ports = moxa_get_nports(device);
+	unsigned int num_ports = (device & 0x00F0) >> 4, i;
 	u8 val, init_mode = MOXA_RS232;
 
 	if (!(pci_moxa_supported_rs(dev) & MOXA_SUPP_RS232)) {
@@ -4119,7 +4108,7 @@ pciserial_init_ports(struct pci_dev *dev, const struct pciserial_board *board)
 			rc = pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_ALL_TYPES);
 		} else {
 			pci_dbg(dev, "Using legacy interrupts\n");
-			rc = pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_INTX);
+			rc = pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_LEGACY);
 		}
 		if (rc < 0) {
 			kfree(priv);

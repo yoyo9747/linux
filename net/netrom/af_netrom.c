@@ -772,8 +772,8 @@ out_release:
 	return err;
 }
 
-static int nr_accept(struct socket *sock, struct socket *newsock,
-		     struct proto_accept_arg *arg)
+static int nr_accept(struct socket *sock, struct socket *newsock, int flags,
+		     bool kern)
 {
 	struct sk_buff *skb;
 	struct sock *newsk;
@@ -805,7 +805,7 @@ static int nr_accept(struct socket *sock, struct socket *newsock,
 		if (skb)
 			break;
 
-		if (arg->flags & O_NONBLOCK) {
+		if (flags & O_NONBLOCK) {
 			err = -EWOULDBLOCK;
 			break;
 		}

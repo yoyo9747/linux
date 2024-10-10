@@ -13,7 +13,6 @@ RISC-V architecture
     patch-acceptance
     uabi
     vector
-    cmodx
 
     features
 

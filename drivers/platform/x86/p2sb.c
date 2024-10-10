@@ -24,7 +24,7 @@
 #define SPI_DEVFN_GOLDMONT	PCI_DEVFN(13, 2)
 
 static const struct x86_cpu_id p2sb_cpu_ids[] = {
-	X86_MATCH_VFM(INTEL_ATOM_GOLDMONT, P2SB_DEVFN_GOLDMONT),
+	X86_MATCH_INTEL_FAM6_MODEL(ATOM_GOLDMONT, P2SB_DEVFN_GOLDMONT),
 	{}
 };
 
@@ -43,7 +43,7 @@ struct p2sb_res_cache {
 
 static struct p2sb_res_cache p2sb_resources[NR_P2SB_RES_CACHE];
 
-static void p2sb_get_devfn(unsigned int *devfn)
+static int p2sb_get_devfn(unsigned int *devfn)
 {
 	unsigned int fn = P2SB_DEVFN_DEFAULT;
 	const struct x86_cpu_id *id;
@@ -53,11 +53,15 @@ static void p2sb_get_devfn(unsigned int *devfn)
 		fn = (unsigned int)id->driver_data;
 
 	*devfn = fn;
+	return 0;
 }
 
-static bool p2sb_valid_resource(const struct resource *res)
+static bool p2sb_valid_resource(struct resource *res)
 {
-	return res->flags & ~IORESOURCE_UNSET;
+	if (res->flags)
+		return true;
+
+	return false;
 }
 
 /* Copy resource from the first BAR of the device in question */
@@ -131,7 +135,9 @@ static int p2sb_cache_resources(void)
 	int ret;
 
 	/* Get devfn for P2SB device itself */
-	p2sb_get_devfn(&devfn_p2sb);
+	ret = p2sb_get_devfn(&devfn_p2sb);
+	if (ret)
+		return ret;
 
 	bus = p2sb_get_bus(NULL);
 	if (!bus)
@@ -188,13 +194,17 @@ static int p2sb_cache_resources(void)
 int p2sb_bar(struct pci_bus *bus, unsigned int devfn, struct resource *mem)
 {
 	struct p2sb_res_cache *cache;
+	int ret;
 
 	bus = p2sb_get_bus(bus);
 	if (!bus)
 		return -ENODEV;
 
-	if (!devfn)
-		p2sb_get_devfn(&devfn);
+	if (!devfn) {
+		ret = p2sb_get_devfn(&devfn);
+		if (ret)
+			return ret;
+	}
 
 	cache = &p2sb_resources[PCI_FUNC(devfn)];
 	if (cache->bus_dev_id != bus->dev.id)
@@ -210,20 +220,16 @@ EXPORT_SYMBOL_GPL(p2sb_bar);
 
 static int __init p2sb_fs_init(void)
 {
-	return p2sb_cache_resources();
+	p2sb_cache_resources();
+	return 0;
 }
 
 /*
- * pci_rescan_remove_lock() can not be locked in sysfs PCI bus rescan path
- * because of deadlock. To avoid the deadlock, access P2SB devices with the lock
- * at an early step in kernel initialization and cache required resources.
- *
- * We want to run as early as possible. If the P2SB was assigned a bad BAR,
- * we'll need to wait on pcibios_assign_resources() to fix it. So, our list of
- * initcall dependencies looks something like this:
- *
- * ...
- * subsys_initcall (pci_subsys_init)
- * fs_initcall     (pcibios_assign_resources)
+ * pci_rescan_remove_lock to avoid access to unhidden P2SB devices can
+ * not be locked in sysfs pci bus rescan path because of deadlock. To
+ * avoid the deadlock, access to P2SB devices with the lock at an early
+ * step in kernel initialization and cache required resources. This
+ * should happen after subsys_initcall which initializes PCI subsystem
+ * and before device_initcall which requires P2SB resources.
  */
-fs_initcall_sync(p2sb_fs_init);
+fs_initcall(p2sb_fs_init);

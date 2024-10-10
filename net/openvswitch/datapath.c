@@ -15,6 +15,7 @@
 #include <linux/delay.h>
 #include <linux/time.h>
 #include <linux/etherdevice.h>
+#include <linux/genetlink.h>
 #include <linux/kernel.h>
 #include <linux/kthread.h>
 #include <linux/mutex.h>
@@ -2706,7 +2707,7 @@ static struct pernet_operations ovs_net_ops = {
 };
 
 static const char * const ovs_drop_reasons[] = {
-#define S(x) [(x) & ~SKB_DROP_REASON_SUBSYS_MASK] = (#x),
+#define S(x)	(#x),
 	OVS_DROP_REASONS(S)
 #undef S
 };

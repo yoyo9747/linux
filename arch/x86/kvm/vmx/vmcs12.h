@@ -188,13 +188,12 @@ struct __packed vmcs12 {
 };
 
 /*
- * VMCS12_REVISION is KVM's arbitrary ID for the layout of struct vmcs12.  KVM
- * enumerates this value to L1 via MSR_IA32_VMX_BASIC, and checks the revision
- * ID during nested VMPTRLD to verify that L1 is loading a VMCS that adhere's
- * to KVM's virtual CPU definition.
+ * VMCS12_REVISION is an arbitrary id that should be changed if the content or
+ * layout of struct vmcs12 is changed. MSR_IA32_VMX_BASIC returns this id, and
+ * VMPTRLD verifies that the VMCS region that L1 is loading contains this id.
  *
- * DO NOT change this value, as it will break save/restore compatibility with
- * older KVM releases.
+ * IMPORTANT: Changing this value will break save/restore compatibility with
+ * older kvm releases.
  */
 #define VMCS12_REVISION 0x11e57ed0
 
@@ -207,8 +206,7 @@ struct __packed vmcs12 {
 #define VMCS12_SIZE		KVM_STATE_NESTED_VMX_VMCS_SIZE
 
 /*
- * For save/restore compatibility, the vmcs12 field offsets must not change,
- * although appending fields and/or filling gaps is obviously allowed.
+ * For save/restore compatibility, the vmcs12 field offsets must not change.
  */
 #define CHECK_OFFSET(field, loc) \
 	ASSERT_STRUCT_OFFSET(struct vmcs12, field, loc)

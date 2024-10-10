@@ -459,6 +459,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02800000 0x00 0x200>;
 		interrupts = <GIC_SPI 192 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 146 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 146 TI_SCI_PD_EXCLUSIVE>;
@@ -469,6 +470,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02810000 0x00 0x200>;
 		interrupts = <GIC_SPI 193 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 350 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 350 TI_SCI_PD_EXCLUSIVE>;
@@ -479,6 +481,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02820000 0x00 0x200>;
 		interrupts = <GIC_SPI 194 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 351 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 351 TI_SCI_PD_EXCLUSIVE>;
@@ -489,6 +492,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02830000 0x00 0x200>;
 		interrupts = <GIC_SPI 195 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 352 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 352 TI_SCI_PD_EXCLUSIVE>;
@@ -499,6 +503,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02840000 0x00 0x200>;
 		interrupts = <GIC_SPI 196 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 353 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 353 TI_SCI_PD_EXCLUSIVE>;
@@ -509,6 +514,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02850000 0x00 0x200>;
 		interrupts = <GIC_SPI 197 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 354 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 354 TI_SCI_PD_EXCLUSIVE>;
@@ -519,6 +525,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02860000 0x00 0x200>;
 		interrupts = <GIC_SPI 198 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 355 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 355 TI_SCI_PD_EXCLUSIVE>;
@@ -529,6 +536,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02870000 0x00 0x200>;
 		interrupts = <GIC_SPI 199 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 356 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 356 TI_SCI_PD_EXCLUSIVE>;
@@ -539,6 +547,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02880000 0x00 0x200>;
 		interrupts = <GIC_SPI 248 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 357 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 357 TI_SCI_PD_EXCLUSIVE>;
@@ -549,6 +558,7 @@
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x02890000 0x00 0x200>;
 		interrupts = <GIC_SPI 249 IRQ_TYPE_LEVEL_HIGH>;
+		current-speed = <115200>;
 		clocks = <&k3_clks 358 3>;
 		clock-names = "fclk";
 		power-domains = <&k3_pds 358 TI_SCI_PD_EXCLUSIVE>;
@@ -768,6 +778,8 @@
 		ti,clkbuf-sel = <0x7>;
 		ti,trm-icp = <0x8>;
 		dma-coherent;
+		/* Masking support for SDR104 capability */
+		sdhci-caps-mask = <0x00000003 0x00000000>;
 		status = "disabled";
 	};
 

@@ -39,13 +39,13 @@ static ssize_t speakup_file_write(struct file *fp, const char __user *buffer,
 static ssize_t speakup_file_writeu(struct file *fp, const char __user *buffer,
 				   size_t nbytes, loff_t *ppos)
 {
-	size_t count = nbytes, consumed, want;
+	size_t count = nbytes, want;
 	const char __user *ptr = buffer;
 	size_t bytes;
 	unsigned long flags;
 	unsigned char buf[256];
 	u16 ubuf[256];
-	size_t in, out;
+	size_t in, in2, out;
 
 	if (!synth)
 		return -ENODEV;
@@ -58,24 +58,57 @@ static ssize_t speakup_file_writeu(struct file *fp, const char __user *buffer,
 			return -EFAULT;
 
 		/* Convert to u16 */
-		for (in = 0, out = 0; in < bytes; in += consumed) {
-			s32 value;
+		for (in = 0, out = 0; in < bytes; in++) {
+			unsigned char c = buf[in];
+			int nbytes = 8 - fls(c ^ 0xff);
+			u32 value;
 
-			value = synth_utf8_get(buf + in, bytes - in, &consumed, &want);
-			if (value == -1) {
-				/* Invalid or incomplete */
+			switch (nbytes) {
+			case 8: /* 0xff */
+			case 7: /* 0xfe */
+			case 1: /* 0x80 */
+				/* Invalid, drop */
+				goto drop;
 
-				if (want > bytes - in)
+			case 0:
+				/* ASCII, copy */
+				ubuf[out++] = c;
+				continue;
+
+			default:
+				/* 2..6-byte UTF-8 */
+
+				if (bytes - in < nbytes) {
 					/* We don't have it all yet, stop here
 					 * and wait for the rest
 					 */
 					bytes = in;
+					want = nbytes;
+					continue;
+				}
 
-				continue;
+				/* First byte */
+				value = c & ((1u << (7 - nbytes)) - 1);
+
+				/* Other bytes */
+				for (in2 = 2; in2 <= nbytes; in2++) {
+					c = buf[in + 1];
+					if ((c & 0xc0) != 0x80)	{
+						/* Invalid, drop the head */
+						want = 1;
+						goto drop;
+					}
+					value = (value << 6) | (c & 0x3f);
+					in++;
+				}
+
+				if (value < 0x10000)
+					ubuf[out++] = value;
+				want = 1;
+				break;
 			}
-
-			if (value < 0x10000)
-				ubuf[out++] = value;
+drop:
+			/* empty statement */;
 		}
 
 		count -= bytes;

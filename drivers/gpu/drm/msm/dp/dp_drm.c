@@ -347,6 +347,8 @@ int dp_bridge_init(struct msm_dp *dp_display, struct drm_device *dev,
 		}
 	}
 
+	dp_display->bridge = bridge;
+
 	return 0;
 }
 

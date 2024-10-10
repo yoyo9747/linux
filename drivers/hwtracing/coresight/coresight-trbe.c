@@ -17,7 +17,6 @@
 
 #include <asm/barrier.h>
 #include <asm/cpufeature.h>
-#include <linux/vmalloc.h>
 
 #include "coresight-self-hosted-trace.h"
 #include "coresight-trbe.h"

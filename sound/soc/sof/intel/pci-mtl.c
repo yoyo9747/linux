@@ -3,7 +3,7 @@
 // This file is provided under a dual BSD/GPLv2 license.  When using or
 // redistributing this file, you may do so under either license.
 //
-// Copyright(c) 2018-2022 Intel Corporation
+// Copyright(c) 2018-2022 Intel Corporation. All rights reserved.
 //
 // Author: Ranjani Sridharan <ranjani.sridharan@linux.intel.com>
 //
@@ -133,7 +133,5 @@ static struct pci_driver snd_sof_pci_intel_mtl_driver = {
 module_pci_driver(snd_sof_pci_intel_mtl_driver);
 
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_DESCRIPTION("SOF support for MeteorLake platforms");
-MODULE_IMPORT_NS(SND_SOC_SOF_INTEL_HDA_GENERIC);
 MODULE_IMPORT_NS(SND_SOC_SOF_INTEL_HDA_COMMON);
 MODULE_IMPORT_NS(SND_SOC_SOF_PCI_DEV);

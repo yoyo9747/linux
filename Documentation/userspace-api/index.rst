@@ -20,7 +20,6 @@ System calls
    futex2
    ebpf/index
    ioctl/index
-   mseal
 
 Security-related interfaces
 ===========================
@@ -32,7 +31,6 @@ Security-related interfaces
    seccomp_filter
    landlock
    lsm
-   mfd_noexec
    spec_ctrl
    tee
 
@@ -45,6 +43,7 @@ Devices and I/O
    accelerators/ocxl
    dma-buf-alloc-exchange
    gpio/index
+   iommu
    iommufd
    media/index
    dcdbas

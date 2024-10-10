@@ -160,13 +160,7 @@ static int vp_vdpa_request_irq(struct vp_vdpa *vp_vdpa)
 	struct pci_dev *pdev = mdev->pci_dev;
 	int i, ret, irq;
 	int queues = vp_vdpa->queues;
-	int vectors = 1;
-	int msix_vec = 0;
-
-	for (i = 0; i < queues; i++) {
-		if (vp_vdpa->vring[i].cb.callback)
-			vectors++;
-	}
+	int vectors = queues + 1;
 
 	ret = pci_alloc_irq_vectors(pdev, vectors, vectors, PCI_IRQ_MSIX);
 	if (ret != vectors) {
@@ -179,12 +173,9 @@ static int vp_vdpa_request_irq(struct vp_vdpa *vp_vdpa)
 	vp_vdpa->vectors = vectors;
 
 	for (i = 0; i < queues; i++) {
-		if (!vp_vdpa->vring[i].cb.callback)
-			continue;
-
 		snprintf(vp_vdpa->vring[i].msix_name, VP_VDPA_NAME_SIZE,
 			"vp-vdpa[%s]-%d\n", pci_name(pdev), i);
-		irq = pci_irq_vector(pdev, msix_vec);
+		irq = pci_irq_vector(pdev, i);
 		ret = devm_request_irq(&pdev->dev, irq,
 				       vp_vdpa_vq_handler,
 				       0, vp_vdpa->vring[i].msix_name,
@@ -194,22 +185,21 @@ static int vp_vdpa_request_irq(struct vp_vdpa *vp_vdpa)
 				"vp_vdpa: fail to request irq for vq %d\n", i);
 			goto err;
 		}
-		vp_modern_queue_vector(mdev, i, msix_vec);
+		vp_modern_queue_vector(mdev, i, i);
 		vp_vdpa->vring[i].irq = irq;
-		msix_vec++;
 	}
 
 	snprintf(vp_vdpa->msix_name, VP_VDPA_NAME_SIZE, "vp-vdpa[%s]-config\n",
 		 pci_name(pdev));
-	irq = pci_irq_vector(pdev, msix_vec);
+	irq = pci_irq_vector(pdev, queues);
 	ret = devm_request_irq(&pdev->dev, irq,	vp_vdpa_config_handler, 0,
 			       vp_vdpa->msix_name, vp_vdpa);
 	if (ret) {
 		dev_err(&pdev->dev,
-			"vp_vdpa: fail to request irq for config: %d\n", ret);
+			"vp_vdpa: fail to request irq for vq %d\n", i);
 			goto err;
 	}
-	vp_modern_config_vector(mdev, msix_vec);
+	vp_modern_config_vector(mdev, queues);
 	vp_vdpa->config_irq = irq;
 
 	return 0;
@@ -226,10 +216,7 @@ static void vp_vdpa_set_status(struct vdpa_device *vdpa, u8 status)
 
 	if (status & VIRTIO_CONFIG_S_DRIVER_OK &&
 	    !(s & VIRTIO_CONFIG_S_DRIVER_OK)) {
-		if (vp_vdpa_request_irq(vp_vdpa)) {
-			WARN_ON(1);
-			return;
-		}
+		vp_vdpa_request_irq(vp_vdpa);
 	}
 
 	vp_modern_set_status(mdev, status);

@@ -400,19 +400,21 @@ static int name_len(const char *xattr_name, int xattr_name_len)
 	return len;
 }
 
-static ssize_t copy_name(char *buffer, const char *xattr_name, int name_len)
+static int copy_name(char *buffer, const char *xattr_name, int name_len)
 {
-	ssize_t len;
+	int len = name_len;
+	int offset = 0;
 
-	if (!is_known_namespace(xattr_name))
-		len = scnprintf(buffer, name_len + XATTR_MAC_OSX_PREFIX_LEN,
-				 "%s%s", XATTR_MAC_OSX_PREFIX, xattr_name);
-	else
-		len = strscpy(buffer, xattr_name, name_len + 1);
+	if (!is_known_namespace(xattr_name)) {
+		memcpy(buffer, XATTR_MAC_OSX_PREFIX, XATTR_MAC_OSX_PREFIX_LEN);
+		offset += XATTR_MAC_OSX_PREFIX_LEN;
+		len += XATTR_MAC_OSX_PREFIX_LEN;
+	}
 
-	/* include NUL-byte in length for non-empty name */
-	if (len >= 0)
-		len++;
+	strncpy(buffer + offset, xattr_name, name_len);
+	memset(buffer + offset + name_len, 0, 1);
+	len += 1;
+
 	return len;
 }
 
@@ -696,7 +698,7 @@ ssize_t hfsplus_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		return err;
 	}
 
-	strbuf = kzalloc(NLS_MAX_CHARSET_SIZE * HFSPLUS_ATTR_MAX_STRLEN +
+	strbuf = kmalloc(NLS_MAX_CHARSET_SIZE * HFSPLUS_ATTR_MAX_STRLEN +
 			XATTR_MAC_OSX_PREFIX_LEN + 1, GFP_KERNEL);
 	if (!strbuf) {
 		res = -ENOMEM;

@@ -21,6 +21,8 @@ struct dp_debug_private {
 	struct dp_link *link;
 	struct dp_panel *panel;
 	struct drm_connector *connector;
+
+	struct dp_debug dp_debug;
 };
 
 static int dp_debug_show(struct seq_file *seq, void *p)
@@ -197,24 +199,10 @@ static const struct file_operations test_active_fops = {
 	.write = dp_test_active_write
 };
 
-int dp_debug_init(struct device *dev, struct dp_panel *panel,
-		  struct dp_link *link,
-		  struct drm_connector *connector,
-		  struct dentry *root, bool is_edp)
+static void dp_debug_init(struct dp_debug *dp_debug, struct dentry *root, bool is_edp)
 {
-	struct dp_debug_private *debug;
-
-	if (!dev || !panel || !link) {
-		DRM_ERROR("invalid input\n");
-		return -EINVAL;
-	}
-
-	debug = devm_kzalloc(dev, sizeof(*debug), GFP_KERNEL);
-	if (!debug)
-		return -ENOMEM;
-
-	debug->link = link;
-	debug->panel = panel;
+	struct dp_debug_private *debug = container_of(dp_debug,
+			struct dp_debug_private, dp_debug);
 
 	debugfs_create_file("dp_debug", 0444, root,
 			debug, &dp_debug_fops);
@@ -232,6 +220,41 @@ int dp_debug_init(struct device *dev, struct dp_panel *panel,
 				    root,
 				    debug, &dp_test_type_fops);
 	}
+}
 
-	return 0;
+struct dp_debug *dp_debug_get(struct device *dev, struct dp_panel *panel,
+		struct dp_link *link,
+		struct drm_connector *connector,
+		struct dentry *root, bool is_edp)
+{
+	struct dp_debug_private *debug;
+	struct dp_debug *dp_debug;
+	int rc;
+
+	if (!dev || !panel || !link) {
+		DRM_ERROR("invalid input\n");
+		rc = -EINVAL;
+		goto error;
+	}
+
+	debug = devm_kzalloc(dev, sizeof(*debug), GFP_KERNEL);
+	if (!debug) {
+		rc = -ENOMEM;
+		goto error;
+	}
+
+	debug->dp_debug.debug_en = false;
+	debug->link = link;
+	debug->panel = panel;
+
+	dp_debug = &debug->dp_debug;
+	dp_debug->vdisplay = 0;
+	dp_debug->hdisplay = 0;
+	dp_debug->vrefresh = 0;
+
+	dp_debug_init(dp_debug, root, is_edp);
+
+	return dp_debug;
+ error:
+	return ERR_PTR(rc);
 }

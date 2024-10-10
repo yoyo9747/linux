@@ -252,16 +252,18 @@ static int sun50i_a100_ledc_parse_format(struct device *dev,
 					 struct sun50i_a100_ledc *priv)
 {
 	const char *format = "grb";
-	int i;
+	u32 i;
 
 	device_property_read_string(dev, "allwinner,pixel-format", &format);
 
-	i = match_string(sun50i_a100_ledc_formats, ARRAY_SIZE(sun50i_a100_ledc_formats), format);
-	if (i < 0)
-		return dev_err_probe(dev, i, "Bad pixel format '%s'\n", format);
+	for (i = 0; i < ARRAY_SIZE(sun50i_a100_ledc_formats); i++) {
+		if (!strcmp(format, sun50i_a100_ledc_formats[i])) {
+			priv->format = i;
+			return 0;
+		}
+	}
 
-	priv->format = i;
-	return 0;
+	return dev_err_probe(dev, -EINVAL, "Bad pixel format '%s'\n", format);
 }
 
 static void sun50i_a100_ledc_set_format(struct sun50i_a100_ledc *priv)
@@ -368,7 +370,7 @@ static int sun50i_a100_ledc_suspend(struct device *dev)
 		if (!xfer_active)
 			break;
 
-		usleep_range(1000, 1100);
+		msleep(1);
 	}
 
 	clk_disable_unprepare(priv->mod_clk);

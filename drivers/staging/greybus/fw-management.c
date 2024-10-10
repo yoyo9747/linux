@@ -123,7 +123,8 @@ static int fw_mgmt_interface_fw_version_operation(struct fw_mgmt *fw_mgmt,
 	fw_info->major = le16_to_cpu(response.major);
 	fw_info->minor = le16_to_cpu(response.minor);
 
-	strscpy_pad(fw_info->firmware_tag, response.firmware_tag);
+	strncpy(fw_info->firmware_tag, response.firmware_tag,
+		GB_FIRMWARE_TAG_MAX_SIZE);
 
 	/*
 	 * The firmware-tag should be NULL terminated, otherwise throw error but
@@ -152,7 +153,7 @@ static int fw_mgmt_load_and_validate_operation(struct fw_mgmt *fw_mgmt,
 	}
 
 	request.load_method = load_method;
-	strscpy_pad(request.firmware_tag, tag);
+	strncpy(request.firmware_tag, tag, GB_FIRMWARE_TAG_MAX_SIZE);
 
 	/*
 	 * The firmware-tag should be NULL terminated, otherwise throw error and
@@ -248,7 +249,8 @@ static int fw_mgmt_backend_fw_version_operation(struct fw_mgmt *fw_mgmt,
 	struct gb_fw_mgmt_backend_fw_version_response response;
 	int ret;
 
-	strscpy_pad(request.firmware_tag, fw_info->firmware_tag);
+	strncpy(request.firmware_tag, fw_info->firmware_tag,
+		GB_FIRMWARE_TAG_MAX_SIZE);
 
 	/*
 	 * The firmware-tag should be NULL terminated, otherwise throw error and
@@ -301,13 +303,13 @@ static int fw_mgmt_backend_fw_update_operation(struct fw_mgmt *fw_mgmt,
 	struct gb_fw_mgmt_backend_fw_update_request request;
 	int ret;
 
-	ret = strscpy_pad(request.firmware_tag, tag);
+	strncpy(request.firmware_tag, tag, GB_FIRMWARE_TAG_MAX_SIZE);
 
 	/*
 	 * The firmware-tag should be NULL terminated, otherwise throw error and
 	 * fail.
 	 */
-	if (ret == -E2BIG) {
+	if (request.firmware_tag[GB_FIRMWARE_TAG_MAX_SIZE - 1] != '\0') {
 		dev_err(fw_mgmt->parent, "backend-update: firmware-tag is not NULL terminated\n");
 		return -EINVAL;
 	}

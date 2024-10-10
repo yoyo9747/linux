@@ -130,7 +130,7 @@ struct panfrost_device {
 	struct list_head scheduled_jobs;
 
 	struct panfrost_perfcnt *perfcnt;
-	bool profile_mode;
+	atomic_t profile_mode;
 
 	struct mutex sched_lock;
 

@@ -88,7 +88,7 @@
 #include <linux/xattr.h>
 #include <linux/nospec.h>
 #include <linux/indirect_call_wrapper.h>
-#include <linux/io_uring/net.h>
+#include <linux/io_uring.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -153,6 +153,7 @@ static void sock_show_fdinfo(struct seq_file *m, struct file *f)
 
 static const struct file_operations socket_file_ops = {
 	.owner =	THIS_MODULE,
+	.llseek =	no_llseek,
 	.read_iter =	sock_read_iter,
 	.write_iter =	sock_write_iter,
 	.poll =		sock_poll,
@@ -555,10 +556,10 @@ static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 	struct socket *sock;
 
 	*err = -EBADF;
-	if (fd_file(f)) {
-		sock = sock_from_file(fd_file(f));
+	if (f.file) {
+		sock = sock_from_file(f.file);
 		if (likely(sock)) {
-			*fput_needed = f.word & FDPUT_FPUT;
+			*fput_needed = f.flags & FDPUT_FPUT;
 			return sock;
 		}
 		*err = -ENOTSOCK;
@@ -945,17 +946,11 @@ void __sock_recv_timestamp(struct msghdr *msg, struct sock *sk,
 
 	memset(&tss, 0, sizeof(tss));
 	tsflags = READ_ONCE(sk->sk_tsflags);
-	if ((tsflags & SOF_TIMESTAMPING_SOFTWARE &&
-	     (tsflags & SOF_TIMESTAMPING_RX_SOFTWARE ||
-	      skb_is_err_queue(skb) ||
-	      !(tsflags & SOF_TIMESTAMPING_OPT_RX_FILTER))) &&
+	if ((tsflags & SOF_TIMESTAMPING_SOFTWARE) &&
 	    ktime_to_timespec64_cond(skb->tstamp, tss.ts + 0))
 		empty = 0;
 	if (shhwtstamps &&
-	    (tsflags & SOF_TIMESTAMPING_RAW_HARDWARE &&
-	     (tsflags & SOF_TIMESTAMPING_RX_HARDWARE ||
-	      skb_is_err_queue(skb) ||
-	      !(tsflags & SOF_TIMESTAMPING_OPT_RX_FILTER))) &&
+	    (tsflags & SOF_TIMESTAMPING_RAW_HARDWARE) &&
 	    !skb_is_swtx_tstamp(skb, false_tstamp)) {
 		if_index = 0;
 		if (skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP_NETDEV)
@@ -1827,20 +1822,6 @@ SYSCALL_DEFINE4(socketpair, int, family, int, type, int, protocol,
 	return __sys_socketpair(family, type, protocol, usockvec);
 }
 
-int __sys_bind_socket(struct socket *sock, struct sockaddr_storage *address,
-		      int addrlen)
-{
-	int err;
-
-	err = security_socket_bind(sock, (struct sockaddr *)address,
-				   addrlen);
-	if (!err)
-		err = READ_ONCE(sock->ops)->bind(sock,
-						 (struct sockaddr *)address,
-						 addrlen);
-	return err;
-}
-
 /*
  *	Bind a name to a socket. Nothing much to do here since it's
  *	the protocol's responsibility to handle the local address.
@@ -1858,8 +1839,15 @@ int __sys_bind(int fd, struct sockaddr __user *umyaddr, int addrlen)
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
 		err = move_addr_to_kernel(umyaddr, addrlen, &address);
-		if (!err)
-			err = __sys_bind_socket(sock, &address, addrlen);
+		if (!err) {
+			err = security_socket_bind(sock,
+						   (struct sockaddr *)&address,
+						   addrlen);
+			if (!err)
+				err = READ_ONCE(sock->ops)->bind(sock,
+						      (struct sockaddr *)
+						      &address, addrlen);
+		}
 		fput_light(sock->file, fput_needed);
 	}
 	return err;
@@ -1875,28 +1863,23 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
  *	necessary for a listen, and if that works, we mark the socket as
  *	ready for listening.
  */
-int __sys_listen_socket(struct socket *sock, int backlog)
-{
-	int somaxconn, err;
-
-	somaxconn = READ_ONCE(sock_net(sock->sk)->core.sysctl_somaxconn);
-	if ((unsigned int)backlog > somaxconn)
-		backlog = somaxconn;
-
-	err = security_socket_listen(sock, backlog);
-	if (!err)
-		err = READ_ONCE(sock->ops)->listen(sock, backlog);
-	return err;
-}
 
 int __sys_listen(int fd, int backlog)
 {
 	struct socket *sock;
 	int err, fput_needed;
+	int somaxconn;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
-		err = __sys_listen_socket(sock, backlog);
+		somaxconn = READ_ONCE(sock_net(sock->sk)->core.sysctl_somaxconn);
+		if ((unsigned int)backlog > somaxconn)
+			backlog = somaxconn;
+
+		err = security_socket_listen(sock, backlog);
+		if (!err)
+			err = READ_ONCE(sock->ops)->listen(sock, backlog);
+
 		fput_light(sock->file, fput_needed);
 	}
 	return err;
@@ -1907,7 +1890,7 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	return __sys_listen(fd, backlog);
 }
 
-struct file *do_accept(struct file *file, struct proto_accept_arg *arg,
+struct file *do_accept(struct file *file, unsigned file_flags,
 		       struct sockaddr __user *upeer_sockaddr,
 		       int __user *upeer_addrlen, int flags)
 {
@@ -1943,8 +1926,8 @@ struct file *do_accept(struct file *file, struct proto_accept_arg *arg,
 	if (err)
 		goto out_fd;
 
-	arg->flags |= sock->file->f_flags;
-	err = ops->accept(sock, newsock, arg);
+	err = ops->accept(sock, newsock, sock->file->f_flags | file_flags,
+					false);
 	if (err < 0)
 		goto out_fd;
 
@@ -1970,7 +1953,6 @@ out_fd:
 static int __sys_accept4_file(struct file *file, struct sockaddr __user *upeer_sockaddr,
 			      int __user *upeer_addrlen, int flags)
 {
-	struct proto_accept_arg arg = { };
 	struct file *newfile;
 	int newfd;
 
@@ -1984,7 +1966,7 @@ static int __sys_accept4_file(struct file *file, struct sockaddr __user *upeer_s
 	if (unlikely(newfd < 0))
 		return newfd;
 
-	newfile = do_accept(file, &arg, upeer_sockaddr, upeer_addrlen,
+	newfile = do_accept(file, 0, upeer_sockaddr, upeer_addrlen,
 			    flags);
 	if (IS_ERR(newfile)) {
 		put_unused_fd(newfd);
@@ -2013,8 +1995,8 @@ int __sys_accept4(int fd, struct sockaddr __user *upeer_sockaddr,
 	struct fd f;
 
 	f = fdget(fd);
-	if (fd_file(f)) {
-		ret = __sys_accept4_file(fd_file(f), upeer_sockaddr,
+	if (f.file) {
+		ret = __sys_accept4_file(f.file, upeer_sockaddr,
 					 upeer_addrlen, flags);
 		fdput(f);
 	}
@@ -2075,12 +2057,12 @@ int __sys_connect(int fd, struct sockaddr __user *uservaddr, int addrlen)
 	struct fd f;
 
 	f = fdget(fd);
-	if (fd_file(f)) {
+	if (f.file) {
 		struct sockaddr_storage address;
 
 		ret = move_addr_to_kernel(uservaddr, addrlen, &address);
 		if (!ret)
-			ret = __sys_connect_file(fd_file(f), &address, addrlen, 0);
+			ret = __sys_connect_file(f.file, &address, addrlen, 0);
 		fdput(f);
 	}
 
@@ -2367,7 +2349,7 @@ INDIRECT_CALLABLE_DECLARE(bool tcp_bpf_bypass_getsockopt(int level,
 int do_sock_getsockopt(struct socket *sock, bool compat, int level,
 		       int optname, sockptr_t optval, sockptr_t optlen)
 {
-	int max_optlen __maybe_unused = 0;
+	int max_optlen __maybe_unused;
 	const struct proto_ops *ops;
 	int err;
 
@@ -2376,7 +2358,7 @@ int do_sock_getsockopt(struct socket *sock, bool compat, int level,
 		return err;
 
 	if (!compat)
-		copy_from_sockptr(&max_optlen, optlen, sizeof(int));
+		max_optlen = BPF_CGROUP_GETSOCKOPT_MAX_OPTLEN(optlen);
 
 	ops = READ_ONCE(sock->ops);
 	if (level == SOL_SOCKET) {
@@ -3598,10 +3580,6 @@ int kernel_accept(struct socket *sock, struct socket **newsock, int flags)
 {
 	struct sock *sk = sock->sk;
 	const struct proto_ops *ops = READ_ONCE(sock->ops);
-	struct proto_accept_arg arg = {
-		.flags = flags,
-		.kern = true,
-	};
 	int err;
 
 	err = sock_create_lite(sk->sk_family, sk->sk_type, sk->sk_protocol,
@@ -3609,7 +3587,7 @@ int kernel_accept(struct socket *sock, struct socket **newsock, int flags)
 	if (err < 0)
 		goto done;
 
-	err = ops->accept(sock, *newsock, &arg);
+	err = ops->accept(sock, *newsock, flags, true);
 	if (err < 0) {
 		sock_release(*newsock);
 		*newsock = NULL;

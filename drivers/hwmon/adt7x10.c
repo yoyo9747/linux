@@ -170,15 +170,21 @@ static int adt7x10_temp_write(struct adt7x10_data *data, int index, long temp)
 
 static int adt7x10_hyst_read(struct adt7x10_data *data, int index, long *val)
 {
-	unsigned int regs[2] = {ADT7X10_T_HYST, ADT7X10_REG_TEMP[index]};
-	int hyst, ret;
-	u16 regdata[2];
+	int hyst, temp, ret;
 
-	ret = regmap_multi_reg_read(data->regmap, regs, regdata, 2);
+	mutex_lock(&data->update_lock);
+	ret = regmap_read(data->regmap, ADT7X10_T_HYST, &hyst);
+	if (ret) {
+		mutex_unlock(&data->update_lock);
+		return ret;
+	}
+
+	ret = regmap_read(data->regmap, ADT7X10_REG_TEMP[index], &temp);
+	mutex_unlock(&data->update_lock);
 	if (ret)
 		return ret;
 
-	hyst = (regdata[0] & ADT7X10_T_HYST_MASK) * 1000;
+	hyst = (hyst & ADT7X10_T_HYST_MASK) * 1000;
 
 	/*
 	 * hysteresis is stored as a 4 bit offset in the device, convert it
@@ -188,7 +194,7 @@ static int adt7x10_hyst_read(struct adt7x10_data *data, int index, long *val)
 	if (index == adt7x10_t_alarm_low)
 		hyst = -hyst;
 
-	*val = ADT7X10_REG_TO_TEMP(data, regdata[1]) - hyst;
+	*val = ADT7X10_REG_TO_TEMP(data, temp) - hyst;
 	return 0;
 }
 

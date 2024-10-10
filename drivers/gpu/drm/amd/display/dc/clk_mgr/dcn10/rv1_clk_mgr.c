@@ -23,6 +23,7 @@
  *
  */
 
+#include "reg_helper.h"
 #include "core_types.h"
 #include "clk_mgr_internal.h"
 #include "rv1_clk_mgr.h"

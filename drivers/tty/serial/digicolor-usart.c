@@ -179,9 +179,8 @@ static void digicolor_uart_rx(struct uart_port *port)
 
 static void digicolor_uart_tx(struct uart_port *port)
 {
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	unsigned long flags;
-	unsigned char c;
 
 	if (digicolor_uart_tx_full(port))
 		return;
@@ -195,19 +194,20 @@ static void digicolor_uart_tx(struct uart_port *port)
 		goto out;
 	}
 
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
 		digicolor_uart_stop_tx(port);
 		goto out;
 	}
 
-	while (uart_fifo_get(port, &c)) {
-		writeb(c, port->membase + UA_EMI_REC);
+	while (!uart_circ_empty(xmit)) {
+		writeb(xmit->buf[xmit->tail], port->membase + UA_EMI_REC);
+		uart_xmit_advance(port, 1);
 
 		if (digicolor_uart_tx_full(port))
 			break;
 	}
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 
 out:

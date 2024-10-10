@@ -231,6 +231,7 @@ allOf:
             - const: snoc_axi
             - const: mnoc_axi
             - const: qdss
+        glink-edge: false
       required:
         - pll-supply
         - smd-edge

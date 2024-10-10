@@ -4,7 +4,6 @@
 
 #include <linux/kasan.h>
 #include <asm/pgtable.h>
-#include <asm/vmalloc.h>
 
 #if defined(CONFIG_HAS_IOMEM) || defined(CONFIG_GENERIC_IOREMAP)
 /*

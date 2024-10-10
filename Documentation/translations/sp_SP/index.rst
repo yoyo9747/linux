@@ -7,7 +7,7 @@ Traducción al español
 
 	\kerneldocCJKoff
 
-:maintainer: Carlos Bilbao <carlos.bilbao.osdev@gmail.com>
+:maintainer: Carlos Bilbao <carlos.bilbao@amd.com>
 
 .. _sp_disclaimer:
 
@@ -78,4 +78,3 @@ Traducciones al español
 
    process/index
    wrappers/memory-barriers
-   scheduler/index

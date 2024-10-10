@@ -26,18 +26,6 @@
  */
 #define ASSIGNED_ADDR_VETH1 0xac1001c8
 
-struct bpf_fou_encap___local {
-	__be16 sport;
-	__be16 dport;
-} __attribute__((preserve_access_index));
-
-enum bpf_fou_encap_type___local {
-	FOU_BPF_ENCAP_FOU___local,
-	FOU_BPF_ENCAP_GUE___local,
-};
-
-struct bpf_fou_encap;
-
 int bpf_skb_set_fou_encap(struct __sk_buff *skb_ctx,
 			  struct bpf_fou_encap *encap, int type) __ksym;
 int bpf_skb_get_fou_encap(struct __sk_buff *skb_ctx,
@@ -579,18 +567,12 @@ int ip6vxlan_get_tunnel_src(struct __sk_buff *skb)
 	return TC_ACT_OK;
 }
 
-struct local_geneve_opt {
-	struct geneve_opt gopt;
-	int data;
-};
-
 SEC("tc")
 int geneve_set_tunnel(struct __sk_buff *skb)
 {
 	int ret;
 	struct bpf_tunnel_key key;
-	struct local_geneve_opt local_gopt;
-	struct geneve_opt *gopt = (struct geneve_opt *) &local_gopt;
+	struct geneve_opt gopt;
 
 	__builtin_memset(&key, 0x0, sizeof(key));
 	key.remote_ipv4 = 0xac100164; /* 172.16.1.100 */
@@ -598,14 +580,14 @@ int geneve_set_tunnel(struct __sk_buff *skb)
 	key.tunnel_tos = 0;
 	key.tunnel_ttl = 64;
 
-	__builtin_memset(gopt, 0x0, sizeof(local_gopt));
-	gopt->opt_class = bpf_htons(0x102); /* Open Virtual Networking (OVN) */
-	gopt->type = 0x08;
-	gopt->r1 = 0;
-	gopt->r2 = 0;
-	gopt->r3 = 0;
-	gopt->length = 2; /* 4-byte multiple */
-	*(int *) &gopt->opt_data = bpf_htonl(0xdeadbeef);
+	__builtin_memset(&gopt, 0x0, sizeof(gopt));
+	gopt.opt_class = bpf_htons(0x102); /* Open Virtual Networking (OVN) */
+	gopt.type = 0x08;
+	gopt.r1 = 0;
+	gopt.r2 = 0;
+	gopt.r3 = 0;
+	gopt.length = 2; /* 4-byte multiple */
+	*(int *) &gopt.opt_data = bpf_htonl(0xdeadbeef);
 
 	ret = bpf_skb_set_tunnel_key(skb, &key, sizeof(key),
 				     BPF_F_ZERO_CSUM_TX);
@@ -614,7 +596,7 @@ int geneve_set_tunnel(struct __sk_buff *skb)
 		return TC_ACT_SHOT;
 	}
 
-	ret = bpf_skb_set_tunnel_opt(skb, gopt, sizeof(local_gopt));
+	ret = bpf_skb_set_tunnel_opt(skb, &gopt, sizeof(gopt));
 	if (ret < 0) {
 		log_err(ret);
 		return TC_ACT_SHOT;
@@ -649,8 +631,7 @@ SEC("tc")
 int ip6geneve_set_tunnel(struct __sk_buff *skb)
 {
 	struct bpf_tunnel_key key;
-	struct local_geneve_opt local_gopt;
-	struct geneve_opt *gopt = (struct geneve_opt *) &local_gopt;
+	struct geneve_opt gopt;
 	int ret;
 
 	__builtin_memset(&key, 0x0, sizeof(key));
@@ -666,16 +647,16 @@ int ip6geneve_set_tunnel(struct __sk_buff *skb)
 		return TC_ACT_SHOT;
 	}
 
-	__builtin_memset(gopt, 0x0, sizeof(local_gopt));
-	gopt->opt_class = bpf_htons(0x102); /* Open Virtual Networking (OVN) */
-	gopt->type = 0x08;
-	gopt->r1 = 0;
-	gopt->r2 = 0;
-	gopt->r3 = 0;
-	gopt->length = 2; /* 4-byte multiple */
-	*(int *) &gopt->opt_data = bpf_htonl(0xfeedbeef);
+	__builtin_memset(&gopt, 0x0, sizeof(gopt));
+	gopt.opt_class = bpf_htons(0x102); /* Open Virtual Networking (OVN) */
+	gopt.type = 0x08;
+	gopt.r1 = 0;
+	gopt.r2 = 0;
+	gopt.r3 = 0;
+	gopt.length = 2; /* 4-byte multiple */
+	*(int *) &gopt.opt_data = bpf_htonl(0xfeedbeef);
 
-	ret = bpf_skb_set_tunnel_opt(skb, gopt, sizeof(gopt));
+	ret = bpf_skb_set_tunnel_opt(skb, &gopt, sizeof(gopt));
 	if (ret < 0) {
 		log_err(ret);
 		return TC_ACT_SHOT;
@@ -757,7 +738,7 @@ SEC("tc")
 int ipip_gue_set_tunnel(struct __sk_buff *skb)
 {
 	struct bpf_tunnel_key key = {};
-	struct bpf_fou_encap___local encap = {};
+	struct bpf_fou_encap encap = {};
 	void *data = (void *)(long)skb->data;
 	struct iphdr *iph = data;
 	void *data_end = (void *)(long)skb->data_end;
@@ -781,9 +762,7 @@ int ipip_gue_set_tunnel(struct __sk_buff *skb)
 	encap.sport = 0;
 	encap.dport = bpf_htons(5555);
 
-	ret = bpf_skb_set_fou_encap(skb, (struct bpf_fou_encap *)&encap,
-				    bpf_core_enum_value(enum bpf_fou_encap_type___local,
-							FOU_BPF_ENCAP_GUE___local));
+	ret = bpf_skb_set_fou_encap(skb, &encap, FOU_BPF_ENCAP_GUE);
 	if (ret < 0) {
 		log_err(ret);
 		return TC_ACT_SHOT;
@@ -796,7 +775,7 @@ SEC("tc")
 int ipip_fou_set_tunnel(struct __sk_buff *skb)
 {
 	struct bpf_tunnel_key key = {};
-	struct bpf_fou_encap___local encap = {};
+	struct bpf_fou_encap encap = {};
 	void *data = (void *)(long)skb->data;
 	struct iphdr *iph = data;
 	void *data_end = (void *)(long)skb->data_end;
@@ -820,8 +799,7 @@ int ipip_fou_set_tunnel(struct __sk_buff *skb)
 	encap.sport = 0;
 	encap.dport = bpf_htons(5555);
 
-	ret = bpf_skb_set_fou_encap(skb, (struct bpf_fou_encap *)&encap,
-				    FOU_BPF_ENCAP_FOU___local);
+	ret = bpf_skb_set_fou_encap(skb, &encap, FOU_BPF_ENCAP_FOU);
 	if (ret < 0) {
 		log_err(ret);
 		return TC_ACT_SHOT;
@@ -835,7 +813,7 @@ int ipip_encap_get_tunnel(struct __sk_buff *skb)
 {
 	int ret;
 	struct bpf_tunnel_key key = {};
-	struct bpf_fou_encap___local encap = {};
+	struct bpf_fou_encap encap = {};
 
 	ret = bpf_skb_get_tunnel_key(skb, &key, sizeof(key), 0);
 	if (ret < 0) {
@@ -843,7 +821,7 @@ int ipip_encap_get_tunnel(struct __sk_buff *skb)
 		return TC_ACT_SHOT;
 	}
 
-	ret = bpf_skb_get_fou_encap(skb, (struct bpf_fou_encap *)&encap);
+	ret = bpf_skb_get_fou_encap(skb, &encap);
 	if (ret < 0) {
 		log_err(ret);
 		return TC_ACT_SHOT;

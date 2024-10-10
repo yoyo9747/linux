@@ -202,8 +202,8 @@ static int dcmipp_create_subdevs(struct dcmipp_device *dcmipp)
 	return 0;
 
 err_init_entity:
-	while (i-- > 0)
-		dcmipp->pipe_cfg->ents[i].release(dcmipp->entity[i]);
+	while (i > 0)
+		dcmipp->pipe_cfg->ents[i - 1].release(dcmipp->entity[i - 1]);
 	return ret;
 }
 
@@ -439,8 +439,11 @@ static int dcmipp_probe(struct platform_device *pdev)
 				     "Could not get reset control\n");
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
-		return irq;
+	if (irq <= 0) {
+		if (irq != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Could not get irq\n");
+		return irq ? irq : -ENXIO;
+	}
 
 	dcmipp->regs = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
 	if (IS_ERR(dcmipp->regs)) {

@@ -613,17 +613,6 @@ static const struct dmi_system_id byt_rt5640_quirk_table[] = {
 	{
 		.matches = {
 			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ARCHOS"),
-			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "ARCHOS 101 CESIUM"),
-		},
-		.driver_data = (void *)(BYTCR_INPUT_DEFAULTS |
-					BYT_RT5640_JD_NOT_INV |
-					BYT_RT5640_DIFF_MIC |
-					BYT_RT5640_SSP0_AIF1 |
-					BYT_RT5640_MCLK_EN),
-	},
-	{
-		.matches = {
-			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ARCHOS"),
 			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "ARCHOS 140 CESIUM"),
 		},
 		.driver_data = (void *)(BYT_RT5640_IN1_MAP |
@@ -1677,7 +1666,7 @@ static int snd_byt_rt5640_mc_probe(struct platform_device *pdev)
 
 	/* fix index of codec dai */
 	for (i = 0; i < ARRAY_SIZE(byt_rt5640_dais); i++) {
-		if (byt_rt5640_dais[i].num_codecs &&
+		if (byt_rt5640_dais[i].codecs->name &&
 		    !strcmp(byt_rt5640_dais[i].codecs->name,
 			    "i2c-10EC5640:00")) {
 			dai_index = i;
@@ -1693,7 +1682,7 @@ static int snd_byt_rt5640_mc_probe(struct platform_device *pdev)
 		byt_rt5640_dais[dai_index].codecs->name = byt_rt5640_codec_name;
 	} else {
 		dev_err(dev, "Error cannot find '%s' dev\n", mach->id);
-		return -ENOENT;
+		return -ENXIO;
 	}
 
 	codec_dev = acpi_get_first_physical_node(adev);
@@ -1918,7 +1907,7 @@ static struct platform_driver snd_byt_rt5640_mc_driver = {
 		.name = "bytcr_rt5640",
 	},
 	.probe = snd_byt_rt5640_mc_probe,
-	.remove = snd_byt_rt5640_mc_remove,
+	.remove_new = snd_byt_rt5640_mc_remove,
 };
 
 module_platform_driver(snd_byt_rt5640_mc_driver);

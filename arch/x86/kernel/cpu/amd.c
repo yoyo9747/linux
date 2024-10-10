@@ -13,7 +13,6 @@
 #include <asm/apic.h>
 #include <asm/cacheinfo.h>
 #include <asm/cpu.h>
-#include <asm/cpu_device_id.h>
 #include <asm/spec-ctrl.h>
 #include <asm/smp.h>
 #include <asm/numa.h>
@@ -462,7 +461,7 @@ static void bsp_init_amd(struct cpuinfo_x86 *c)
 		switch (c->x86_model) {
 		case 0x00 ... 0x2f:
 		case 0x40 ... 0x4f:
-		case 0x60 ... 0x7f:
+		case 0x70 ... 0x7f:
 			setup_force_cpu_cap(X86_FEATURE_ZEN5);
 			break;
 		default:
@@ -795,11 +794,6 @@ static void init_amd_bd(struct cpuinfo_x86 *c)
 	clear_rdrand_cpuid_bit(c);
 }
 
-static const struct x86_cpu_desc erratum_1386_microcode[] = {
-	AMD_CPU_DESC(0x17,  0x1, 0x2, 0x0800126e),
-	AMD_CPU_DESC(0x17, 0x31, 0x0, 0x08301052),
-};
-
 static void fix_erratum_1386(struct cpuinfo_x86 *c)
 {
 	/*
@@ -809,13 +803,7 @@ static void fix_erratum_1386(struct cpuinfo_x86 *c)
 	 *
 	 * Affected parts all have no supervisor XSAVE states, meaning that
 	 * the XSAVEC instruction (which works fine) is equivalent.
-	 *
-	 * Clear the feature flag only on microcode revisions which
-	 * don't have the fix.
 	 */
-	if (x86_cpu_has_min_microcode_rev(erratum_1386_microcode))
-		return;
-
 	clear_cpu_cap(c, X86_FEATURE_XSAVES);
 }
 
@@ -1190,6 +1178,22 @@ unsigned long amd_get_dr_addr_mask(unsigned int dr)
 }
 EXPORT_SYMBOL_GPL(amd_get_dr_addr_mask);
 
+u32 amd_get_highest_perf(void)
+{
+	struct cpuinfo_x86 *c = &boot_cpu_data;
+
+	if (c->x86 == 0x17 && ((c->x86_model >= 0x30 && c->x86_model < 0x40) ||
+			       (c->x86_model >= 0x70 && c->x86_model < 0x80)))
+		return 166;
+
+	if (c->x86 == 0x19 && ((c->x86_model >= 0x20 && c->x86_model < 0x30) ||
+			       (c->x86_model >= 0x40 && c->x86_model < 0x70)))
+		return 166;
+
+	return 255;
+}
+EXPORT_SYMBOL_GPL(amd_get_highest_perf);
+
 static void zenbleed_check_cpu(void *unused)
 {
 	struct cpuinfo_x86 *c = &cpu_data(smp_processor_id());
@@ -1204,3 +1208,14 @@ void amd_check_microcode(void)
 
 	on_each_cpu(zenbleed_check_cpu, NULL, 1);
 }
+
+/*
+ * Issue a DIV 0/1 insn to clear any division data from previous DIV
+ * operations.
+ */
+void noinstr amd_clear_divider(void)
+{
+	asm volatile(ALTERNATIVE("", "div %2\n\t", X86_BUG_DIV0)
+		     :: "a" (0), "d" (0), "r" (1));
+}
+EXPORT_SYMBOL_GPL(amd_clear_divider);

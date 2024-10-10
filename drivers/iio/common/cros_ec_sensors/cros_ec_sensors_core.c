@@ -198,7 +198,9 @@ int cros_ec_sensors_push_data(struct iio_dev *indio_dev,
 		return 0;
 
 	out = (s16 *)st->samples;
-	iio_for_each_active_channel(indio_dev, i) {
+	for_each_set_bit(i,
+			 indio_dev->active_scan_mask,
+			 indio_dev->masklength) {
 		*out = data[i];
 		out++;
 	}
@@ -585,7 +587,7 @@ static int cros_ec_sensors_read_data_unsafe(struct iio_dev *indio_dev,
 	int ret;
 
 	/* Read all sensors enabled in scan_mask. Each value is 2 bytes. */
-	for_each_set_bit(i, &scan_mask, iio_get_masklength(indio_dev)) {
+	for_each_set_bit(i, &scan_mask, indio_dev->masklength) {
 		ret = cros_ec_sensors_cmd_read_u16(ec,
 					     cros_ec_sensors_idx_to_reg(st, i),
 					     data);
@@ -681,7 +683,7 @@ int cros_ec_sensors_read_cmd(struct iio_dev *indio_dev,
 		return ret;
 	}
 
-	for_each_set_bit(i, &scan_mask, iio_get_masklength(indio_dev)) {
+	for_each_set_bit(i, &scan_mask, indio_dev->masklength) {
 		*data = st->resp->data.data[i];
 		data++;
 	}

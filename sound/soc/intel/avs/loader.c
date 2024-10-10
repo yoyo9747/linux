@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 //
-// Copyright(c) 2021-2022 Intel Corporation
+// Copyright(c) 2021-2022 Intel Corporation. All rights reserved.
 //
 // Authors: Cezary Rojewski <cezary.rojewski@intel.com>
 //          Amadeusz Slawinski <amadeuszx.slawinski@linux.intel.com>
@@ -56,7 +56,6 @@ struct avs_fw_manifest {
 	u32 feature_mask;
 	struct avs_fw_version version;
 } __packed;
-static_assert(sizeof(struct avs_fw_manifest) == 36);
 
 struct avs_fw_ext_manifest {
 	u32 id;
@@ -65,7 +64,6 @@ struct avs_fw_ext_manifest {
 	u16 version_minor;
 	u32 entries;
 } __packed;
-static_assert(sizeof(struct avs_fw_ext_manifest) == 16);
 
 static int avs_fw_ext_manifest_strip(struct firmware *fw)
 {
@@ -537,7 +535,7 @@ int avs_dsp_load_libraries(struct avs_dev *adev, struct avs_tplg_library *libs, 
 		if (ret)
 			return ret;
 
-		strscpy(adev->lib_names[id], man->name, AVS_LIB_NAME_SIZE);
+		strncpy(adev->lib_names[id], man->name, AVS_LIB_NAME_SIZE);
 		id++;
 next_lib:
 		i++;
@@ -700,7 +698,7 @@ int avs_dsp_first_boot_firmware(struct avs_dev *adev)
 	}
 
 	/* basefw always occupies slot 0 */
-	strscpy(adev->lib_names[0], "BASEFW", AVS_LIB_NAME_SIZE);
+	strcpy(&adev->lib_names[0][0], "BASEFW");
 
 	ida_init(&adev->ppl_ida);
 

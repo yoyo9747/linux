@@ -24,10 +24,7 @@ properties:
       string determines how the NT35510 panel driver shall be configured
       to work with the indicated panel. The novatek,nt35510 compatible shall
       always be provided as a fallback.
-
-  reg:
-    maxItems: 1
-
+  reg: true
   reset-gpios: true
   vdd-supply:
     description: regulator that supplies the vdd voltage

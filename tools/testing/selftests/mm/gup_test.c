@@ -1,4 +1,3 @@
-#define __SANE_USERSPACE_TYPES__ // Use ll64
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
@@ -229,7 +228,7 @@ int main(int argc, char **argv)
 			break;
 		}
 		ksft_test_result_skip("Please run this test as root\n");
-		ksft_exit_pass();
+		return ksft_exit_pass();
 	}
 
 	p = mmap(NULL, size, PROT_READ | PROT_WRITE, flags, filed, 0);
@@ -268,5 +267,5 @@ int main(int argc, char **argv)
 
 	free(tid);
 
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

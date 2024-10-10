@@ -84,7 +84,7 @@ static int vx_check_magic(struct vx_core *chip)
 			return 0;
 		msleep(10);
 	} while (time_after_eq(end_time, jiffies));
-	dev_err(chip->card->dev, "cannot find xilinx magic word (%x)\n", c);
+	snd_printk(KERN_ERR "cannot find xilinx magic word (%x)\n", c);
 	return -EIO;
 }
 
@@ -153,6 +153,7 @@ static int vxp_load_xilinx_binary(struct vx_core *_chip, const struct firmware *
 	vx_outb(chip, ICR, 0);
 
 	/* Wait for answer HF2 equal to 1 */
+	snd_printdd(KERN_DEBUG "check ISR_HF2\n");
 	if (vx_check_isr(_chip, ISR_HF2, ISR_HF2, 20) < 0)
 		goto _error;
 
@@ -169,9 +170,7 @@ static int vxp_load_xilinx_binary(struct vx_core *_chip, const struct firmware *
 			goto _error;
 		c = vx_inb(chip, RXL);
 		if (c != (int)data)
-			dev_err(_chip->card->dev,
-				"vxpocket: load xilinx mismatch at %d: 0x%x != 0x%x\n",
-				i, c, (int)data);
+			snd_printk(KERN_ERR "vxpocket: load xilinx mismatch at %d: 0x%x != 0x%x\n", i, c, (int)data);
         }
 
 	/* reset HF1 */
@@ -189,8 +188,7 @@ static int vxp_load_xilinx_binary(struct vx_core *_chip, const struct firmware *
 	c |= (int)vx_inb(chip, RXM) << 8;
 	c |= vx_inb(chip, RXL);
 
-	dev_dbg(_chip->card->dev,
-		"xilinx: dsp size received 0x%x, orig 0x%zx\n", c, fw->size);
+	snd_printdd(KERN_DEBUG "xilinx: dsp size received 0x%x, orig 0x%zx\n", c, fw->size);
 
 	vx_outb(chip, ICR, ICR_HF0);
 

@@ -98,7 +98,9 @@ static void gmc_v6_0_mc_resume(struct amdgpu_device *adev)
 static int gmc_v6_0_init_microcode(struct amdgpu_device *adev)
 {
 	const char *chip_name;
+	char fw_name[30];
 	int err;
+	bool is_58_fw = false;
 
 	DRM_DEBUG("\n");
 
@@ -124,13 +126,17 @@ static int gmc_v6_0_init_microcode(struct amdgpu_device *adev)
 
 	/* this memory configuration requires special firmware */
 	if (((RREG32(mmMC_SEQ_MISC0) & 0xff000000) >> 24) == 0x58)
-		chip_name = "si58";
+		is_58_fw = true;
 
-	err = amdgpu_ucode_request(adev, &adev->gmc.fw, "amdgpu/%s_mc.bin", chip_name);
+	if (is_58_fw)
+		snprintf(fw_name, sizeof(fw_name), "amdgpu/si58_mc.bin");
+	else
+		snprintf(fw_name, sizeof(fw_name), "amdgpu/%s_mc.bin", chip_name);
+	err = amdgpu_ucode_request(adev, &adev->gmc.fw, fw_name);
 	if (err) {
 		dev_err(adev->dev,
-		       "si_mc: Failed to load firmware \"%s_mc.bin\"\n",
-		       chip_name);
+		       "si_mc: Failed to load firmware \"%s\"\n",
+		       fw_name);
 		amdgpu_ucode_release(&adev->gmc.fw);
 	}
 	return err;
@@ -1109,8 +1115,6 @@ static const struct amd_ip_funcs gmc_v6_0_ip_funcs = {
 	.soft_reset = gmc_v6_0_soft_reset,
 	.set_clockgating_state = gmc_v6_0_set_clockgating_state,
 	.set_powergating_state = gmc_v6_0_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static const struct amdgpu_gmc_funcs gmc_v6_0_gmc_funcs = {

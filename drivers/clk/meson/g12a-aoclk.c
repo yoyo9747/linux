@@ -473,8 +473,6 @@ static struct platform_driver g12a_aoclkc_driver = {
 		.of_match_table = g12a_aoclkc_match_table,
 	},
 };
-module_platform_driver(g12a_aoclkc_driver);
 
-MODULE_DESCRIPTION("Amlogic G12A Always-ON Clock Controller driver");
-MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(CLK_MESON);
+module_platform_driver(g12a_aoclkc_driver);
+MODULE_LICENSE("GPL v2");

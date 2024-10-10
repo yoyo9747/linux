@@ -34,6 +34,7 @@
 };
 
 &nand_controller {
+	brcm,wp-not-connected;
 	status = "okay";
 };
 

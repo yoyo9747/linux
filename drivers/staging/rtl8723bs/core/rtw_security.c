@@ -6,6 +6,7 @@
  ******************************************************************************/
 #include <linux/crc32.h>
 #include <drv_types.h>
+#include <rtw_debug.h>
 #include <crypto/aes.h>
 
 static const char * const _security_type_str[] = {

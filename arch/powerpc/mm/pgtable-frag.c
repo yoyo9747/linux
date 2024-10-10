@@ -136,10 +136,10 @@ void pte_fragment_free(unsigned long *table, int kernel)
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 void pte_free_defer(struct mm_struct *mm, pgtable_t pgtable)
 {
-	struct folio *folio;
+	struct page *page;
 
-	folio = virt_to_folio(pgtable);
-	folio_set_active(folio);
+	page = virt_to_page(pgtable);
+	SetPageActive(page);
 	pte_fragment_free((unsigned long *)pgtable, 0);
 }
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */

@@ -149,7 +149,7 @@ static int vlan_dev_change_mtu(struct net_device *dev, int new_mtu)
 	if (max_mtu < new_mtu)
 		return -ERANGE;
 
-	WRITE_ONCE(dev->mtu, new_mtu);
+	dev->mtu = new_mtu;
 
 	return 0;
 }
@@ -564,20 +564,17 @@ static int vlan_dev_init(struct net_device *dev)
 			   NETIF_F_FRAGLIST | NETIF_F_GSO_SOFTWARE |
 			   NETIF_F_GSO_ENCAP_ALL |
 			   NETIF_F_HIGHDMA | NETIF_F_SCTP_CRC |
-			   NETIF_F_FCOE_CRC | NETIF_F_FSO;
+			   NETIF_F_ALL_FCOE;
 
 	if (real_dev->vlan_features & NETIF_F_HW_MACSEC)
 		dev->hw_features |= NETIF_F_HW_MACSEC;
 
-	dev->features |= dev->hw_features;
-	dev->lltx = true;
-	dev->fcoe_mtu = true;
+	dev->features |= dev->hw_features | NETIF_F_LLTX;
 	netif_inherit_tso_max(dev, real_dev);
 	if (dev->features & NETIF_F_VLAN_FEATURES)
 		netdev_warn(real_dev, "VLAN features are set incorrectly.  Q-in-Q configurations may not work correctly.\n");
 
-	dev->vlan_features = real_dev->vlan_features &
-			     ~(NETIF_F_FCOE_CRC | NETIF_F_FSO);
+	dev->vlan_features = real_dev->vlan_features & ~NETIF_F_ALL_FCOE;
 	dev->hw_enc_features = vlan_tnl_features(real_dev);
 	dev->mpls_features = real_dev->mpls_features;
 
@@ -658,6 +655,7 @@ static netdev_features_t vlan_dev_fix_features(struct net_device *dev,
 		lower_features |= NETIF_F_HW_CSUM;
 	features = netdev_intersect_features(features, lower_features);
 	features |= old_features & (NETIF_F_SOFT_FEATURES | NETIF_F_GSO_SOFTWARE);
+	features |= NETIF_F_LLTX;
 
 	return features;
 }
@@ -679,7 +677,7 @@ static void vlan_ethtool_get_drvinfo(struct net_device *dev,
 }
 
 static int vlan_ethtool_get_ts_info(struct net_device *dev,
-				    struct kernel_ethtool_ts_info *info)
+				    struct ethtool_ts_info *info)
 {
 	const struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
 	return ethtool_get_ts_info_by_layer(vlan->real_dev, info);

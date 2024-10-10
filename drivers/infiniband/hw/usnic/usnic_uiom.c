@@ -443,11 +443,11 @@ struct usnic_uiom_pd *usnic_uiom_alloc_pd(struct device *dev)
 	if (!pd)
 		return ERR_PTR(-ENOMEM);
 
-	pd->domain = domain = iommu_paging_domain_alloc(dev);
-	if (IS_ERR(domain)) {
+	pd->domain = domain = iommu_domain_alloc(dev->bus);
+	if (!domain) {
 		usnic_err("Failed to allocate IOMMU domain");
 		kfree(pd);
-		return ERR_CAST(domain);
+		return ERR_PTR(-ENOMEM);
 	}
 
 	iommu_set_fault_handler(pd->domain, usnic_uiom_dma_fault, NULL);

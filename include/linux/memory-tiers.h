@@ -38,7 +38,6 @@ struct access_coordinate;
 #ifdef CONFIG_NUMA
 extern bool numa_demotion_enabled;
 extern struct memory_dev_type *default_dram_type;
-extern nodemask_t default_dram_nodes;
 struct memory_dev_type *alloc_memory_type(int adistance);
 void put_memory_type(struct memory_dev_type *memtype);
 void init_node_memory_type(int node, struct memory_dev_type *default_type);
@@ -49,9 +48,6 @@ int mt_calc_adistance(int node, int *adist);
 int mt_set_default_dram_perf(int nid, struct access_coordinate *perf,
 			     const char *source);
 int mt_perf_to_adistance(struct access_coordinate *perf, int *adist);
-struct memory_dev_type *mt_find_alloc_memory_type(int adist,
-						  struct list_head *memory_types);
-void mt_put_memory_types(struct list_head *memory_types);
 #ifdef CONFIG_MIGRATION
 int next_demotion_node(int node);
 void node_get_allowed_targets(pg_data_t *pgdat, nodemask_t *targets);
@@ -77,7 +73,6 @@ static inline bool node_is_toptier(int node)
 
 #define numa_demotion_enabled	false
 #define default_dram_type	NULL
-#define default_dram_nodes	NODE_MASK_NONE
 /*
  * CONFIG_NUMA implementation returns non NULL error.
  */
@@ -140,16 +135,6 @@ static inline int mt_set_default_dram_perf(int nid, struct access_coordinate *pe
 static inline int mt_perf_to_adistance(struct access_coordinate *perf, int *adist)
 {
 	return -EIO;
-}
-
-static inline struct memory_dev_type *mt_find_alloc_memory_type(int adist,
-								struct list_head *memory_types)
-{
-	return NULL;
-}
-
-static inline void mt_put_memory_types(struct list_head *memory_types)
-{
 }
 #endif	/* CONFIG_NUMA */
 #endif  /* _LINUX_MEMORY_TIERS_H */

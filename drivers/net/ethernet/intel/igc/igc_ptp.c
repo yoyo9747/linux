@@ -11,7 +11,6 @@
 #include <linux/ktime.h>
 #include <linux/delay.h>
 #include <linux/iopoll.h>
-#include <net/xdp_sock_drv.h>
 
 #define INCVALUE_MASK		0x7fffffff
 #define ISGN			0x80000000
@@ -546,30 +545,6 @@ static void igc_ptp_enable_rx_timestamp(struct igc_adapter *adapter)
 	wr32(IGC_TSYNCRXCTL, val);
 }
 
-static void igc_ptp_free_tx_buffer(struct igc_adapter *adapter,
-				   struct igc_tx_timestamp_request *tstamp)
-{
-	if (tstamp->buffer_type == IGC_TX_BUFFER_TYPE_XSK) {
-		/* Release the transmit completion */
-		tstamp->xsk_tx_buffer->xsk_pending_ts = false;
-
-		/* Note: tstamp->skb and tstamp->xsk_tx_buffer are in union.
-		 * By setting tstamp->xsk_tx_buffer to NULL, tstamp->skb will
-		 * become NULL as well.
-		 */
-		tstamp->xsk_tx_buffer = NULL;
-		tstamp->buffer_type = 0;
-
-		/* Trigger txrx interrupt for transmit completion */
-		igc_xsk_wakeup(adapter->netdev, tstamp->xsk_queue_index, 0);
-
-		return;
-	}
-
-	dev_kfree_skb_any(tstamp->skb);
-	tstamp->skb = NULL;
-}
-
 static void igc_ptp_clear_tx_tstamp(struct igc_adapter *adapter)
 {
 	unsigned long flags;
@@ -580,8 +555,8 @@ static void igc_ptp_clear_tx_tstamp(struct igc_adapter *adapter)
 	for (i = 0; i < IGC_MAX_TX_TSTAMP_REGS; i++) {
 		struct igc_tx_timestamp_request *tstamp = &adapter->tx_tstamp[i];
 
-		if (tstamp->skb)
-			igc_ptp_free_tx_buffer(adapter, tstamp);
+		dev_kfree_skb_any(tstamp->skb);
+		tstamp->skb = NULL;
 	}
 
 	spin_unlock_irqrestore(&adapter->ptp_tx_lock, flags);
@@ -682,9 +657,8 @@ static int igc_ptp_set_timestamp_mode(struct igc_adapter *adapter,
 static void igc_ptp_tx_timeout(struct igc_adapter *adapter,
 			       struct igc_tx_timestamp_request *tstamp)
 {
-	if (tstamp->skb)
-		igc_ptp_free_tx_buffer(adapter, tstamp);
-
+	dev_kfree_skb_any(tstamp->skb);
+	tstamp->skb = NULL;
 	adapter->tx_hwtstamp_timeouts++;
 
 	netdev_warn(adapter->netdev, "Tx timestamp timeout\n");
@@ -755,21 +729,10 @@ static void igc_ptp_tx_reg_to_stamp(struct igc_adapter *adapter,
 	shhwtstamps.hwtstamp =
 		ktime_add_ns(shhwtstamps.hwtstamp, adjust);
 
-	/* Copy the tx hardware timestamp into xdp metadata or skb */
-	if (tstamp->buffer_type == IGC_TX_BUFFER_TYPE_XSK) {
-		struct xsk_buff_pool *xsk_pool;
+	tstamp->skb = NULL;
 
-		xsk_pool = adapter->tx_ring[tstamp->xsk_queue_index]->xsk_pool;
-		if (xsk_pool && xp_tx_metadata_enabled(xsk_pool)) {
-			xsk_tx_metadata_complete(&tstamp->xsk_meta,
-						 &igc_xsk_tx_metadata_ops,
-						 &shhwtstamps.hwtstamp);
-		}
-	} else {
-		skb_tstamp_tx(skb, &shhwtstamps);
-	}
-
-	igc_ptp_free_tx_buffer(adapter, tstamp);
+	skb_tstamp_tx(skb, &shhwtstamps);
+	dev_kfree_skb_any(skb);
 }
 
 /**
@@ -938,11 +901,7 @@ static bool igc_is_crosststamp_supported(struct igc_adapter *adapter)
 static struct system_counterval_t igc_device_tstamp_to_system(u64 tstamp)
 {
 #if IS_ENABLED(CONFIG_X86_TSC) && !defined(CONFIG_UML)
-	return (struct system_counterval_t) {
-		.cs_id		= CSID_X86_ART,
-		.cycles		= tstamp,
-		.use_nsecs	= true,
-	};
+	return convert_art_ns_to_tsc(tstamp);
 #else
 	return (struct system_counterval_t) { };
 #endif

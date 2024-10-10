@@ -214,7 +214,7 @@ out:
 	return ret;
 }
 
-static void tegra_hte_test_remove(struct platform_device *pdev)
+static int tegra_hte_test_remove(struct platform_device *pdev)
 {
 	(void)pdev;
 
@@ -222,11 +222,13 @@ static void tegra_hte_test_remove(struct platform_device *pdev)
 	gpiod_put(hte.gpio_in);
 	gpiod_put(hte.gpio_out);
 	del_timer_sync(&hte.timer);
+
+	return 0;
 }
 
 static struct platform_driver tegra_hte_test_driver = {
 	.probe = tegra_hte_test_probe,
-	.remove_new = tegra_hte_test_remove,
+	.remove = tegra_hte_test_remove,
 	.driver = {
 		.name = "tegra_hte_test",
 		.of_match_table = tegra_hte_test_of_match,
@@ -235,5 +237,4 @@ static struct platform_driver tegra_hte_test_driver = {
 module_platform_driver(tegra_hte_test_driver);
 
 MODULE_AUTHOR("Dipen Patel <dipenp@nvidia.com>");
-MODULE_DESCRIPTION("NVIDIA Tegra HTE (Hardware Timestamping Engine) test driver");
 MODULE_LICENSE("GPL");

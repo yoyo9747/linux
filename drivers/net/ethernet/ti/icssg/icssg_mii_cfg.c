@@ -40,7 +40,6 @@ void icssg_mii_update_mtu(struct regmap *mii_rt, int mii, int mtu)
 				   (mtu - 1) << PRUSS_MII_RT_RX_FRMS_MAX_FRM_SHIFT);
 	}
 }
-EXPORT_SYMBOL_GPL(icssg_mii_update_mtu);
 
 void icssg_update_rgmii_cfg(struct regmap *miig_rt, struct prueth_emac *emac)
 {
@@ -67,7 +66,6 @@ void icssg_update_rgmii_cfg(struct regmap *miig_rt, struct prueth_emac *emac)
 	regmap_update_bits(miig_rt, RGMII_CFG_OFFSET, full_duplex_mask,
 			   full_duplex_val);
 }
-EXPORT_SYMBOL_GPL(icssg_update_rgmii_cfg);
 
 void icssg_miig_set_interface_mode(struct regmap *miig_rt, int mii, phy_interface_t phy_if)
 {
@@ -107,7 +105,6 @@ u32 icssg_rgmii_get_speed(struct regmap *miig_rt, int mii)
 
 	return icssg_rgmii_cfg_get_bitfield(miig_rt, mask, shift);
 }
-EXPORT_SYMBOL_GPL(icssg_rgmii_get_speed);
 
 u32 icssg_rgmii_get_fullduplex(struct regmap *miig_rt, int mii)
 {
@@ -121,4 +118,3 @@ u32 icssg_rgmii_get_fullduplex(struct regmap *miig_rt, int mii)
 
 	return icssg_rgmii_cfg_get_bitfield(miig_rt, mask, shift);
 }
-EXPORT_SYMBOL_GPL(icssg_rgmii_get_fullduplex);

@@ -87,12 +87,9 @@ void test_cgroup1_hierarchy(void)
 		goto destroy;
 
 	/* Setup cgroup1 hierarchy */
-	err = setup_cgroup_environment();
-	if (!ASSERT_OK(err, "setup_cgroup_environment"))
-		goto destroy;
 	err = setup_classid_environment();
 	if (!ASSERT_OK(err, "setup_classid_environment"))
-		goto cleanup_cgroup;
+		goto destroy;
 
 	err = join_classid();
 	if (!ASSERT_OK(err, "join_cgroup1"))
@@ -156,8 +153,6 @@ void test_cgroup1_hierarchy(void)
 
 cleanup:
 	cleanup_classid_environment();
-cleanup_cgroup:
-	cleanup_cgroup_environment();
 destroy:
 	test_cgroup1_hierarchy__destroy(skel);
 }

@@ -20,7 +20,6 @@
 #include <linux/string.h>
 
 #include "cpuidle-psci.h"
-#include "dt_idle_genpd.h"
 
 struct psci_pd_provider {
 	struct list_head link;
@@ -67,16 +66,12 @@ static int psci_pd_init(struct device_node *np, bool use_osi)
 
 	/*
 	 * Allow power off when OSI has been successfully enabled.
-	 * On a PREEMPT_RT based configuration the domain idle states are
-	 * supported, but only during system-wide suspend.
+	 * PREEMPT_RT is not yet ready to enter domain idle states.
 	 */
-	if (use_osi) {
+	if (use_osi && !IS_ENABLED(CONFIG_PREEMPT_RT))
 		pd->power_off = psci_pd_power_off;
-		if (IS_ENABLED(CONFIG_PREEMPT_RT))
-			pd->flags |= GENPD_FLAG_RPM_ALWAYS_ON;
-	} else {
+	else
 		pd->flags |= GENPD_FLAG_ALWAYS_ON;
-	}
 
 	/* Use governor for CPU PM domains if it has some states to manage. */
 	pd_gov = pd->states ? &pm_domain_cpu_gov : NULL;
@@ -142,6 +137,7 @@ static const struct of_device_id psci_of_match[] = {
 static int psci_cpuidle_domain_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
+	struct device_node *node;
 	bool use_osi = psci_has_osi_support();
 	int ret = 0, pd_count = 0;
 
@@ -152,13 +148,15 @@ static int psci_cpuidle_domain_probe(struct platform_device *pdev)
 	 * Parse child nodes for the "#power-domain-cells" property and
 	 * initialize a genpd/genpd-of-provider pair when it's found.
 	 */
-	for_each_child_of_node_scoped(np, node) {
+	for_each_child_of_node(np, node) {
 		if (!of_property_present(node, "#power-domain-cells"))
 			continue;
 
 		ret = psci_pd_init(node, use_osi);
-		if (ret)
+		if (ret) {
+			of_node_put(node);
 			goto exit;
+		}
 
 		pd_count++;
 	}
@@ -202,4 +200,4 @@ static int __init psci_idle_init_domains(void)
 {
 	return platform_driver_register(&psci_cpuidle_domain_driver);
 }
-core_initcall(psci_idle_init_domains);
+subsys_initcall(psci_idle_init_domains);

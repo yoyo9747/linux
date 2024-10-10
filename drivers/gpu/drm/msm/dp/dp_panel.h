@@ -15,6 +15,7 @@ struct edid;
 
 struct dp_display_mode {
 	struct drm_display_mode drm_mode;
+	u32 capabilities;
 	u32 bpp;
 	u32 h_active_low;
 	u32 v_active_low;
@@ -39,13 +40,15 @@ struct dp_panel {
 	u8 downstream_ports[DP_MAX_DOWNSTREAM_PORTS];
 
 	struct dp_link_info link_info;
-	const struct drm_edid *drm_edid;
+	struct drm_dp_desc desc;
+	struct edid *edid;
 	struct drm_connector *connector;
 	struct dp_display_mode dp_mode;
 	struct dp_panel_psr psr_cap;
 	bool video_test;
 	bool vsc_sdp_supported;
 
+	u32 vic;
 	u32 max_dp_lanes;
 	u32 max_dp_link_rate;
 

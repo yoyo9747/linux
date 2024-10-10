@@ -16,7 +16,6 @@
 
 #define pr_fmt(fmt)	"OF: " fmt
 
-#include <linux/cleanup.h>
 #include <linux/console.h>
 #include <linux/ctype.h>
 #include <linux/cpu.h>
@@ -1394,10 +1393,8 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 				   const char *stem_name,
 				   int index, struct of_phandle_args *out_args)
 {
-	char *cells_name __free(kfree) = kasprintf(GFP_KERNEL, "#%s-cells", stem_name);
-	char *map_name __free(kfree) = kasprintf(GFP_KERNEL, "%s-map", stem_name);
-	char *mask_name __free(kfree) = kasprintf(GFP_KERNEL, "%s-map-mask", stem_name);
-	char *pass_name __free(kfree) = kasprintf(GFP_KERNEL, "%s-map-pass-thru", stem_name);
+	char *cells_name, *map_name = NULL, *mask_name = NULL;
+	char *pass_name = NULL;
 	struct device_node *cur, *new = NULL;
 	const __be32 *map, *mask, *pass;
 	static const __be32 dummy_mask[] = { [0 ... MAX_PHANDLE_ARGS] = cpu_to_be32(~0) };
@@ -1410,13 +1407,27 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 	if (index < 0)
 		return -EINVAL;
 
-	if (!cells_name || !map_name || !mask_name || !pass_name)
+	cells_name = kasprintf(GFP_KERNEL, "#%s-cells", stem_name);
+	if (!cells_name)
 		return -ENOMEM;
+
+	ret = -ENOMEM;
+	map_name = kasprintf(GFP_KERNEL, "%s-map", stem_name);
+	if (!map_name)
+		goto free;
+
+	mask_name = kasprintf(GFP_KERNEL, "%s-map-mask", stem_name);
+	if (!mask_name)
+		goto free;
+
+	pass_name = kasprintf(GFP_KERNEL, "%s-map-pass-thru", stem_name);
+	if (!pass_name)
+		goto free;
 
 	ret = __of_parse_phandle_with_args(np, list_name, cells_name, -1, index,
 					   out_args);
 	if (ret)
-		return ret;
+		goto free;
 
 	/* Get the #<list>-cells property */
 	cur = out_args->np;
@@ -1433,7 +1444,8 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 		/* Get the <list>-map property */
 		map = of_get_property(cur, map_name, &map_len);
 		if (!map) {
-			return 0;
+			ret = 0;
+			goto free;
 		}
 		map_len /= sizeof(u32);
 
@@ -1509,6 +1521,12 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 put:
 	of_node_put(cur);
 	of_node_put(new);
+free:
+	kfree(mask_name);
+	kfree(map_name);
+	kfree(cells_name);
+	kfree(pass_name);
+
 	return ret;
 }
 EXPORT_SYMBOL(of_parse_phandle_with_args_map);

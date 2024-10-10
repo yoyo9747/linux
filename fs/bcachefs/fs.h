@@ -13,9 +13,6 @@
 
 struct bch_inode_info {
 	struct inode		v;
-	struct rhash_head	hash;
-	subvol_inum		ei_inum;
-
 	struct list_head	ei_vfs_inode_list;
 	unsigned long		ei_flags;
 
@@ -26,6 +23,8 @@ struct bch_inode_info {
 
 	struct mutex		ei_quota_lock;
 	struct bch_qid		ei_qid;
+
+	u32			ei_subvol;
 
 	/*
 	 * When we've been doing nocow writes we'll need to issue flushes to the
@@ -51,10 +50,11 @@ struct bch_inode_info {
 
 static inline subvol_inum inode_inum(struct bch_inode_info *inode)
 {
-	return inode->ei_inum;
+	return (subvol_inum) {
+		.subvol	= inode->ei_subvol,
+		.inum	= inode->ei_inode.bi_inum,
+	};
 }
-
-struct bch_inode_info *__bch2_inode_hash_find(struct bch_fs *, subvol_inum);
 
 /*
  * Set if we've gotten a btree error for this inode, and thus the vfs inode and
@@ -67,7 +67,6 @@ struct bch_inode_info *__bch2_inode_hash_find(struct bch_fs *, subvol_inum);
  * those:
  */
 #define EI_INODE_SNAPSHOT		1
-#define EI_INODE_HASHED			2
 
 #define to_bch_ei(_inode)					\
 	container_of_or_null(_inode, struct bch_inode_info, v)
@@ -188,9 +187,6 @@ int __bch2_unlink(struct inode *, struct dentry *, bool);
 
 void bch2_evict_subvolume_inodes(struct bch_fs *, snapshot_id_list *);
 
-void bch2_fs_vfs_exit(struct bch_fs *);
-int bch2_fs_vfs_init(struct bch_fs *);
-
 void bch2_vfs_exit(void);
 int bch2_vfs_init(void);
 
@@ -198,17 +194,8 @@ int bch2_vfs_init(void);
 
 #define bch2_inode_update_after_write(_trans, _inode, _inode_u, _fields)	({ do {} while (0); })
 
-static inline struct bch_inode_info *__bch2_inode_hash_find(struct bch_fs *c, subvol_inum inum)
-{
-	return NULL;
-}
-
 static inline void bch2_evict_subvolume_inodes(struct bch_fs *c,
 					       snapshot_id_list *s) {}
-
-static inline void bch2_fs_vfs_exit(struct bch_fs *c) {}
-static inline int bch2_fs_vfs_init(struct bch_fs *c) { return 0; }
-
 static inline void bch2_vfs_exit(void) {}
 static inline int bch2_vfs_init(void) { return 0; }
 

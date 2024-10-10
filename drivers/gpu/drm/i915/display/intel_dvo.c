@@ -60,42 +60,42 @@ static const struct intel_dvo_device intel_dvo_devices[] = {
 		.type = INTEL_DVO_CHIP_TMDS,
 		.name = "sil164",
 		.port = PORT_C,
-		.target_addr = SIL164_ADDR,
+		.slave_addr = SIL164_ADDR,
 		.dev_ops = &sil164_ops,
 	},
 	{
 		.type = INTEL_DVO_CHIP_TMDS,
 		.name = "ch7xxx",
 		.port = PORT_C,
-		.target_addr = CH7xxx_ADDR,
+		.slave_addr = CH7xxx_ADDR,
 		.dev_ops = &ch7xxx_ops,
 	},
 	{
 		.type = INTEL_DVO_CHIP_TMDS,
 		.name = "ch7xxx",
 		.port = PORT_C,
-		.target_addr = 0x75, /* For some ch7010 */
+		.slave_addr = 0x75, /* For some ch7010 */
 		.dev_ops = &ch7xxx_ops,
 	},
 	{
 		.type = INTEL_DVO_CHIP_LVDS,
 		.name = "ivch",
 		.port = PORT_A,
-		.target_addr = 0x02, /* Might also be 0x44, 0x84, 0xc4 */
+		.slave_addr = 0x02, /* Might also be 0x44, 0x84, 0xc4 */
 		.dev_ops = &ivch_ops,
 	},
 	{
 		.type = INTEL_DVO_CHIP_TMDS,
 		.name = "tfp410",
 		.port = PORT_C,
-		.target_addr = TFP410_ADDR,
+		.slave_addr = TFP410_ADDR,
 		.dev_ops = &tfp410_ops,
 	},
 	{
 		.type = INTEL_DVO_CHIP_LVDS,
 		.name = "ch7017",
 		.port = PORT_C,
-		.target_addr = 0x75,
+		.slave_addr = 0x75,
 		.gpio = GMBUS_PIN_DPB,
 		.dev_ops = &ch7017_ops,
 	},
@@ -103,7 +103,7 @@ static const struct intel_dvo_device intel_dvo_devices[] = {
 		.type = INTEL_DVO_CHIP_LVDS_NO_FIXED,
 		.name = "ns2501",
 		.port = PORT_B,
-		.target_addr = NS2501_ADDR,
+		.slave_addr = NS2501_ADDR,
 		.dev_ops = &ns2501_ops,
 	},
 };
@@ -223,13 +223,16 @@ intel_dvo_mode_valid(struct drm_connector *_connector,
 	struct intel_dvo *intel_dvo = intel_attached_dvo(connector);
 	const struct drm_display_mode *fixed_mode =
 		intel_panel_fixed_mode(connector, mode);
-	int max_dotclk = to_i915(connector->base.dev)->display.cdclk.max_dotclk_freq;
+	int max_dotclk = to_i915(connector->base.dev)->max_dotclk_freq;
 	int target_clock = mode->clock;
 	enum drm_mode_status status;
 
 	status = intel_cpu_transcoder_mode_valid(i915, mode);
 	if (status != MODE_OK)
 		return status;
+
+	if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
+		return MODE_NO_DBLESCAN;
 
 	/* XXX: Validate clock range */
 
@@ -456,14 +459,13 @@ static bool intel_dvo_init_dev(struct drm_i915_private *dev_priv,
 	 * the device.
 	 */
 	for_each_pipe(dev_priv, pipe)
-		dpll[pipe] = intel_de_rmw(dev_priv, DPLL(dev_priv, pipe), 0,
-					  DPLL_DVO_2X_MODE);
+		dpll[pipe] = intel_de_rmw(dev_priv, DPLL(pipe), 0, DPLL_DVO_2X_MODE);
 
 	ret = dvo->dev_ops->init(&intel_dvo->dev, i2c);
 
 	/* restore the DVO 2x clock state to original */
 	for_each_pipe(dev_priv, pipe) {
-		intel_de_write(dev_priv, DPLL(dev_priv, pipe), dpll[pipe]);
+		intel_de_write(dev_priv, DPLL(pipe), dpll[pipe]);
 	}
 
 	intel_gmbus_force_bit(i2c, false);

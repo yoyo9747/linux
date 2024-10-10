@@ -24,9 +24,7 @@ sorted_table=$(mktemp /tmp/syscalltbl.XXXXXX)
 grep '^[0-9]' "$in" | sort -n > $sorted_table
 
 max_nr=0
-# the params are: nr abi name entry compat
-# use _ for intentionally unused variables according to SC2034
-while read nr _ name _ _; do
+while read nr _abi name entry _compat; do
     if [ $nr -ge 512 ] ; then # discard compat sycalls
         break
     fi

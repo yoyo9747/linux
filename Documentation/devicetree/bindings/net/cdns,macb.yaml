@@ -146,7 +146,6 @@ patternProperties:
 
       magic-packet:
         type: boolean
-        deprecated: true
         description:
           Indicates that the hardware supports waking up via magic packet.
 

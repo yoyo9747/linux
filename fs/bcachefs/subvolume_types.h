@@ -30,8 +30,7 @@ struct snapshot_table {
 };
 
 typedef struct {
-	/* we can't have padding in this struct: */
-	u64		subvol;
+	u32		subvol;
 	u64		inum;
 } subvol_inum;
 

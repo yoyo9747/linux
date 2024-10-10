@@ -65,13 +65,11 @@ attribute-sets:
         type: u32
       -
         name: ops
-        type: indexed-array
-        sub-type: nest
+        type: array-nest
         nested-attributes: op-attrs
       -
         name: mcast-groups
-        type: indexed-array
-        sub-type: nest
+        type: array-nest
         nested-attributes: mcast-group-attrs
       -
         name: policy

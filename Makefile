@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
-PATCHLEVEL = 12
+PATCHLEVEL = 9
 SUBLEVEL = 0
-EXTRAVERSION = -rc2
-NAME = Baby Opossum Posse
+EXTRAVERSION =
+NAME = Hurr durr I'ma ninja sloth
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
@@ -11,8 +11,8 @@ NAME = Baby Opossum Posse
 # Comments in this file are targeted only to the developer, do not
 # expect to learn how to build the kernel reading this file.
 
-ifeq ($(filter output-sync,$(.FEATURES)),)
-$(error GNU Make >= 4.0 is required. Your Make version is $(MAKE_VERSION))
+ifeq ($(filter undefine,$(.FEATURES)),)
+$(error GNU Make >= 3.82 is required. Your Make version is $(MAKE_VERSION))
 endif
 
 $(if $(filter __%, $(MAKECMDGOALS)), \
@@ -93,7 +93,15 @@ endif
 
 # If the user is running make -s (silent mode), suppress echoing of
 # commands
-ifneq ($(findstring s,$(firstword -$(MAKEFLAGS))),)
+# make-4.0 (and later) keep single letter options in the 1st word of MAKEFLAGS.
+
+ifeq ($(filter 3.%,$(MAKE_VERSION)),)
+short-opts := $(firstword -$(MAKEFLAGS))
+else
+short-opts := $(filter-out --%,$(MAKEFLAGS))
+endif
+
+ifneq ($(findstring s,$(short-opts)),)
 quiet=silent_
 override KBUILD_VERBOSE :=
 endif
@@ -193,6 +201,14 @@ ifneq ($(words $(subst :, ,$(abs_srctree))), 1)
 $(error source directory cannot contain spaces or colons)
 endif
 
+ifneq ($(filter 3.%,$(MAKE_VERSION)),)
+# 'MAKEFLAGS += -rR' does not immediately become effective for GNU Make 3.x
+# We need to invoke sub-make to avoid implicit rules in the top Makefile.
+need-sub-make := 1
+# Cancel implicit rules for this Makefile.
+$(this-makefile): ;
+endif
+
 export sub_make_done := 1
 
 endif # sub_make_done
@@ -247,14 +263,7 @@ srctree := $(abs_srctree)
 endif
 
 objtree		:= .
-
-VPATH		:=
-
-ifeq ($(KBUILD_EXTMOD),)
-ifdef building_out_of_srctree
 VPATH		:= $(srctree)
-endif
-endif
 
 export building_out_of_srctree srctree objtree VPATH
 
@@ -445,24 +454,21 @@ KBUILD_USERLDFLAGS := $(USERLDFLAGS)
 # host programs.
 export rust_common_flags := --edition=2021 \
 			    -Zbinary_dep_depinfo=y \
-			    -Astable_features \
-			    -Dunsafe_op_in_unsafe_fn \
-			    -Dnon_ascii_idents \
-			    -Wrust_2018_idioms \
-			    -Wunreachable_pub \
+			    -Dunsafe_op_in_unsafe_fn -Drust_2018_idioms \
+			    -Dunreachable_pub -Dnon_ascii_idents \
 			    -Wmissing_docs \
-			    -Wrustdoc::missing_crate_level_docs \
-			    -Wclippy::all \
-			    -Wclippy::mut_mut \
-			    -Wclippy::needless_bitwise_bool \
-			    -Wclippy::needless_continue \
-			    -Wclippy::no_mangle_with_rust_abi \
+			    -Drustdoc::missing_crate_level_docs \
+			    -Dclippy::correctness -Dclippy::style \
+			    -Dclippy::suspicious -Dclippy::complexity \
+			    -Dclippy::perf \
+			    -Dclippy::let_unit_value -Dclippy::mut_mut \
+			    -Dclippy::needless_bitwise_bool \
+			    -Dclippy::needless_continue \
+			    -Dclippy::no_mangle_with_rust_abi \
 			    -Wclippy::dbg_macro
 
-KBUILD_HOSTCFLAGS   := $(KBUILD_USERHOSTCFLAGS) $(HOST_LFS_CFLAGS) \
-		       $(HOSTCFLAGS) -I $(srctree)/scripts/include
-KBUILD_HOSTCXXFLAGS := -Wall -O2 $(HOST_LFS_CFLAGS) $(HOSTCXXFLAGS) \
-		       -I $(srctree)/scripts/include
+KBUILD_HOSTCFLAGS   := $(KBUILD_USERHOSTCFLAGS) $(HOST_LFS_CFLAGS) $(HOSTCFLAGS)
+KBUILD_HOSTCXXFLAGS := -Wall -O2 $(HOST_LFS_CFLAGS) $(HOSTCXXFLAGS)
 KBUILD_HOSTRUSTFLAGS := $(rust_common_flags) -O -Cstrip=debuginfo \
 			-Zallow-features= $(HOSTRUSTFLAGS)
 KBUILD_HOSTLDFLAGS  := $(HOST_LFS_LDFLAGS) $(HOSTLDFLAGS)
@@ -494,6 +500,7 @@ RUSTDOC		= rustdoc
 RUSTFMT		= rustfmt
 CLIPPY_DRIVER	= clippy-driver
 BINDGEN		= bindgen
+CARGO		= cargo
 PAHOLE		= pahole
 RESOLVE_BTFIDS	= $(objtree)/tools/bpf/resolve_btfids/resolve_btfids
 LEX		= flex
@@ -559,7 +566,7 @@ KBUILD_RUSTFLAGS := $(rust_common_flags) \
 		    -Csymbol-mangling-version=v0 \
 		    -Crelocation-model=static \
 		    -Zfunction-sections=n \
-		    -Wclippy::float_arithmetic
+		    -Dclippy::float_arithmetic
 
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
@@ -579,11 +586,15 @@ else
 	RUSTC_OR_CLIPPY = $(RUSTC)
 endif
 
+ifdef RUST_LIB_SRC
+	export RUST_LIB_SRC
+endif
+
 # Allows the usage of unstable features in stable compilers.
 export RUSTC_BOOTSTRAP := 1
 
 export ARCH SRCARCH CONFIG_SHELL BASH HOSTCC KBUILD_HOSTCFLAGS CROSS_COMPILE LD CC HOSTPKG_CONFIG
-export RUSTC RUSTDOC RUSTFMT RUSTC_OR_CLIPPY_QUIET RUSTC_OR_CLIPPY BINDGEN
+export RUSTC RUSTDOC RUSTFMT RUSTC_OR_CLIPPY_QUIET RUSTC_OR_CLIPPY BINDGEN CARGO
 export HOSTRUSTC KBUILD_HOSTRUSTFLAGS
 export CPP AR NM STRIP OBJCOPY OBJDUMP READELF PAHOLE RESOLVE_BTFIDS LEX YACC AWK INSTALLKERNEL
 export PERL PYTHON3 CHECK CHECKFLAGS MAKE UTS_MACHINE HOSTCXX
@@ -645,11 +656,9 @@ endif
 
 # The expansion should be delayed until arch/$(SRCARCH)/Makefile is included.
 # Some architectures define CROSS_COMPILE in arch/$(SRCARCH)/Makefile.
-# CC_VERSION_TEXT and RUSTC_VERSION_TEXT are referenced from Kconfig (so they
-# need export), and from include/config/auto.conf.cmd to detect the compiler
-# upgrade.
+# CC_VERSION_TEXT is referenced from Kconfig (so it needs export),
+# and from include/config/auto.conf.cmd to detect the compiler upgrade.
 CC_VERSION_TEXT = $(subst $(pound),,$(shell LC_ALL=C $(CC) --version 2>/dev/null | head -n 1))
-RUSTC_VERSION_TEXT = $(subst $(pound),,$(shell $(RUSTC) --version 2>/dev/null))
 
 ifneq ($(findstring clang,$(CC_VERSION_TEXT)),)
 include $(srctree)/scripts/Makefile.clang
@@ -670,7 +679,7 @@ ifdef config-build
 # KBUILD_DEFCONFIG may point out an alternative default configuration
 # used for 'make defconfig'
 include $(srctree)/arch/$(SRCARCH)/Makefile
-export KBUILD_DEFCONFIG KBUILD_KCONFIG CC_VERSION_TEXT RUSTC_VERSION_TEXT
+export KBUILD_DEFCONFIG KBUILD_KCONFIG CC_VERSION_TEXT
 
 config: outputmakefile scripts_basic FORCE
 	$(Q)$(MAKE) $(build)=scripts/kconfig $@
@@ -926,7 +935,6 @@ ifdef CONFIG_SHADOW_CALL_STACK
 ifndef CONFIG_DYNAMIC_SCS
 CC_FLAGS_SCS	:= -fsanitize=shadow-call-stack
 KBUILD_CFLAGS	+= $(CC_FLAGS_SCS)
-KBUILD_RUSTFLAGS += -Zsanitizer=shadow-call-stack
 endif
 export CC_FLAGS_SCS
 endif
@@ -934,6 +942,7 @@ endif
 ifdef CONFIG_LTO_CLANG
 ifdef CONFIG_LTO_CLANG_THIN
 CC_FLAGS_LTO	:= -flto=thin -fsplit-lto-unit
+KBUILD_LDFLAGS	+= --thinlto-cache-dir=$(extmod_prefix).thinlto-cache
 else
 CC_FLAGS_LTO	:= -flto
 endif
@@ -951,24 +960,9 @@ endif
 
 ifdef CONFIG_CFI_CLANG
 CC_FLAGS_CFI	:= -fsanitize=kcfi
-ifdef CONFIG_CFI_ICALL_NORMALIZE_INTEGERS
-	CC_FLAGS_CFI	+= -fsanitize-cfi-icall-experimental-normalize-integers
-endif
-ifdef CONFIG_RUST
-	# Always pass -Zsanitizer-cfi-normalize-integers as CONFIG_RUST selects
-	# CONFIG_CFI_ICALL_NORMALIZE_INTEGERS.
-	RUSTC_FLAGS_CFI   := -Zsanitizer=kcfi -Zsanitizer-cfi-normalize-integers
-	KBUILD_RUSTFLAGS += $(RUSTC_FLAGS_CFI)
-	export RUSTC_FLAGS_CFI
-endif
 KBUILD_CFLAGS	+= $(CC_FLAGS_CFI)
 export CC_FLAGS_CFI
 endif
-
-# Architectures can define flags to add/remove for floating-point support
-CC_FLAGS_FPU	+= -D_LINUX_FPU_COMPILATION_UNIT
-export CC_FLAGS_FPU
-export CC_FLAGS_NO_FPU
 
 ifneq ($(CONFIG_FUNCTION_ALIGNMENT),0)
 # Set the minimal function alignment. Use the newer GCC option
@@ -1214,7 +1208,7 @@ remove-stale-files:
 	$(Q)$(srctree)/scripts/remove-stale-files
 
 # Support for using generic headers in asm-generic
-asm-generic := -f $(srctree)/scripts/Makefile.asm-headers obj
+asm-generic := -f $(srctree)/scripts/Makefile.asm-generic obj
 
 PHONY += asm-generic uapi-asm-generic
 asm-generic: uapi-asm-generic
@@ -1254,8 +1248,8 @@ define filechk_version.h
 	echo \#define LINUX_VERSION_SUBLEVEL $(SUBLEVEL)
 endef
 
-$(version_h): private PATCHLEVEL := $(or $(PATCHLEVEL), 0)
-$(version_h): private SUBLEVEL := $(or $(SUBLEVEL), 0)
+$(version_h): PATCHLEVEL := $(or $(PATCHLEVEL), 0)
+$(version_h): SUBLEVEL := $(or $(SUBLEVEL), 0)
 $(version_h): FORCE
 	$(call filechk,version.h)
 
@@ -1339,12 +1333,6 @@ prepare: tools/bpf/resolve_btfids
 endif
 endif
 
-# The tools build system is not a part of Kbuild and tends to introduce
-# its own unique issues. If you need to integrate a new tool into Kbuild,
-# please consider locating that tool outside the tools/ tree and using the
-# standard Kbuild "hostprogs" syntax instead of adding a new tools/* entry
-# here. See Documentation/kbuild/makefiles.rst for details.
-
 PHONY += resolve_btfids_clean
 
 resolve_btfids_O = $(abspath $(objtree))/tools/bpf/resolve_btfids
@@ -1415,7 +1403,7 @@ export CHECK_DTBS=y
 endif
 
 ifneq ($(CHECK_DTBS),)
-dtbs_prepare: dt_binding_schemas
+dtbs_prepare: dt_binding_check
 endif
 
 dtbs_check: dtbs
@@ -1434,18 +1422,15 @@ scripts_dtc: scripts_basic
 	$(Q)$(MAKE) $(build)=scripts/dtc
 
 ifneq ($(filter dt_binding_check, $(MAKECMDGOALS)),)
-export CHECK_DTBS=y
+export CHECK_DT_BINDING=y
 endif
 
-PHONY += dt_binding_check dt_binding_schemas
-dt_binding_check: dt_binding_schemas scripts_dtc
-	$(Q)$(MAKE) $(build)=Documentation/devicetree/bindings $@
-
-dt_binding_schemas:
+PHONY += dt_binding_check
+dt_binding_check: scripts_dtc
 	$(Q)$(MAKE) $(build)=Documentation/devicetree/bindings
 
 PHONY += dt_compatible_check
-dt_compatible_check: dt_binding_schemas
+dt_compatible_check: dt_binding_check
 	$(Q)$(MAKE) $(build)=Documentation/devicetree/bindings $@
 
 # ---------------------------------------------------------------------------
@@ -1492,14 +1477,13 @@ endif # CONFIG_MODULES
 # Directories & files removed with 'make clean'
 CLEAN_FILES += vmlinux.symvers modules-only.symvers \
 	       modules.builtin modules.builtin.modinfo modules.nsdeps \
-	       modules.builtin.ranges vmlinux.o.map \
-	       compile_commands.json rust/test \
+	       compile_commands.json .thinlto-cache rust/test \
 	       rust-project.json .vmlinux.objs .vmlinux.export.c
 
 # Directories & files removed with 'make mrproper'
 MRPROPER_FILES += include/config include/generated          \
 		  arch/$(SRCARCH)/include/generated .objdiff \
-		  debian snap tar-install PKGBUILD pacman \
+		  debian snap tar-install \
 		  .config .config.old .version \
 		  Module.symvers \
 		  certs/signing_key.pem \
@@ -1510,7 +1494,7 @@ MRPROPER_FILES += include/config include/generated          \
 
 # clean - Delete most, but leave enough to build external modules
 #
-clean: private rm-files := $(CLEAN_FILES)
+clean: rm-files := $(CLEAN_FILES)
 
 PHONY += archclean vmlinuxclean
 
@@ -1522,7 +1506,7 @@ clean: archclean vmlinuxclean resolve_btfids_clean
 
 # mrproper - Delete all generated files, including .config
 #
-mrproper: private rm-files := $(MRPROPER_FILES)
+mrproper: rm-files := $(wildcard $(MRPROPER_FILES))
 mrproper-dirs      := $(addprefix _mrproper_,scripts)
 
 PHONY += $(mrproper-dirs) mrproper
@@ -1642,11 +1626,10 @@ help:
 	@echo  ''
 	@$(if $(dtstree), \
 		echo 'Devicetree:'; \
-		echo '* dtbs               - Build device tree blobs for enabled boards'; \
-		echo '  dtbs_install       - Install dtbs to $(INSTALL_DTBS_PATH)'; \
-		echo '  dt_binding_check   - Validate device tree binding documents and examples'; \
-		echo '  dt_binding_schemas - Build processed device tree binding schemas'; \
-		echo '  dtbs_check         - Validate device tree source files';\
+		echo '* dtbs             - Build device tree blobs for enabled boards'; \
+		echo '  dtbs_install     - Install dtbs to $(INSTALL_DTBS_PATH)'; \
+		echo '  dt_binding_check - Validate device tree binding documents'; \
+		echo '  dtbs_check       - Validate device tree source files';\
 		echo '')
 
 	@echo 'Userspace tools targets:'
@@ -1799,8 +1782,8 @@ compile_commands.json: $(extmod_prefix)compile_commands.json
 PHONY += compile_commands.json
 
 clean-dirs := $(KBUILD_EXTMOD)
-clean: private rm-files := $(KBUILD_EXTMOD)/Module.symvers $(KBUILD_EXTMOD)/modules.nsdeps \
-	$(KBUILD_EXTMOD)/compile_commands.json
+clean: rm-files := $(KBUILD_EXTMOD)/Module.symvers $(KBUILD_EXTMOD)/modules.nsdeps \
+	$(KBUILD_EXTMOD)/compile_commands.json $(KBUILD_EXTMOD)/.thinlto-cache
 
 PHONY += prepare
 # now expand this into a simple variable to reduce the cost of shell evaluations
@@ -1957,7 +1940,7 @@ clean: $(clean-dirs)
 		-o -name '*.c.[012]*.*' \
 		-o -name '*.ll' \
 		-o -name '*.gcno' \
-		\) -type f -print \
+		-o -name '*.*.symversions' \) -type f -print \
 		-o -name '.tmp_*' -print \
 		| xargs rm -rf
 
@@ -1969,12 +1952,9 @@ quiet_cmd_tags = GEN     $@
 tags TAGS cscope gtags: FORCE
 	$(call cmd,tags)
 
-# Generate rust-project.json (a file that describes the structure of non-Cargo
-# Rust projects) for rust-analyzer (an implementation of the Language Server
-# Protocol).
+# IDE support targets
 PHONY += rust-analyzer
 rust-analyzer:
-	+$(Q)$(CONFIG_SHELL) $(srctree)/scripts/rust_is_available.sh
 	$(Q)$(MAKE) $(build)=rust $@
 
 # Script to generate missing namespace dependencies
@@ -1991,7 +1971,7 @@ nsdeps: modules
 quiet_cmd_gen_compile_commands = GEN     $@
       cmd_gen_compile_commands = $(PYTHON3) $< -a $(AR) -o $@ $(filter-out $<, $(real-prereqs))
 
-$(extmod_prefix)compile_commands.json: $(srctree)/scripts/clang-tools/gen_compile_commands.py \
+$(extmod_prefix)compile_commands.json: scripts/clang-tools/gen_compile_commands.py \
 	$(if $(KBUILD_EXTMOD),, vmlinux.a $(KBUILD_VMLINUX_LIBS)) \
 	$(if $(CONFIG_MODULES), $(MODORDER)) FORCE
 	$(call if_changed,gen_compile_commands)

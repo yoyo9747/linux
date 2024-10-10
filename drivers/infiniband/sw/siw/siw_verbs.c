@@ -1124,13 +1124,12 @@ int siw_destroy_cq(struct ib_cq *base_cq, struct ib_udata *udata)
  *
  * @base_cq: CQ as allocated by RDMA midlayer
  * @attr: Initial CQ attributes
- * @attrs: uverbs bundle
+ * @udata: relates to user context
  */
 
 int siw_create_cq(struct ib_cq *base_cq, const struct ib_cq_init_attr *attr,
-		  struct uverbs_attr_bundle *attrs)
+		  struct ib_udata *udata)
 {
-	struct ib_udata *udata = &attrs->driver_udata;
 	struct siw_device *sdev = to_siw_dev(base_cq->device);
 	struct siw_cq *cq = to_siw_cq(base_cq);
 	int rv, size = attr->cqe;

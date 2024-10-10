@@ -8,7 +8,7 @@
 #include "rk3566-powkiddy-rk2023.dtsi"
 
 / {
-	model = "Powkiddy RGB30";
+	model = "RGB30";
 	compatible = "powkiddy,rgb30", "rockchip,rk3566";
 };
 

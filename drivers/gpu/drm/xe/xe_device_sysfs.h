@@ -8,6 +8,6 @@
 
 struct xe_device;
 
-int xe_device_sysfs_init(struct xe_device *xe);
+void xe_device_sysfs_init(struct xe_device *xe);
 
 #endif

@@ -49,7 +49,6 @@ required:
   - clocks
   - clock-names
   - vdd_gfx-supply
-  - '#power-domain-cells'
 
 allOf:
   - $ref: qcom,gcc.yaml#

@@ -135,7 +135,7 @@ static int vxcan_change_mtu(struct net_device *dev, int new_mtu)
 	    !can_is_canxl_dev_mtu(new_mtu))
 		return -EINVAL;
 
-	WRITE_ONCE(dev->mtu, new_mtu);
+	dev->mtu = new_mtu;
 	return 0;
 }
 

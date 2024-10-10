@@ -8,7 +8,6 @@
 #define __UFFD_COMMON_H__
 
 #define _GNU_SOURCE
-#define __SANE_USERSPACE_TYPES__ // Use ll64
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>

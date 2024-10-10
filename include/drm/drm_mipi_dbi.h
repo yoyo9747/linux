@@ -57,11 +57,6 @@ struct mipi_dbi {
 	struct spi_device *spi;
 
 	/**
-	 * @write_memory_bpw: Bits per word used on a MIPI_DCS_WRITE_MEMORY_START transfer
-	 */
-	unsigned int write_memory_bpw;
-
-	/**
 	 * @dc: Optional D/C gpio.
 	 */
 	struct gpio_desc *dc;
@@ -100,11 +95,6 @@ struct mipi_dbi_dev {
 	 * @mode: Fixed display mode
 	 */
 	struct drm_display_mode mode;
-
-	/**
-	 * @pixel_format: Native pixel format (DRM_FORMAT\_\*)
-	 */
-	u32 pixel_format;
 
 	/**
 	 * @tx_buf: Buffer used for transfer (copy clip rect area)

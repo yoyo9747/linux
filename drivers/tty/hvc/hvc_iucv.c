@@ -1035,6 +1035,11 @@ static const struct attribute_group *hvc_iucv_dev_attr_groups[] = {
 	NULL,
 };
 
+static void hvc_iucv_free(struct device *data)
+{
+	kfree(data);
+}
+
 /**
  * hvc_iucv_alloc() - Allocates a new struct hvc_iucv_private instance
  * @id:			hvc_iucv_table index
@@ -1085,12 +1090,18 @@ static int __init hvc_iucv_alloc(int id, unsigned int is_console)
 	memcpy(priv->srv_name, name, 8);
 	ASCEBC(priv->srv_name, 8);
 
-	priv->dev = iucv_alloc_device(hvc_iucv_dev_attr_groups, NULL,
-				      priv, "hvc_iucv%d", id);
+	/* create and setup device */
+	priv->dev = kzalloc(sizeof(*priv->dev), GFP_KERNEL);
 	if (!priv->dev) {
 		rc = -ENOMEM;
 		goto out_error_dev;
 	}
+	dev_set_name(priv->dev, "hvc_iucv%d", id);
+	dev_set_drvdata(priv->dev, priv);
+	priv->dev->bus = &iucv_bus;
+	priv->dev->parent = iucv_root;
+	priv->dev->groups = hvc_iucv_dev_attr_groups;
+	priv->dev->release = hvc_iucv_free;
 	rc = device_register(priv->dev);
 	if (rc) {
 		put_device(priv->dev);

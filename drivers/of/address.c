@@ -8,7 +8,6 @@
 #include <linux/logic_pio.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
-#include <linux/overflow.h>
 #include <linux/pci.h>
 #include <linux/pci_regs.h>
 #include <linux/sizes.h>
@@ -198,23 +197,6 @@ static u64 of_bus_pci_map(__be32 *addr, const __be32 *range, int na, int ns,
 
 #endif /* CONFIG_PCI */
 
-static int __of_address_resource_bounds(struct resource *r, u64 start, u64 size)
-{
-	u64 end = start;
-
-	if (overflows_type(start, r->start))
-		return -EOVERFLOW;
-	if (size && check_add_overflow(end, size - 1, &end))
-		return -EOVERFLOW;
-	if (overflows_type(end, r->end))
-		return -EOVERFLOW;
-
-	r->start = start;
-	r->end = end;
-
-	return 0;
-}
-
 /*
  * of_pci_range_to_resource - Create a resource from an of_pci_range
  * @range:	the PCI range that describes the resource
@@ -233,7 +215,6 @@ static int __of_address_resource_bounds(struct resource *r, u64 start, u64 size)
 int of_pci_range_to_resource(struct of_pci_range *range,
 			     struct device_node *np, struct resource *res)
 {
-	u64 start;
 	int err;
 	res->flags = range->flags;
 	res->parent = res->child = res->sibling = NULL;
@@ -250,11 +231,18 @@ int of_pci_range_to_resource(struct of_pci_range *range,
 			err = -EINVAL;
 			goto invalid_range;
 		}
-		start = port;
+		res->start = port;
 	} else {
-		start = range->cpu_addr;
+		if ((sizeof(resource_size_t) < 8) &&
+		    upper_32_bits(range->cpu_addr)) {
+			err = -EINVAL;
+			goto invalid_range;
+		}
+
+		res->start = range->cpu_addr;
 	}
-	return __of_address_resource_bounds(res, start, range->size);
+	res->end = res->start + range->size - 1;
+	return 0;
 
 invalid_range:
 	res->start = (resource_size_t)OF_BAD_ADDR;
@@ -270,8 +258,8 @@ EXPORT_SYMBOL(of_pci_range_to_resource);
  * @res:	pointer to a valid resource that will be updated to
  *              reflect the values contained in the range.
  *
- * Returns -ENOENT if the entry is not found or -EOVERFLOW if the range
- * cannot be converted to resource.
+ * Returns ENOENT if the entry is not found or EINVAL if the range cannot be
+ * converted to resource.
  */
 int of_range_to_resource(struct device_node *np, int index, struct resource *res)
 {
@@ -498,30 +486,34 @@ static int of_translate_one(struct device_node *parent, struct of_bus *bus,
  * device that had registered logical PIO mapping, and the return code is
  * relative to that node.
  */
-static u64 __of_translate_address(struct device_node *node,
+static u64 __of_translate_address(struct device_node *dev,
 				  struct device_node *(*get_parent)(const struct device_node *),
 				  const __be32 *in_addr, const char *rprop,
 				  struct device_node **host)
 {
-	struct device_node *dev __free(device_node) = of_node_get(node);
-	struct device_node *parent __free(device_node) = get_parent(dev);
+	struct device_node *parent = NULL;
 	struct of_bus *bus, *pbus;
 	__be32 addr[OF_MAX_ADDR_CELLS];
 	int na, ns, pna, pns;
+	u64 result = OF_BAD_ADDR;
 
 	pr_debug("** translation for device %pOF **\n", dev);
 
-	*host = NULL;
+	/* Increase refcount at current level */
+	of_node_get(dev);
 
+	*host = NULL;
+	/* Get parent & match bus type */
+	parent = get_parent(dev);
 	if (parent == NULL)
-		return OF_BAD_ADDR;
+		goto bail;
 	bus = of_match_bus(parent);
 
 	/* Count address cells & copy address locally */
 	bus->count_cells(dev, &na, &ns);
 	if (!OF_CHECK_COUNTS(na, ns)) {
 		pr_debug("Bad cell count for %pOF\n", dev);
-		return OF_BAD_ADDR;
+		goto bail;
 	}
 	memcpy(addr, in_addr, na * 4);
 
@@ -541,7 +533,8 @@ static u64 __of_translate_address(struct device_node *node,
 		/* If root, we have finished */
 		if (parent == NULL) {
 			pr_debug("reached root node\n");
-			return of_read_number(addr, na);
+			result = of_read_number(addr, na);
+			break;
 		}
 
 		/*
@@ -550,11 +543,11 @@ static u64 __of_translate_address(struct device_node *node,
 		 */
 		iorange = find_io_range_by_fwnode(&dev->fwnode);
 		if (iorange && (iorange->flags != LOGIC_PIO_CPU_MMIO)) {
-			u64 result = of_read_number(addr + 1, na - 1);
+			result = of_read_number(addr + 1, na - 1);
 			pr_debug("indirectIO matched(%pOF) 0x%llx\n",
 				 dev, result);
-			*host = no_free_ptr(dev);
-			return result;
+			*host = of_node_get(dev);
+			break;
 		}
 
 		/* Get new parent bus and counts */
@@ -562,7 +555,7 @@ static u64 __of_translate_address(struct device_node *node,
 		pbus->count_cells(dev, &pna, &pns);
 		if (!OF_CHECK_COUNTS(pna, pns)) {
 			pr_err("Bad cell count for %pOF\n", dev);
-			return OF_BAD_ADDR;
+			break;
 		}
 
 		pr_debug("parent bus is %s (na=%d, ns=%d) on %pOF\n",
@@ -570,7 +563,7 @@ static u64 __of_translate_address(struct device_node *node,
 
 		/* Apply bus translation */
 		if (of_translate_one(dev, bus, pbus, addr, na, ns, pna, rprop))
-			return OF_BAD_ADDR;
+			break;
 
 		/* Complete the move up one level */
 		na = pna;
@@ -579,8 +572,11 @@ static u64 __of_translate_address(struct device_node *node,
 
 		of_dump_addr("one level translation:", addr, na);
 	}
+ bail:
+	of_node_put(parent);
+	of_node_put(dev);
 
-	unreachable();
+	return result;
 }
 
 u64 of_translate_address(struct device_node *dev, const __be32 *in_addr)
@@ -658,15 +654,18 @@ EXPORT_SYMBOL(of_translate_dma_address);
 const __be32 *of_translate_dma_region(struct device_node *dev, const __be32 *prop,
 				      phys_addr_t *start, size_t *length)
 {
-	struct device_node *parent __free(device_node) = __of_get_dma_parent(dev);
+	struct device_node *parent;
 	u64 address, size;
 	int na, ns;
 
+	parent = __of_get_dma_parent(dev);
 	if (!parent)
 		return NULL;
 
 	na = of_bus_n_addr_cells(parent);
 	ns = of_bus_n_size_cells(parent);
+
+	of_node_put(parent);
 
 	address = of_translate_dma_address(dev, prop);
 	if (address == OF_BAD_ADDR)
@@ -689,19 +688,21 @@ const __be32 *__of_get_address(struct device_node *dev, int index, int bar_no,
 {
 	const __be32 *prop;
 	unsigned int psize;
-	struct device_node *parent __free(device_node) = of_get_parent(dev);
+	struct device_node *parent;
 	struct of_bus *bus;
 	int onesize, i, na, ns;
 
+	/* Get parent & match bus type */
+	parent = of_get_parent(dev);
 	if (parent == NULL)
 		return NULL;
-
-	/* match the parent's bus type */
 	bus = of_match_bus(parent);
-	if (strcmp(bus->name, "pci") && (bar_no >= 0))
+	if (strcmp(bus->name, "pci") && (bar_no >= 0)) {
+		of_node_put(parent);
 		return NULL;
-
+	}
 	bus->count_cells(dev, &na, &ns);
+	of_node_put(parent);
 	if (!OF_CHECK_ADDR_COUNT(na))
 		return NULL;
 
@@ -887,13 +888,14 @@ static u64 of_translate_ioport(struct device_node *dev, const __be32 *in_addr,
  */
 int of_dma_get_range(struct device_node *np, const struct bus_dma_region **map)
 {
-	struct device_node *node __free(device_node) = of_node_get(np);
+	struct device_node *node = of_node_get(np);
 	const __be32 *ranges = NULL;
 	bool found_dma_ranges = false;
 	struct of_range_parser parser;
 	struct of_range range;
 	struct bus_dma_region *r;
 	int len, num_ranges = 0;
+	int ret = 0;
 
 	while (node) {
 		ranges = of_get_property(node, "dma-ranges", &len);
@@ -903,9 +905,10 @@ int of_dma_get_range(struct device_node *np, const struct bus_dma_region **map)
 			break;
 
 		/* Once we find 'dma-ranges', then a missing one is an error */
-		if (found_dma_ranges && !ranges)
-			return -ENODEV;
-
+		if (found_dma_ranges && !ranges) {
+			ret = -ENODEV;
+			goto out;
+		}
 		found_dma_ranges = true;
 
 		node = of_get_next_dma_parent(node);
@@ -913,8 +916,10 @@ int of_dma_get_range(struct device_node *np, const struct bus_dma_region **map)
 
 	if (!node || !ranges) {
 		pr_debug("no dma-ranges found for node(%pOF)\n", np);
-		return -ENODEV;
+		ret = -ENODEV;
+		goto out;
 	}
+
 	of_dma_range_parser_init(&parser, node);
 	for_each_of_range(&parser, &range) {
 		if (range.cpu_addr == OF_BAD_ADDR) {
@@ -925,12 +930,16 @@ int of_dma_get_range(struct device_node *np, const struct bus_dma_region **map)
 		num_ranges++;
 	}
 
-	if (!num_ranges)
-		return -EINVAL;
+	if (!num_ranges) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	r = kcalloc(num_ranges + 1, sizeof(*r), GFP_KERNEL);
-	if (!r)
-		return -ENOMEM;
+	if (!r) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	/*
 	 * Record all info in the generic DMA ranges array for struct device,
@@ -948,7 +957,9 @@ int of_dma_get_range(struct device_node *np, const struct bus_dma_region **map)
 		r->size = range.size;
 		r++;
 	}
-	return 0;
+out:
+	of_node_put(node);
+	return ret;
 }
 #endif /* CONFIG_HAS_DMA */
 
@@ -1005,18 +1016,24 @@ phys_addr_t __init of_dma_get_max_cpu_address(struct device_node *np)
  */
 bool of_dma_is_coherent(struct device_node *np)
 {
-	struct device_node *node __free(device_node) = of_node_get(np);
+	struct device_node *node;
+	bool is_coherent = dma_default_coherent;
+
+	node = of_node_get(np);
 
 	while (node) {
-		if (of_property_read_bool(node, "dma-coherent"))
-			return true;
-
-		if (of_property_read_bool(node, "dma-noncoherent"))
-			return false;
-
+		if (of_property_read_bool(node, "dma-coherent")) {
+			is_coherent = true;
+			break;
+		}
+		if (of_property_read_bool(node, "dma-noncoherent")) {
+			is_coherent = false;
+			break;
+		}
 		node = of_get_next_dma_parent(node);
 	}
-	return dma_default_coherent;
+	of_node_put(node);
+	return is_coherent;
 }
 EXPORT_SYMBOL_GPL(of_dma_is_coherent);
 
@@ -1032,14 +1049,20 @@ EXPORT_SYMBOL_GPL(of_dma_is_coherent);
  */
 static bool of_mmio_is_nonposted(struct device_node *np)
 {
+	struct device_node *parent;
+	bool nonposted;
+
 	if (!IS_ENABLED(CONFIG_ARCH_APPLE))
 		return false;
 
-	struct device_node *parent __free(device_node) = of_get_parent(np);
+	parent = of_get_parent(np);
 	if (!parent)
 		return false;
 
-	return of_property_read_bool(parent, "nonposted-mmio");
+	nonposted = of_property_read_bool(parent, "nonposted-mmio");
+
+	of_node_put(parent);
+	return nonposted;
 }
 
 static int __of_address_to_resource(struct device_node *dev, int index, int bar_no,
@@ -1073,10 +1096,12 @@ static int __of_address_to_resource(struct device_node *dev, int index, int bar_
 	if (of_mmio_is_nonposted(dev))
 		flags |= IORESOURCE_MEM_NONPOSTED;
 
+	r->start = taddr;
+	r->end = taddr + size - 1;
 	r->flags = flags;
 	r->name = name ? name : dev->full_name;
 
-	return __of_address_resource_bounds(r, taddr, size);
+	return 0;
 }
 
 /**

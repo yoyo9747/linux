@@ -44,6 +44,9 @@
 #define X86_CAPABILITY	new_cpu_data+CPUINFO_x86_capability
 #define X86_VENDOR_ID	new_cpu_data+CPUINFO_x86_vendor_id
 
+
+#define SIZEOF_PTREGS 17*4
+
 /*
  * Worst-case size of the kernel mapping we need to make:
  * a relocatable kernel can live anywhere in lowmem, so we need to be able
@@ -485,13 +488,19 @@ SYM_DATA_END(initial_page_table)
 
 .data
 .balign 4
-SYM_DATA(initial_stack, .long __top_init_kernel_stack)
+/*
+ * The SIZEOF_PTREGS gap is a convention which helps the in-kernel unwinder
+ * reliably detect the end of the stack.
+ */
+SYM_DATA(initial_stack,
+		.long init_thread_union + THREAD_SIZE -
+		SIZEOF_PTREGS - TOP_OF_KERNEL_STACK_PADDING)
 
 __INITRODATA
 int_msg:
 	.asciz "Unknown interrupt or fault at: %p %p %p\n"
 
-#include "../xen/xen-head.S"
+#include "../../x86/xen/xen-head.S"
 
 /*
  * The IDT and GDT 'descriptors' are a strange 48-bit object

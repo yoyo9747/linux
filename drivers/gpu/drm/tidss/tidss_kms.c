@@ -135,7 +135,8 @@ static int tidss_dispc_modeset_init(struct tidss_device *tidss)
 			dev_dbg(dev, "no panel/bridge for port %d\n", i);
 			continue;
 		} else if (ret) {
-			return dev_err_probe(dev, ret, "port %d probe failed\n", i);
+			dev_dbg(dev, "port %d probe returned %d\n", i, ret);
+			return ret;
 		}
 
 		if (panel) {

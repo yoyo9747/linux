@@ -245,10 +245,8 @@ int ima_collect_measurement(struct ima_iint_cache *iint, struct file *file,
 	const char *audit_cause = "failed";
 	struct inode *inode = file_inode(file);
 	struct inode *real_inode = d_real_inode(file_dentry(file));
+	const char *filename = file->f_path.dentry->d_name.name;
 	struct ima_max_digest_data hash;
-	struct ima_digest_data *hash_hdr = container_of(&hash.hdr,
-						struct ima_digest_data, hdr);
-	struct name_snapshot filename;
 	struct kstat stat;
 	int result = 0;
 	int length;
@@ -288,9 +286,9 @@ int ima_collect_measurement(struct ima_iint_cache *iint, struct file *file,
 			result = -ENODATA;
 		}
 	} else if (buf) {
-		result = ima_calc_buffer_hash(buf, size, hash_hdr);
+		result = ima_calc_buffer_hash(buf, size, &hash.hdr);
 	} else {
-		result = ima_calc_file_hash(file, hash_hdr);
+		result = ima_calc_file_hash(file, &hash.hdr);
 	}
 
 	if (result && result != -EBADF && result != -EINVAL)
@@ -305,11 +303,11 @@ int ima_collect_measurement(struct ima_iint_cache *iint, struct file *file,
 
 	iint->ima_hash = tmpbuf;
 	memcpy(iint->ima_hash, &hash, length);
-	if (real_inode == inode)
-		iint->real_inode.version = i_version;
-	else
-		integrity_inode_attrs_store(&iint->real_inode, i_version,
-					    real_inode);
+	iint->version = i_version;
+	if (real_inode != inode) {
+		iint->real_ino = real_inode->i_ino;
+		iint->real_dev = real_inode->i_sb->s_dev;
+	}
 
 	/* Possibly temporary failure due to type of read (eg. O_DIRECT) */
 	if (!result)
@@ -319,13 +317,9 @@ out:
 		if (file->f_flags & O_DIRECT)
 			audit_cause = "failed(directio)";
 
-		take_dentry_name_snapshot(&filename, file->f_path.dentry);
-
 		integrity_audit_msg(AUDIT_INTEGRITY_DATA, inode,
-				    filename.name.name, "collect_data",
-				    audit_cause, result, 0);
-
-		release_dentry_name_snapshot(&filename);
+				    filename, "collect_data", audit_cause,
+				    result, 0);
 	}
 	return result;
 }
@@ -438,7 +432,6 @@ out:
  */
 const char *ima_d_path(const struct path *path, char **pathbuf, char *namebuf)
 {
-	struct name_snapshot filename;
 	char *pathname = NULL;
 
 	*pathbuf = __getname();
@@ -452,10 +445,7 @@ const char *ima_d_path(const struct path *path, char **pathbuf, char *namebuf)
 	}
 
 	if (!pathname) {
-		take_dentry_name_snapshot(&filename, path->dentry);
-		strscpy(namebuf, filename.name.name, NAME_MAX);
-		release_dentry_name_snapshot(&filename);
-
+		strscpy(namebuf, path->dentry->d_name.name, NAME_MAX);
 		pathname = namebuf;
 	}
 

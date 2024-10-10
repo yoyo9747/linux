@@ -917,16 +917,13 @@ int __init kcapi_init(void)
 		return err;
 	}
 
-	if (IS_ENABLED(CONFIG_PROC_FS))
-		kcapi_proc_init();
-
+	kcapi_proc_init();
 	return 0;
 }
 
 void kcapi_exit(void)
 {
-	if (IS_ENABLED(CONFIG_PROC_FS))
-		kcapi_proc_exit();
+	kcapi_proc_exit();
 
 	cdebug_exit();
 	destroy_workqueue(kcapi_wq);

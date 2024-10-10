@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 // Copyright (c) 2019, Linaro Limited
 
-#include <linux/cleanup.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/interrupt.h>
@@ -476,12 +475,17 @@ enum {
 	INTn_2_INP_SEL_PROXIMITY,
 };
 
+enum {
+	INTERP_MAIN_PATH,
+	INTERP_MIX_PATH,
+};
+
 struct interp_sample_rate {
 	int sample_rate;
 	int rate_val;
 };
 
-static const struct interp_sample_rate sr_val_tbl[] = {
+static struct interp_sample_rate sr_val_tbl[] = {
 	{8000, 0x0},
 	{16000, 0x1},
 	{32000, 0x3},
@@ -523,7 +527,7 @@ static const struct regmap_range_cfg wcd934x_ifc_ranges[] = {
 	},
 };
 
-static const struct regmap_config wcd934x_ifc_regmap_config = {
+static struct regmap_config wcd934x_ifc_regmap_config = {
 	.reg_bits = 16,
 	.val_bits = 8,
 	.max_register = 0xffff,
@@ -567,7 +571,10 @@ struct wcd934x_codec {
 	struct mutex micb_lock;
 	u32 micb_ref[WCD934X_MAX_MICBIAS];
 	u32 pullup_ref[WCD934X_MAX_MICBIAS];
+	u32 micb1_mv;
 	u32 micb2_mv;
+	u32 micb3_mv;
+	u32 micb4_mv;
 };
 
 #define to_wcd934x_codec(_hw) container_of(_hw, struct wcd934x_codec, hw)
@@ -1210,7 +1217,7 @@ static const struct soc_enum cdc_if_tx13_mux_enum =
 	SOC_ENUM_SINGLE(WCD934X_DATA_HUB_SB_TX13_INP_CFG, 0,
 			ARRAY_SIZE(cdc_if_tx13_mux_text), cdc_if_tx13_mux_text);
 
-static const struct wcd_mbhc_field wcd_mbhc_fields[WCD_MBHC_REG_FUNC_MAX] = {
+static struct wcd_mbhc_field wcd_mbhc_fields[WCD_MBHC_REG_FUNC_MAX] = {
 	WCD_MBHC_FIELD(WCD_MBHC_L_DET_EN, WCD934X_ANA_MBHC_MECH, 0x80),
 	WCD_MBHC_FIELD(WCD_MBHC_GND_DET_EN, WCD934X_ANA_MBHC_MECH, 0x40),
 	WCD_MBHC_FIELD(WCD_MBHC_MECH_DETECTION_TYPE, WCD934X_ANA_MBHC_MECH, 0x20),
@@ -1916,10 +1923,8 @@ static int wcd934x_trigger(struct snd_pcm_substream *substream, int cmd,
 }
 
 static int wcd934x_set_channel_map(struct snd_soc_dai *dai,
-				   unsigned int tx_num,
-				   const unsigned int *tx_slot,
-				   unsigned int rx_num,
-				   const unsigned int *rx_slot)
+				   unsigned int tx_num, unsigned int *tx_slot,
+				   unsigned int rx_num, unsigned int *rx_slot)
 {
 	struct wcd934x_codec *wcd;
 	int i;
@@ -1953,7 +1958,7 @@ static int wcd934x_set_channel_map(struct snd_soc_dai *dai,
 	return 0;
 }
 
-static int wcd934x_get_channel_map(const struct snd_soc_dai *dai,
+static int wcd934x_get_channel_map(struct snd_soc_dai *dai,
 				   unsigned int *tx_num, unsigned int *tx_slot,
 				   unsigned int *rx_num, unsigned int *rx_slot)
 {
@@ -2201,8 +2206,7 @@ static int wcd934x_get_micbias_val(struct device *dev, const char *micbias,
 		mv = WCD934X_DEF_MICBIAS_MV;
 	}
 
-	if (micb_mv)
-		*micb_mv = mv;
+	*micb_mv = mv;
 
 	return (mv - 1000) / 50;
 }
@@ -2214,14 +2218,17 @@ static int wcd934x_init_dmic(struct snd_soc_component *comp)
 	u32 def_dmic_rate, dmic_clk_drv;
 
 	vout_ctl_1 = wcd934x_get_micbias_val(comp->dev,
-					     "qcom,micbias1-microvolt", NULL);
+					     "qcom,micbias1-microvolt",
+					     &wcd->micb1_mv);
 	vout_ctl_2 = wcd934x_get_micbias_val(comp->dev,
 					     "qcom,micbias2-microvolt",
 					     &wcd->micb2_mv);
 	vout_ctl_3 = wcd934x_get_micbias_val(comp->dev,
-					     "qcom,micbias3-microvolt", NULL);
+					     "qcom,micbias3-microvolt",
+					     &wcd->micb3_mv);
 	vout_ctl_4 = wcd934x_get_micbias_val(comp->dev,
-					     "qcom,micbias4-microvolt", NULL);
+					     "qcom,micbias4-microvolt",
+					     &wcd->micb4_mv);
 
 	snd_soc_component_update_bits(comp, WCD934X_ANA_MICB1,
 				      WCD934X_MICB_VAL_MASK, vout_ctl_1);
@@ -2643,8 +2650,8 @@ static void wcd934x_mbhc_get_result_params(struct wcd934x_codec *wcd934x,
 	s16 c1;
 	s32 x1, d1;
 	int32_t denom;
-	static const int minCode_param[] = {
-		3277, 1639, 820, 410, 205, 103, 52, 26
+	int minCode_param[] = {
+			3277, 1639, 820, 410, 205, 103, 52, 26
 	};
 
 	regmap_update_bits(wcd934x->regmap, WCD934X_ANA_MBHC_ZDET, 0x20, 0x20);
@@ -4974,23 +4981,25 @@ static int wcd934x_codec_enable_dec(struct snd_soc_dapm_widget *w,
 	struct snd_soc_component *comp = snd_soc_dapm_to_component(w->dapm);
 	unsigned int decimator;
 	char *dec_adc_mux_name = NULL;
-	char *widget_name;
+	char *widget_name = NULL;
+	char *wname;
 	int ret = 0, amic_n;
 	u16 tx_vol_ctl_reg, pwr_level_reg = 0, dec_cfg_reg, hpf_gate_reg;
 	u16 tx_gain_ctl_reg;
 	char *dec;
 	u8 hpf_coff_freq;
 
-	char *wname __free(kfree) = kstrndup(w->name, 15, GFP_KERNEL);
-	if (!wname)
+	widget_name = kstrndup(w->name, 15, GFP_KERNEL);
+	if (!widget_name)
 		return -ENOMEM;
 
-	widget_name = wname;
+	wname = widget_name;
 	dec_adc_mux_name = strsep(&widget_name, " ");
 	if (!dec_adc_mux_name) {
 		dev_err(comp->dev, "%s: Invalid decimator = %s\n",
 			__func__, w->name);
-		return -EINVAL;
+		ret =  -EINVAL;
+		goto out;
 	}
 	dec_adc_mux_name = widget_name;
 
@@ -4998,14 +5007,16 @@ static int wcd934x_codec_enable_dec(struct snd_soc_dapm_widget *w,
 	if (!dec) {
 		dev_err(comp->dev, "%s: decimator index not found\n",
 			__func__);
-		return -EINVAL;
+		ret =  -EINVAL;
+		goto out;
 	}
 
 	ret = kstrtouint(dec, 10, &decimator);
 	if (ret < 0) {
 		dev_err(comp->dev, "%s: Invalid decimator = %s\n",
 			__func__, wname);
-		return -EINVAL;
+		ret =  -EINVAL;
+		goto out;
 	}
 
 	tx_vol_ctl_reg = WCD934X_CDC_TX0_TX_PATH_CTL + 16 * decimator;
@@ -5098,7 +5109,8 @@ static int wcd934x_codec_enable_dec(struct snd_soc_dapm_widget *w,
 					      WCD934X_DEC_PWR_LVL_DF);
 		break;
 	}
-
+out:
+	kfree(wname);
 	return ret;
 }
 
@@ -5852,13 +5864,17 @@ static int wcd934x_codec_parse_data(struct wcd934x_codec *wcd)
 	struct device_node *ifc_dev_np;
 
 	ifc_dev_np = of_parse_phandle(dev->of_node, "slim-ifc-dev", 0);
-	if (!ifc_dev_np)
-		return dev_err_probe(dev, -EINVAL, "No Interface device found\n");
+	if (!ifc_dev_np) {
+		dev_err(dev, "No Interface device found\n");
+		return -EINVAL;
+	}
 
 	wcd->sidev = of_slim_get_device(wcd->sdev->ctrl, ifc_dev_np);
 	of_node_put(ifc_dev_np);
-	if (!wcd->sidev)
-		return dev_err_probe(dev, -EINVAL, "Unable to get SLIM Interface device\n");
+	if (!wcd->sidev) {
+		dev_err(dev, "Unable to get SLIM Interface device\n");
+		return -EINVAL;
+	}
 
 	slim_get_logical_addr(wcd->sidev);
 	wcd->if_regmap = regmap_init_slimbus(wcd->sidev,
@@ -5904,8 +5920,10 @@ static int wcd934x_codec_probe(struct platform_device *pdev)
 	mutex_init(&wcd->micb_lock);
 
 	ret = wcd934x_codec_parse_data(wcd);
-	if (ret)
+	if (ret) {
+		dev_err(wcd->dev, "Failed to get SLIM IRQ\n");
 		return ret;
+	}
 
 	/* set default rate 9P6MHz */
 	regmap_update_bits(wcd->regmap, WCD934X_CODEC_RPM_CLK_MCLK_CFG,
@@ -5949,6 +5967,7 @@ static struct platform_driver wcd934x_codec_driver = {
 	}
 };
 
+MODULE_ALIAS("platform:wcd934x-codec");
 module_platform_driver(wcd934x_codec_driver);
 MODULE_DESCRIPTION("WCD934x codec driver");
 MODULE_LICENSE("GPL v2");

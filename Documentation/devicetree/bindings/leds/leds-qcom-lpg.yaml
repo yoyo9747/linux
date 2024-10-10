@@ -27,14 +27,9 @@ properties:
           - qcom,pm8994-lpg
           - qcom,pmc8180c-lpg
           - qcom,pmi632-lpg
-          - qcom,pmi8950-pwm
           - qcom,pmi8994-lpg
           - qcom,pmi8998-lpg
           - qcom,pmk8550-pwm
-      - items:
-          - enum:
-              - qcom,pm6150l-lpg
-          - const: qcom,pm8150l-lpg
       - items:
           - enum:
               - qcom,pm8550-pwm
@@ -147,7 +142,6 @@ allOf:
               - qcom,pm8941-lpg
               - qcom,pm8994-lpg
               - qcom,pmc8180c-lpg
-              - qcom,pmi8950-pwm
               - qcom,pmi8994-lpg
               - qcom,pmi8998-lpg
               - qcom,pmk8550-pwm
@@ -296,3 +290,5 @@ examples:
         label = "blue";
       };
     };
+
+...

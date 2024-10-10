@@ -25,15 +25,13 @@ struct q6apm_lpass_dai_data {
 };
 
 static int q6dma_set_channel_map(struct snd_soc_dai *dai,
-				 unsigned int tx_num,
-				 const unsigned int *tx_ch_mask,
-				 unsigned int rx_num,
-				 const unsigned int *rx_ch_mask)
+				 unsigned int tx_num, unsigned int *tx_ch_mask,
+				 unsigned int rx_num, unsigned int *rx_ch_mask)
 {
 
 	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
 	struct audioreach_module_config *cfg = &dai_data->module_config[dai->id];
-	int i;
+	int ch_mask;
 
 	switch (dai->id) {
 	case WSA_CODEC_DMA_TX_0:
@@ -58,8 +56,7 @@ static int q6dma_set_channel_map(struct snd_soc_dai *dai,
 				tx_num);
 			return -EINVAL;
 		}
-		for (i = 0; i < tx_num; i++)
-			cfg->channel_map[i] = tx_ch_mask[i];
+		ch_mask = *tx_ch_mask;
 
 		break;
 	case WSA_CODEC_DMA_RX_0:
@@ -82,8 +79,7 @@ static int q6dma_set_channel_map(struct snd_soc_dai *dai,
 				rx_num);
 			return -EINVAL;
 		}
-		for (i = 0; i < rx_num; i++)
-			cfg->channel_map[i] = rx_ch_mask[i];
+		ch_mask = *rx_ch_mask;
 
 		break;
 	default:
@@ -91,6 +87,8 @@ static int q6dma_set_channel_map(struct snd_soc_dai *dai,
 			__func__, dai->id);
 		return -EINVAL;
 	}
+
+	cfg->active_channels_mask = ch_mask;
 
 	return 0;
 }
@@ -106,7 +104,6 @@ static int q6hdmi_hw_params(struct snd_pcm_substream *substream,
 	cfg->bit_width = params_width(params);
 	cfg->sample_rate = params_rate(params);
 	cfg->num_channels = channels;
-	audioreach_set_default_channel_mapping(cfg->channel_map, channels);
 
 	switch (dai->id) {
 	case DISPLAY_PORT_RX_0:
@@ -131,12 +128,10 @@ static int q6dma_hw_params(struct snd_pcm_substream *substream,
 {
 	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
 	struct audioreach_module_config *cfg = &dai_data->module_config[dai->id];
-	int channels = hw_param_interval_c(params, SNDRV_PCM_HW_PARAM_CHANNELS)->max;
 
 	cfg->bit_width = params_width(params);
 	cfg->sample_rate = params_rate(params);
-	cfg->num_channels = channels;
-	audioreach_set_default_channel_mapping(cfg->channel_map, channels);
+	cfg->num_channels = hw_param_interval_c(params, SNDRV_PCM_HW_PARAM_CHANNELS)->max;
 
 	return 0;
 }
@@ -146,17 +141,14 @@ static void q6apm_lpass_dai_shutdown(struct snd_pcm_substream *substream, struct
 	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
 	int rc;
 
-	if (dai_data->is_port_started[dai->id]) {
-		rc = q6apm_graph_stop(dai_data->graph[dai->id]);
-		dai_data->is_port_started[dai->id] = false;
-		if (rc < 0)
-			dev_err(dai->dev, "fail to close APM port (%d)\n", rc);
-	}
+	if (!dai_data->is_port_started[dai->id])
+		return;
+	rc = q6apm_graph_stop(dai_data->graph[dai->id]);
+	if (rc < 0)
+		dev_err(dai->dev, "fail to close APM port (%d)\n", rc);
 
-	if (dai_data->graph[dai->id]) {
-		q6apm_graph_close(dai_data->graph[dai->id]);
-		dai_data->graph[dai->id] = NULL;
-	}
+	q6apm_graph_close(dai_data->graph[dai->id]);
+	dai_data->is_port_started[dai->id] = false;
 }
 
 static int q6apm_lpass_dai_prepare(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
@@ -171,10 +163,8 @@ static int q6apm_lpass_dai_prepare(struct snd_pcm_substream *substream, struct s
 		q6apm_graph_stop(dai_data->graph[dai->id]);
 		dai_data->is_port_started[dai->id] = false;
 
-		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 			q6apm_graph_close(dai_data->graph[dai->id]);
-			dai_data->graph[dai->id] = NULL;
-		}
 	}
 
 	/**
@@ -193,29 +183,26 @@ static int q6apm_lpass_dai_prepare(struct snd_pcm_substream *substream, struct s
 
 	cfg->direction = substream->stream;
 	rc = q6apm_graph_media_format_pcm(dai_data->graph[dai->id], cfg);
+
 	if (rc) {
 		dev_err(dai->dev, "Failed to set media format %d\n", rc);
-		goto err;
+		return rc;
 	}
 
 	rc = q6apm_graph_prepare(dai_data->graph[dai->id]);
 	if (rc) {
 		dev_err(dai->dev, "Failed to prepare Graph %d\n", rc);
-		goto err;
+		return rc;
 	}
 
 	rc = q6apm_graph_start(dai_data->graph[dai->id]);
 	if (rc < 0) {
 		dev_err(dai->dev, "fail to start APM port %x\n", dai->id);
-		goto err;
+		return rc;
 	}
 	dai_data->is_port_started[dai->id] = true;
 
 	return 0;
-err:
-	q6apm_graph_close(dai_data->graph[dai->id]);
-	dai_data->graph[dai->id] = NULL;
-	return rc;
 }
 
 static int q6apm_lpass_dai_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)

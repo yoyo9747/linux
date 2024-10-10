@@ -293,14 +293,17 @@ static void men_z135_handle_rx(struct men_z135_port *uart)
 static void men_z135_handle_tx(struct men_z135_port *uart)
 {
 	struct uart_port *port = &uart->port;
-	struct tty_port *tport = &port->state->port;
-	unsigned char *tail;
-	unsigned int n, txfree;
+	struct circ_buf *xmit = &port->state->xmit;
 	u32 txc;
 	u32 wptr;
 	int qlen;
+	int n;
+	int txfree;
+	int head;
+	int tail;
+	int s;
 
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		goto out;
 
 	if (uart_tx_stopped(port))
@@ -310,7 +313,7 @@ static void men_z135_handle_tx(struct men_z135_port *uart)
 		goto out;
 
 	/* calculate bytes to copy */
-	qlen = kfifo_len(&tport->xmit_fifo);
+	qlen = uart_circ_chars_pending(xmit);
 	if (qlen <= 0)
 		goto out;
 
@@ -342,18 +345,21 @@ static void men_z135_handle_tx(struct men_z135_port *uart)
 	if (n <= 0)
 		goto irq_en;
 
-	n = kfifo_out_linear_ptr(&tport->xmit_fifo, &tail,
-			min_t(unsigned int, UART_XMIT_SIZE, n));
-	memcpy_toio(port->membase + MEN_Z135_TX_RAM, tail, n);
+	head = xmit->head & (UART_XMIT_SIZE - 1);
+	tail = xmit->tail & (UART_XMIT_SIZE - 1);
 
+	s = ((head >= tail) ? head : UART_XMIT_SIZE) - tail;
+	n = min(n, s);
+
+	memcpy_toio(port->membase + MEN_Z135_TX_RAM, &xmit->buf[xmit->tail], n);
 	iowrite32(n & 0x3ff, port->membase + MEN_Z135_TX_CTRL);
 	uart_xmit_advance(port, n);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 
 irq_en:
-	if (!kfifo_is_empty(&tport->xmit_fifo))
+	if (!uart_circ_empty(xmit))
 		men_z135_reg_set(uart, MEN_Z135_CONF_REG, MEN_Z135_IER_TXCIEN);
 	else
 		men_z135_reg_clr(uart, MEN_Z135_CONF_REG, MEN_Z135_IER_TXCIEN);

@@ -1077,8 +1077,6 @@ fec_restart(struct net_device *ndev)
 	u32 rcntl = OPT_FRAME_SIZE | 0x04;
 	u32 ecntl = FEC_ECR_ETHEREN;
 
-	fec_ptp_save_state(fep);
-
 	/* Whack a reset.  We should wait for this.
 	 * For i.MX6SX SOC, enet use AXI bus, we use disable MAC
 	 * instead of reset MAC itself.
@@ -1246,10 +1244,8 @@ fec_restart(struct net_device *ndev)
 	writel(ecntl, fep->hwp + FEC_ECNTRL);
 	fec_enet_active_rxring(ndev);
 
-	if (fep->bufdesc_ex) {
+	if (fep->bufdesc_ex)
 		fec_ptp_start_cyclecounter(ndev);
-		fec_ptp_restore_state(fep);
-	}
 
 	/* Enable interrupts we wish to service */
 	if (fep->link)
@@ -1340,8 +1336,6 @@ fec_stop(struct net_device *ndev)
 			netdev_err(ndev, "Graceful transmit stop did not complete!\n");
 	}
 
-	fec_ptp_save_state(fep);
-
 	/* Whack a reset.  We should wait for this.
 	 * For i.MX6SX SOC, enet use AXI bus, we use disable MAC
 	 * instead of reset MAC itself.
@@ -1366,15 +1360,6 @@ fec_stop(struct net_device *ndev)
 		!(fep->wol_flag & FEC_WOL_FLAG_SLEEP_ON)) {
 		writel(FEC_ECR_ETHEREN, fep->hwp + FEC_ECNTRL);
 		writel(rmii_mode, fep->hwp + FEC_R_CNTRL);
-	}
-
-	if (fep->bufdesc_ex) {
-		val = readl(fep->hwp + FEC_ECNTRL);
-		val |= FEC_ECR_EN1588;
-		writel(val, fep->hwp + FEC_ECNTRL);
-
-		fec_ptp_start_cyclecounter(ndev);
-		fec_ptp_restore_state(fep);
 	}
 }
 
@@ -2777,18 +2762,22 @@ static void fec_enet_get_regs(struct net_device *ndev,
 }
 
 static int fec_enet_get_ts_info(struct net_device *ndev,
-				struct kernel_ethtool_ts_info *info)
+				struct ethtool_ts_info *info)
 {
 	struct fec_enet_private *fep = netdev_priv(ndev);
 
 	if (fep->bufdesc_ex) {
 
 		info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
+					SOF_TIMESTAMPING_RX_SOFTWARE |
+					SOF_TIMESTAMPING_SOFTWARE |
 					SOF_TIMESTAMPING_TX_HARDWARE |
 					SOF_TIMESTAMPING_RX_HARDWARE |
 					SOF_TIMESTAMPING_RAW_HARDWARE;
 		if (fep->ptp_clock)
 			info->phc_index = ptp_clock_index(fep->ptp_clock);
+		else
+			info->phc_index = -1;
 
 		info->tx_types = (1 << HWTSTAMP_TX_OFF) |
 				 (1 << HWTSTAMP_TX_ON);
@@ -3685,6 +3674,29 @@ fec_set_mac_address(struct net_device *ndev, void *p)
 	return 0;
 }
 
+#ifdef CONFIG_NET_POLL_CONTROLLER
+/**
+ * fec_poll_controller - FEC Poll controller function
+ * @dev: The FEC network adapter
+ *
+ * Polled functionality used by netconsole and others in non interrupt mode
+ *
+ */
+static void fec_poll_controller(struct net_device *dev)
+{
+	int i;
+	struct fec_enet_private *fep = netdev_priv(dev);
+
+	for (i = 0; i < FEC_IRQ_NUM; i++) {
+		if (fep->irq[i] > 0) {
+			disable_irq(fep->irq[i]);
+			fec_enet_interrupt(fep->irq[i], dev);
+			enable_irq(fep->irq[i]);
+		}
+	}
+}
+#endif
+
 static inline void fec_enet_set_netdev_features(struct net_device *netdev,
 	netdev_features_t features)
 {
@@ -3991,6 +4003,9 @@ static const struct net_device_ops fec_netdev_ops = {
 	.ndo_tx_timeout		= fec_timeout,
 	.ndo_set_mac_address	= fec_set_mac_address,
 	.ndo_eth_ioctl		= phy_do_ioctl_running,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= fec_poll_controller,
+#endif
 	.ndo_set_features	= fec_set_features,
 	.ndo_bpf		= fec_enet_bpf,
 	.ndo_xdp_xmit		= fec_enet_xdp_xmit,
@@ -4139,14 +4154,6 @@ static int fec_enet_init(struct net_device *ndev)
 free_queue_mem:
 	fec_enet_free_queue(ndev);
 	return ret;
-}
-
-static void fec_enet_deinit(struct net_device *ndev)
-{
-	struct fec_enet_private *fep = netdev_priv(ndev);
-
-	netif_napi_del(&fep->napi);
-	fec_enet_free_queue(ndev);
 }
 
 #ifdef CONFIG_OF
@@ -4543,7 +4550,6 @@ failed_register:
 	fec_enet_mii_remove(fep);
 failed_mii_init:
 failed_irq:
-	fec_enet_deinit(ndev);
 failed_init:
 	fec_ptp_stop(pdev);
 failed_reset:
@@ -4607,11 +4613,10 @@ fec_drv_remove(struct platform_device *pdev)
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 
-	fec_enet_deinit(ndev);
 	free_netdev(ndev);
 }
 
-static int fec_suspend(struct device *dev)
+static int __maybe_unused fec_suspend(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 	struct fec_enet_private *fep = netdev_priv(ndev);
@@ -4664,7 +4669,7 @@ static int fec_suspend(struct device *dev)
 	return 0;
 }
 
-static int fec_resume(struct device *dev)
+static int __maybe_unused fec_resume(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 	struct fec_enet_private *fep = netdev_priv(ndev);
@@ -4719,7 +4724,7 @@ failed_clk:
 	return ret;
 }
 
-static int fec_runtime_suspend(struct device *dev)
+static int __maybe_unused fec_runtime_suspend(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 	struct fec_enet_private *fep = netdev_priv(ndev);
@@ -4730,7 +4735,7 @@ static int fec_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int fec_runtime_resume(struct device *dev)
+static int __maybe_unused fec_runtime_resume(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 	struct fec_enet_private *fep = netdev_priv(ndev);
@@ -4751,14 +4756,14 @@ failed_clk_ipg:
 }
 
 static const struct dev_pm_ops fec_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(fec_suspend, fec_resume)
-	RUNTIME_PM_OPS(fec_runtime_suspend, fec_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(fec_suspend, fec_resume)
+	SET_RUNTIME_PM_OPS(fec_runtime_suspend, fec_runtime_resume, NULL)
 };
 
 static struct platform_driver fec_driver = {
 	.driver	= {
 		.name	= DRIVER_NAME,
-		.pm	= pm_ptr(&fec_pm_ops),
+		.pm	= &fec_pm_ops,
 		.of_match_table = fec_dt_ids,
 		.suppress_bind_attrs = true,
 	},

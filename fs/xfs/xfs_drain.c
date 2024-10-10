@@ -94,17 +94,17 @@ static inline int xfs_defer_drain_wait(struct xfs_defer_drain *dr)
 }
 
 /*
- * Get a passive reference to the AG that contains a fsbno and declare an intent
- * to update its metadata.
+ * Get a passive reference to an AG and declare an intent to update its
+ * metadata.
  */
 struct xfs_perag *
 xfs_perag_intent_get(
 	struct xfs_mount	*mp,
-	xfs_fsblock_t		fsbno)
+	xfs_agnumber_t		agno)
 {
 	struct xfs_perag	*pag;
 
-	pag = xfs_perag_get(mp, XFS_FSB_TO_AGNO(mp, fsbno));
+	pag = xfs_perag_get(mp, agno);
 	if (!pag)
 		return NULL;
 

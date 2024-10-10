@@ -388,10 +388,15 @@ static int hi6220_thermal_probe(struct hisi_thermal_data *data)
 {
 	struct platform_device *pdev = data->pdev;
 	struct device *dev = &pdev->dev;
+	int ret;
 
 	data->clk = devm_clk_get(dev, "thermal_clk");
-	if (IS_ERR(data->clk))
-		return dev_err_probe(dev, PTR_ERR(data->clk), "failed to get thermal clk\n");
+	if (IS_ERR(data->clk)) {
+		ret = PTR_ERR(data->clk);
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "failed to get thermal clk: %d\n", ret);
+		return ret;
+	}
 
 	data->sensor = devm_kzalloc(dev, sizeof(*data->sensor), GFP_KERNEL);
 	if (!data->sensor)
@@ -465,22 +470,11 @@ static irqreturn_t hisi_thermal_alarm_irq_thread(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-static int hisi_trip_walk_cb(struct thermal_trip *trip, void *arg)
-{
-	struct hisi_thermal_sensor *sensor = arg;
-
-	if (trip->type != THERMAL_TRIP_PASSIVE)
-		return 0;
-
-	sensor->thres_temp = trip->temperature;
-	/* Return nonzero to terminate the search. */
-	return 1;
-}
-
 static int hisi_thermal_register_sensor(struct platform_device *pdev,
 					struct hisi_thermal_sensor *sensor)
 {
-	int ret;
+	int ret, i;
+	struct thermal_trip trip;
 
 	sensor->tzd = devm_thermal_of_zone_register(&pdev->dev,
 						    sensor->id, sensor,
@@ -493,7 +487,15 @@ static int hisi_thermal_register_sensor(struct platform_device *pdev,
 		return ret;
 	}
 
-	thermal_zone_for_each_trip(sensor->tzd, hisi_trip_walk_cb, sensor);
+	for (i = 0; i < thermal_zone_get_num_trips(sensor->tzd); i++) {
+
+		thermal_zone_get_trip(sensor->tzd, i, &trip);
+
+		if (trip.type == THERMAL_TRIP_PASSIVE) {
+			sensor->thres_temp = trip.temperature;
+			break;
+		}
+	}
 
 	return 0;
 }

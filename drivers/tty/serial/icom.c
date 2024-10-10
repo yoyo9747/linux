@@ -877,10 +877,10 @@ unlock:
 static int icom_write(struct uart_port *port)
 {
 	struct icom_port *icom_port = to_icom_port(port);
-	struct tty_port *tport = &port->state->port;
 	unsigned long data_count;
 	unsigned char cmdReg;
 	unsigned long offset;
+	int temp_tail = port->state->xmit.tail;
 
 	trace(icom_port, "WRITE", 0);
 
@@ -890,8 +890,16 @@ static int icom_write(struct uart_port *port)
 		return 0;
 	}
 
-	data_count = kfifo_out_peek(&tport->xmit_fifo, icom_port->xmit_buf,
-			XMIT_BUFF_SZ);
+	data_count = 0;
+	while ((port->state->xmit.head != temp_tail) &&
+	       (data_count <= XMIT_BUFF_SZ)) {
+
+		icom_port->xmit_buf[data_count++] =
+		    port->state->xmit.buf[temp_tail];
+
+		temp_tail++;
+		temp_tail &= (UART_XMIT_SIZE - 1);
+	}
 
 	if (data_count) {
 		icom_port->statStg->xmit[0].flags =
@@ -948,8 +956,7 @@ static inline void check_modem_status(struct icom_port *icom_port)
 
 static void xmit_interrupt(u16 port_int_reg, struct icom_port *icom_port)
 {
-	struct tty_port *tport = &icom_port->uart_port.state->port;
-	u16 count;
+	u16 count, i;
 
 	if (port_int_reg & (INT_XMIT_COMPLETED)) {
 		trace(icom_port, "XMIT_COMPLETE", 0);
@@ -961,7 +968,13 @@ static void xmit_interrupt(u16 port_int_reg, struct icom_port *icom_port)
 		count = le16_to_cpu(icom_port->statStg->xmit[0].leLength);
 		icom_port->uart_port.icount.tx += count;
 
-		kfifo_skip_count(&tport->xmit_fifo, count);
+		for (i=0; i<count &&
+			!uart_circ_empty(&icom_port->uart_port.state->xmit); i++) {
+
+			icom_port->uart_port.state->xmit.tail++;
+			icom_port->uart_port.state->xmit.tail &=
+				(UART_XMIT_SIZE - 1);
+		}
 
 		if (!icom_write(&icom_port->uart_port))
 			/* activate write queue */

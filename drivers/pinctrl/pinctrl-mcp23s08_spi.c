@@ -263,5 +263,4 @@ static void mcp23s08_spi_exit(void)
 }
 module_exit(mcp23s08_spi_exit);
 
-MODULE_DESCRIPTION("MCP23S08 SPI GPIO driver");
 MODULE_LICENSE("GPL");

@@ -431,11 +431,8 @@ qca8k_parse_port_leds(struct qca8k_priv *priv, struct fwnode_handle *port, int p
 		init_data.devicename = kasprintf(GFP_KERNEL, "%s:0%d",
 						 priv->internal_mdio_bus->id,
 						 port_num);
-		if (!init_data.devicename) {
-			fwnode_handle_put(led);
-			fwnode_handle_put(leds);
+		if (!init_data.devicename)
 			return -ENOMEM;
-		}
 
 		ret = devm_led_classdev_register_ext(priv->dev, &port_led->cdev, &init_data);
 		if (ret)
@@ -444,7 +441,6 @@ qca8k_parse_port_leds(struct qca8k_priv *priv, struct fwnode_handle *port, int p
 		kfree(init_data.devicename);
 	}
 
-	fwnode_handle_put(leds);
 	return 0;
 }
 
@@ -475,13 +471,9 @@ qca8k_setup_led_ctrl(struct qca8k_priv *priv)
 		 * the correct port for LED setup.
 		 */
 		ret = qca8k_parse_port_leds(priv, port, qca8k_port_to_phy(port_num));
-		if (ret) {
-			fwnode_handle_put(port);
-			fwnode_handle_put(ports);
+		if (ret)
 			return ret;
-		}
 	}
 
-	fwnode_handle_put(ports);
 	return 0;
 }

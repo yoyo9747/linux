@@ -78,6 +78,7 @@ static const int k3_adc_to_temp[] = {
 
 struct k3_bandgap {
 	void __iomem *base;
+	const struct k3_bandgap_data *conf;
 };
 
 /* common data structures */

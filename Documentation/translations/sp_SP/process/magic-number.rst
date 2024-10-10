@@ -1,7 +1,7 @@
 .. include:: ../disclaimer-sp.rst
 
-:Original: :ref:`Documentation/staging/magic-number.rst <magicnumbers>`
-:Translator: Carlos Bilbao <carlos.bilbao.osdev@gmail.com>
+:Original: :ref:`Documentation/process/magic-number.rst <magicnumbers>`
+:Translator: Carlos Bilbao <carlos.bilbao@amd.com>
 
 .. _sp_magicnumbers:
 

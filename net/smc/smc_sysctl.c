@@ -90,20 +90,11 @@ static struct ctl_table smc_table[] = {
 		.extra1		= &conns_per_lgr_min,
 		.extra2		= &conns_per_lgr_max,
 	},
-	{
-		.procname	= "limit_smc_hs",
-		.data		= &init_net.smc.limit_smc_hs,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
+	{  }
 };
 
 int __net_init smc_sysctl_net_init(struct net *net)
 {
-	size_t table_size = ARRAY_SIZE(smc_table);
 	struct ctl_table *table;
 
 	table = smc_table;
@@ -114,12 +105,12 @@ int __net_init smc_sysctl_net_init(struct net *net)
 		if (!table)
 			goto err_alloc;
 
-		for (i = 0; i < table_size; i++)
+		for (i = 0; i < ARRAY_SIZE(smc_table) - 1; i++)
 			table[i].data += (void *)net - (void *)&init_net;
 	}
 
 	net->smc.smc_hdr = register_net_sysctl_sz(net, "net/smc", table,
-						  table_size);
+						  ARRAY_SIZE(smc_table));
 	if (!net->smc.smc_hdr)
 		goto err_reg;
 
@@ -130,8 +121,6 @@ int __net_init smc_sysctl_net_init(struct net *net)
 	WRITE_ONCE(net->smc.sysctl_rmem, net_smc_rmem_init);
 	net->smc.sysctl_max_links_per_lgr = SMC_LINKS_PER_LGR_MAX_PREFER;
 	net->smc.sysctl_max_conns_per_lgr = SMC_CONN_PER_LGR_PREFER;
-	/* disable handshake limitation by default */
-	net->smc.limit_smc_hs = 0;
 
 	return 0;
 
@@ -144,7 +133,7 @@ err_alloc:
 
 void __net_exit smc_sysctl_net_exit(struct net *net)
 {
-	const struct ctl_table *table;
+	struct ctl_table *table;
 
 	table = net->smc.smc_hdr->ctl_table_arg;
 	unregister_net_sysctl_table(net->smc.smc_hdr);

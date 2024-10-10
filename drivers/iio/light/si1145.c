@@ -465,10 +465,11 @@ static irqreturn_t si1145_trigger_handler(int irq, void *private)
 			goto done;
 	}
 
-	iio_for_each_active_channel(indio_dev, i) {
+	for_each_set_bit(i, indio_dev->active_scan_mask,
+		indio_dev->masklength) {
 		int run = 1;
 
-		while (i + run < iio_get_masklength(indio_dev)) {
+		while (i + run < indio_dev->masklength) {
 			if (!test_bit(i + run, indio_dev->active_scan_mask))
 				break;
 			if (indio_dev->channels[i + run].address !=
@@ -513,7 +514,7 @@ static int si1145_set_chlist(struct iio_dev *indio_dev, unsigned long scan_mask)
 	if (data->scan_mask == scan_mask)
 		return 0;
 
-	for_each_set_bit(i, &scan_mask, iio_get_masklength(indio_dev)) {
+	for_each_set_bit(i, &scan_mask, indio_dev->masklength) {
 		switch (indio_dev->channels[i].address) {
 		case SI1145_REG_ALSVIS_DATA:
 			reg |= SI1145_CHLIST_EN_ALSVIS;

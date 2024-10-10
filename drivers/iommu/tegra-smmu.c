@@ -19,8 +19,6 @@
 #include <soc/tegra/ahb.h>
 #include <soc/tegra/mc.h>
 
-#include "iommu-pages.h"
-
 struct tegra_smmu_group {
 	struct list_head list;
 	struct tegra_smmu *smmu;
@@ -284,7 +282,7 @@ static struct iommu_domain *tegra_smmu_domain_alloc_paging(struct device *dev)
 
 	as->attr = SMMU_PD_READABLE | SMMU_PD_WRITABLE | SMMU_PD_NONSECURE;
 
-	as->pd = __iommu_alloc_pages(GFP_KERNEL | __GFP_DMA, 0);
+	as->pd = alloc_page(GFP_KERNEL | __GFP_DMA | __GFP_ZERO);
 	if (!as->pd) {
 		kfree(as);
 		return NULL;
@@ -292,7 +290,7 @@ static struct iommu_domain *tegra_smmu_domain_alloc_paging(struct device *dev)
 
 	as->count = kcalloc(SMMU_NUM_PDE, sizeof(u32), GFP_KERNEL);
 	if (!as->count) {
-		__iommu_free_pages(as->pd, 0);
+		__free_page(as->pd);
 		kfree(as);
 		return NULL;
 	}
@@ -300,7 +298,7 @@ static struct iommu_domain *tegra_smmu_domain_alloc_paging(struct device *dev)
 	as->pts = kcalloc(SMMU_NUM_PDE, sizeof(*as->pts), GFP_KERNEL);
 	if (!as->pts) {
 		kfree(as->count);
-		__iommu_free_pages(as->pd, 0);
+		__free_page(as->pd);
 		kfree(as);
 		return NULL;
 	}
@@ -601,14 +599,14 @@ static u32 *as_get_pte(struct tegra_smmu_as *as, dma_addr_t iova,
 		dma = dma_map_page(smmu->dev, page, 0, SMMU_SIZE_PT,
 				   DMA_TO_DEVICE);
 		if (dma_mapping_error(smmu->dev, dma)) {
-			__iommu_free_pages(page, 0);
+			__free_page(page);
 			return NULL;
 		}
 
 		if (!smmu_dma_addr_valid(smmu, dma)) {
 			dma_unmap_page(smmu->dev, dma, SMMU_SIZE_PT,
 				       DMA_TO_DEVICE);
-			__iommu_free_pages(page, 0);
+			__free_page(page);
 			return NULL;
 		}
 
@@ -651,7 +649,7 @@ static void tegra_smmu_pte_put_use(struct tegra_smmu_as *as, unsigned long iova)
 		tegra_smmu_set_pde(as, iova, 0);
 
 		dma_unmap_page(smmu->dev, pte_dma, SMMU_SIZE_PT, DMA_TO_DEVICE);
-		__iommu_free_pages(page, 0);
+		__free_page(page);
 		as->pts[pde] = NULL;
 	}
 }
@@ -690,7 +688,7 @@ static struct page *as_get_pde_page(struct tegra_smmu_as *as,
 	if (gfpflags_allow_blocking(gfp))
 		spin_unlock_irqrestore(&as->lock, *flags);
 
-	page = __iommu_alloc_pages(gfp | __GFP_DMA, 0);
+	page = alloc_page(gfp | __GFP_DMA | __GFP_ZERO);
 
 	if (gfpflags_allow_blocking(gfp))
 		spin_lock_irqsave(&as->lock, *flags);
@@ -702,7 +700,7 @@ static struct page *as_get_pde_page(struct tegra_smmu_as *as,
 	 */
 	if (as->pts[pde]) {
 		if (page)
-			__iommu_free_pages(page, 0);
+			__free_page(page);
 
 		page = as->pts[pde];
 	}
@@ -837,7 +835,7 @@ static int tegra_smmu_configure(struct tegra_smmu *smmu, struct device *dev,
 	const struct iommu_ops *ops = smmu->iommu.ops;
 	int err;
 
-	err = iommu_fwspec_init(dev, dev_fwnode(smmu->dev));
+	err = iommu_fwspec_init(dev, &dev->of_node->fwnode, ops);
 	if (err < 0) {
 		dev_err(dev, "failed to initialize fwspec: %d\n", err);
 		return err;

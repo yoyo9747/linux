@@ -47,7 +47,7 @@ static void test_tpidr(pid_t child)
 
 	/* ...write a new value.. */
 	write_iov.iov_len = sizeof(uint64_t);
-	write_val[0] = read_val[0] + 1;
+	write_val[0] = read_val[0]++;
 	ret = ptrace(PTRACE_SETREGSET, child, NT_ARM_TLS, &write_iov);
 	ksft_test_result(ret == 0, "write_tpidr_one\n");
 
@@ -156,17 +156,17 @@ static void test_hw_debug(pid_t child, int type, const char *type_name)
 		/* Zero is not currently architecturally valid */
 		ksft_test_result(arch, "%s_arch_set\n", type_name);
 	} else {
-		ksft_test_result_skip("%s_arch_set\n", type_name);
+		ksft_test_result_skip("%s_arch_set\n");
 	}
 }
 
 static int do_child(void)
 {
 	if (ptrace(PTRACE_TRACEME, -1, NULL, NULL))
-		ksft_exit_fail_perror("PTRACE_TRACEME");
+		ksft_exit_fail_msg("PTRACE_TRACEME", strerror(errno));
 
 	if (raise(SIGSTOP))
-		ksft_exit_fail_perror("raise(SIGSTOP)");
+		ksft_exit_fail_msg("raise(SIGSTOP)", strerror(errno));
 
 	return EXIT_SUCCESS;
 }

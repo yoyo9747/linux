@@ -943,19 +943,17 @@ static void update_pfit_vscale_ratio(struct intel_overlay *overlay)
 	 * line with the intel documentation for the i965
 	 */
 	if (DISPLAY_VER(dev_priv) >= 4) {
-		u32 tmp = intel_de_read(dev_priv, PFIT_PGM_RATIOS(dev_priv));
+		u32 tmp = intel_de_read(dev_priv, PFIT_PGM_RATIOS);
 
 		/* on i965 use the PGM reg to read out the autoscaler values */
 		ratio = REG_FIELD_GET(PFIT_VERT_SCALE_MASK_965, tmp);
 	} else {
 		u32 tmp;
 
-		if (intel_de_read(dev_priv, PFIT_CONTROL(dev_priv)) & PFIT_VERT_AUTO_SCALE)
-			tmp = intel_de_read(dev_priv,
-					    PFIT_AUTO_RATIOS(dev_priv));
+		if (intel_de_read(dev_priv, PFIT_CONTROL) & PFIT_VERT_AUTO_SCALE)
+			tmp = intel_de_read(dev_priv, PFIT_AUTO_RATIOS);
 		else
-			tmp = intel_de_read(dev_priv,
-					    PFIT_PGM_RATIOS(dev_priv));
+			tmp = intel_de_read(dev_priv, PFIT_PGM_RATIOS);
 
 		ratio = REG_FIELD_GET(PFIT_VERT_SCALE_MASK, tmp);
 	}
@@ -974,11 +972,10 @@ static int check_overlay_dst(struct intel_overlay *overlay,
 		      rec->dst_width, rec->dst_height);
 
 	clipped = req;
+	drm_rect_intersect(&clipped, &crtc_state->pipe_src);
 
-	if (!drm_rect_intersect(&clipped, &crtc_state->pipe_src))
-		return -EINVAL;
-
-	if (!drm_rect_equals(&clipped, &req))
+	if (!drm_rect_visible(&clipped) ||
+	    !drm_rect_equals(&clipped, &req))
 		return -EINVAL;
 
 	return 0;
@@ -1487,14 +1484,15 @@ intel_overlay_capture_error_state(struct drm_i915_private *dev_priv)
 }
 
 void
-intel_overlay_print_error_state(struct drm_printer *p,
+intel_overlay_print_error_state(struct drm_i915_error_state_buf *m,
 				struct intel_overlay_error_state *error)
 {
-	drm_printf(p, "Overlay, status: 0x%08x, interrupt: 0x%08x\n",
-		   error->dovsta, error->isr);
-	drm_printf(p, "  Register file at 0x%08lx:\n", error->base);
+	i915_error_printf(m, "Overlay, status: 0x%08x, interrupt: 0x%08x\n",
+			  error->dovsta, error->isr);
+	i915_error_printf(m, "  Register file at 0x%08lx:\n",
+			  error->base);
 
-#define P(x) drm_printf(p, "    " #x ": 0x%08x\n", error->regs.x)
+#define P(x) i915_error_printf(m, "    " #x ":	0x%08x\n", error->regs.x)
 	P(OBUF_0Y);
 	P(OBUF_1Y);
 	P(OBUF_0U);

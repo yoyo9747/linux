@@ -115,7 +115,6 @@
 #include <net/addrconf.h>
 #include <net/udp_tunnel.h>
 #include <net/gro.h>
-#include <net/inet_dscp.h>
 #if IS_ENABLED(CONFIG_IPV6)
 #include <net/ipv6_stubs.h>
 #endif
@@ -327,8 +326,6 @@ found:
 			goto fail_unlock;
 		}
 
-		sock_set_flag(sk, SOCK_RCU_FREE);
-
 		sk_add_node_rcu(sk, &hslot->head);
 		hslot->count++;
 		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
@@ -345,7 +342,7 @@ found:
 		hslot2->count++;
 		spin_unlock(&hslot2->lock);
 	}
-
+	sock_set_flag(sk, SOCK_RCU_FREE);
 	error = 0;
 fail_unlock:
 	spin_unlock_bh(&hslot->lock);
@@ -366,7 +363,7 @@ int udp_v4_get_port(struct sock *sk, unsigned short snum)
 	return udp_lib_get_port(sk, snum, hash2_nulladdr);
 }
 
-static int compute_score(struct sock *sk, const struct net *net,
+static int compute_score(struct sock *sk, struct net *net,
 			 __be32 saddr, __be16 sport,
 			 __be32 daddr, unsigned short hnum,
 			 int dif, int sdif)
@@ -421,7 +418,7 @@ u32 udp_ehashfn(const struct net *net, const __be32 laddr, const __u16 lport,
 }
 
 /* called with rcu_read_lock() */
-static struct sock *udp4_lib_lookup2(const struct net *net,
+static struct sock *udp4_lib_lookup2(struct net *net,
 				     __be32 saddr, __be16 sport,
 				     __be32 daddr, unsigned int hnum,
 				     int dif, int sdif,
@@ -430,20 +427,14 @@ static struct sock *udp4_lib_lookup2(const struct net *net,
 {
 	struct sock *sk, *result;
 	int score, badness;
-	bool need_rescore;
 
 	result = NULL;
 	badness = 0;
 	udp_portaddr_for_each_entry_rcu(sk, &hslot2->head) {
-		need_rescore = false;
-rescore:
-		score = compute_score(need_rescore ? result : sk, net, saddr,
-				      sport, daddr, hnum, dif, sdif);
+		score = compute_score(sk, net, saddr, sport,
+				      daddr, hnum, dif, sdif);
 		if (score > badness) {
 			badness = score;
-
-			if (need_rescore)
-				continue;
 
 			if (sk->sk_state == TCP_ESTABLISHED) {
 				result = sk;
@@ -465,14 +456,9 @@ rescore:
 			if (IS_ERR(result))
 				continue;
 
-			/* compute_score is too long of a function to be
-			 * inlined, and calling it again here yields
-			 * measureable overhead for some
-			 * workloads. Work around it by jumping
-			 * backwards to rescore 'result'.
-			 */
-			need_rescore = true;
-			goto rescore;
+			badness = compute_score(result, net, saddr, sport,
+						daddr, hnum, dif, sdif);
+
 		}
 	}
 	return result;
@@ -481,7 +467,7 @@ rescore:
 /* UDP is nearly always wildcards out the wazoo, it makes no sense to try
  * harder than this. -DaveM
  */
-struct sock *__udp4_lib_lookup(const struct net *net, __be32 saddr,
+struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr,
 		__be16 sport, __be32 daddr, __be16 dport, int dif,
 		int sdif, struct udp_table *udptable, struct sk_buff *skb)
 {
@@ -562,7 +548,7 @@ struct sock *udp4_lib_lookup_skb(const struct sk_buff *skb,
  * Does increment socket refcount.
  */
 #if IS_ENABLED(CONFIG_NF_TPROXY_IPV4) || IS_ENABLED(CONFIG_NF_SOCKET_IPV4)
-struct sock *udp4_lib_lookup(const struct net *net, __be32 saddr, __be16 sport,
+struct sock *udp4_lib_lookup(struct net *net, __be32 saddr, __be16 sport,
 			     __be32 daddr, __be16 dport, int dif)
 {
 	struct sock *sk;
@@ -941,7 +927,8 @@ static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4,
 			kfree_skb(skb);
 			return -EINVAL;
 		}
-		if (is_udplite || dst_xfrm(skb_dst(skb))) {
+		if (skb->ip_summed != CHECKSUM_PARTIAL || is_udplite ||
+		    dst_xfrm(skb_dst(skb))) {
 			kfree_skb(skb);
 			return -EIO;
 		}
@@ -1220,7 +1207,7 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	}
 
 	if (connected)
-		rt = dst_rtable(sk_dst_check(sk, 0));
+		rt = (struct rtable *)sk_dst_check(sk, 0);
 
 	if (!rt) {
 		struct net *net = sock_net(sk);
@@ -1514,15 +1501,13 @@ int __udp_enqueue_schedule_skb(struct sock *sk, struct sk_buff *skb)
 	struct sk_buff_head *list = &sk->sk_receive_queue;
 	int rmem, err = -ENOMEM;
 	spinlock_t *busy = NULL;
-	bool becomes_readable;
-	int size, rcvbuf;
+	int size;
 
-	/* Immediately drop when the receive queue is full.
-	 * Always allow at least one packet.
+	/* try to avoid the costly atomic add/sub pair when the receive
+	 * queue is full; always allow at least a packet
 	 */
 	rmem = atomic_read(&sk->sk_rmem_alloc);
-	rcvbuf = READ_ONCE(sk->sk_rcvbuf);
-	if (rmem > rcvbuf)
+	if (rmem > sk->sk_rcvbuf)
 		goto drop;
 
 	/* Under mem pressure, it might be helpful to help udp_recvmsg()
@@ -1531,7 +1516,7 @@ int __udp_enqueue_schedule_skb(struct sock *sk, struct sk_buff *skb)
 	 * - Less cache line misses at copyout() time
 	 * - Less work at consume_skb() (less alien page frag freeing)
 	 */
-	if (rmem > (rcvbuf >> 1)) {
+	if (rmem > (sk->sk_rcvbuf >> 1)) {
 		skb_condense(skb);
 
 		busy = busylock_acquire(sk);
@@ -1539,7 +1524,12 @@ int __udp_enqueue_schedule_skb(struct sock *sk, struct sk_buff *skb)
 	size = skb->truesize;
 	udp_set_dev_scratch(skb);
 
-	atomic_add(size, &sk->sk_rmem_alloc);
+	/* we drop only if the receive buf is full and the receive
+	 * queue contains some other skb
+	 */
+	rmem = atomic_add_return(size, &sk->sk_rmem_alloc);
+	if (rmem > (size + (unsigned int)sk->sk_rcvbuf))
+		goto uncharge_drop;
 
 	spin_lock(&list->lock);
 	err = udp_rmem_schedule(sk, size);
@@ -1555,19 +1545,12 @@ int __udp_enqueue_schedule_skb(struct sock *sk, struct sk_buff *skb)
 	 */
 	sock_skb_set_dropcount(sk, skb);
 
-	becomes_readable = skb_queue_empty(list);
 	__skb_queue_tail(list, skb);
 	spin_unlock(&list->lock);
 
-	if (!sock_flag(sk, SOCK_DEAD)) {
-		if (becomes_readable ||
-		    sk->sk_data_ready != sock_def_readable ||
-		    READ_ONCE(sk->sk_peek_off) >= 0)
-			INDIRECT_CALL_1(sk->sk_data_ready,
-					sock_def_readable, sk);
-		else
-			sk_wake_async_rcu(sk, SOCK_WAKE_WAITD, POLL_IN);
-	}
+	if (!sock_flag(sk, SOCK_DEAD))
+		INDIRECT_CALL_1(sk->sk_data_ready, sock_def_readable, sk);
+
 	busylock_release(busy);
 	return 0;
 
@@ -2075,8 +2058,8 @@ static int __udp_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 			drop_reason = SKB_DROP_REASON_PROTO_MEM;
 		}
 		UDP_INC_STATS(sock_net(sk), UDP_MIB_INERRORS, is_udplite);
-		trace_udp_fail_queue_rcv_skb(rc, sk, skb);
-		sk_skb_reason_drop(sk, skb, drop_reason);
+		kfree_skb_reason(skb, drop_reason);
+		trace_udp_fail_queue_rcv_skb(rc, sk);
 		return -1;
 	}
 
@@ -2198,7 +2181,7 @@ csum_error:
 drop:
 	__UDP_INC_STATS(sock_net(sk), UDP_MIB_INERRORS, is_udplite);
 	atomic_inc(&sk->sk_drops);
-	sk_skb_reason_drop(sk, skb, drop_reason);
+	kfree_skb_reason(skb, drop_reason);
 	return -1;
 }
 
@@ -2232,7 +2215,7 @@ bool udp_sk_rx_dst_set(struct sock *sk, struct dst_entry *dst)
 	struct dst_entry *old;
 
 	if (dst_hold_safe(dst)) {
-		old = unrcu_pointer(xchg(&sk->sk_rx_dst, RCU_INITIALIZER(dst)));
+		old = xchg((__force struct dst_entry **)&sk->sk_rx_dst, dst);
 		dst_release(old);
 		return old != dst;
 	}
@@ -2385,7 +2368,7 @@ static int udp_unicast_rcv_skb(struct sock *sk, struct sk_buff *skb,
 int __udp4_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 		   int proto)
 {
-	struct sock *sk = NULL;
+	struct sock *sk;
 	struct udphdr *uh;
 	unsigned short ulen;
 	struct rtable *rt = skb_rtable(skb);
@@ -2462,7 +2445,7 @@ no_sk:
 	 * Hmm.  We got an UDP packet to a port to which we
 	 * don't wanna listen.  Ignore it.
 	 */
-	sk_skb_reason_drop(sk, skb, drop_reason);
+	kfree_skb_reason(skb, drop_reason);
 	return 0;
 
 short_packet:
@@ -2487,7 +2470,7 @@ csum_error:
 	__UDP_INC_STATS(net, UDP_MIB_CSUMERRORS, proto == IPPROTO_UDPLITE);
 drop:
 	__UDP_INC_STATS(net, UDP_MIB_INERRORS, proto == IPPROTO_UDPLITE);
-	sk_skb_reason_drop(sk, skb, drop_reason);
+	kfree_skb_reason(skb, drop_reason);
 	return 0;
 }
 
@@ -2619,7 +2602,7 @@ int udp_v4_early_demux(struct sk_buff *skb)
 		if (!inet_sk(sk)->inet_daddr && in_dev)
 			return ip_mc_validate_source(skb, iph->daddr,
 						     iph->saddr,
-						     iph->tos & INET_DSCP_MASK,
+						     iph->tos & IPTOS_RT_MASK,
 						     skb->dev, in_dev, &itag);
 	}
 	return 0;
@@ -2714,6 +2697,8 @@ int udp_lib_setsockopt(struct sock *sk, int level, int optname,
 #ifdef CONFIG_XFRM
 		case UDP_ENCAP_ESPINUDP:
 			set_xfrm_gro_udp_encap_rcv(val, sk->sk_family, sk);
+			fallthrough;
+		case UDP_ENCAP_ESPINUDP_NON_IKE:
 #if IS_ENABLED(CONFIG_IPV6)
 			if (sk->sk_family == AF_INET6)
 				WRITE_ONCE(up->encap_rcv,

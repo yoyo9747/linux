@@ -3,11 +3,12 @@
 // Copyright 2012 Freescale Semiconductor, Inc.
 // Copyright 2012 Linaro Ltd.
 
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/i2c.h>
+#include <linux/of_gpio.h>
 #include <sound/soc.h>
 #include <sound/jack.h>
 
@@ -22,11 +23,12 @@ struct imx_es8328_data {
 	struct snd_soc_card card;
 	char codec_dai_name[DAI_NAME_SIZE];
 	char platform_name[DAI_NAME_SIZE];
-	struct gpio_desc *jack_gpiod;
+	int jack_gpio;
 };
 
 static struct snd_soc_jack_gpio headset_jack_gpios[] = {
 	{
+		.gpio = -1,
 		.name = "headset-gpio",
 		.report = SND_JACK_HEADSET,
 		.invert = 0,
@@ -52,8 +54,8 @@ static int imx_es8328_dai_init(struct snd_soc_pcm_runtime *rtd)
 					struct imx_es8328_data, card);
 	int ret = 0;
 
-	if (data->jack_gpiod) {
-		/* Headphone jack detection */
+	/* Headphone jack detection */
+	if (gpio_is_valid(data->jack_gpio)) {
 		ret = snd_soc_card_jack_new_pins(rtd->card, "Headphone",
 						 SND_JACK_HEADSET | SND_JACK_BTN_0,
 						 &headset_jack,
@@ -62,7 +64,7 @@ static int imx_es8328_dai_init(struct snd_soc_pcm_runtime *rtd)
 		if (ret)
 			return ret;
 
-		headset_jack_gpios[0].desc = data->jack_gpiod;
+		headset_jack_gpios[0].gpio = data->jack_gpio;
 		ret = snd_soc_jack_add_gpios(&headset_jack,
 					     ARRAY_SIZE(headset_jack_gpios),
 					     headset_jack_gpios);
@@ -172,11 +174,7 @@ static int imx_es8328_probe(struct platform_device *pdev)
 
 	data->dev = dev;
 
-	data->jack_gpiod = devm_gpiod_get_optional(dev, "jack", GPIOD_IN);
-	if (IS_ERR(data->jack_gpiod)) {
-		ret = PTR_ERR(data->jack_gpiod);
-		goto put_device;
-	}
+	data->jack_gpio = of_get_named_gpio(pdev->dev.of_node, "jack-gpio", 0);
 
 	/*
 	 * CPU == Platform

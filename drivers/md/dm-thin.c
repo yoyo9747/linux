@@ -592,6 +592,12 @@ struct dm_thin_endio_hook {
 	struct dm_bio_prison_cell *cell;
 };
 
+static void __merge_bio_list(struct bio_list *bios, struct bio_list *master)
+{
+	bio_list_merge(bios, master);
+	bio_list_init(master);
+}
+
 static void error_bio_list(struct bio_list *bios, blk_status_t error)
 {
 	struct bio *bio;
@@ -610,7 +616,7 @@ static void error_thin_bio_list(struct thin_c *tc, struct bio_list *master,
 	bio_list_init(&bios);
 
 	spin_lock_irq(&tc->lock);
-	bio_list_merge_init(&bios, master);
+	__merge_bio_list(&bios, master);
 	spin_unlock_irq(&tc->lock);
 
 	error_bio_list(&bios, error);
@@ -639,8 +645,8 @@ static void requeue_io(struct thin_c *tc)
 	bio_list_init(&bios);
 
 	spin_lock_irq(&tc->lock);
-	bio_list_merge_init(&bios, &tc->deferred_bio_list);
-	bio_list_merge_init(&bios, &tc->retry_on_resume_list);
+	__merge_bio_list(&bios, &tc->deferred_bio_list);
+	__merge_bio_list(&bios, &tc->retry_on_resume_list);
 	spin_unlock_irq(&tc->lock);
 
 	error_bio_list(&bios, BLK_STS_DM_REQUEUE);
@@ -2948,7 +2954,7 @@ static struct pool *pool_create(struct mapped_device *pool_md,
 	pmd = dm_pool_metadata_open(metadata_dev, block_size, format_device);
 	if (IS_ERR(pmd)) {
 		*error = "Error creating metadata object";
-		return ERR_CAST(pmd);
+		return (struct pool *)pmd;
 	}
 
 	pool = kzalloc(sizeof(*pool), GFP_KERNEL);
@@ -4079,10 +4085,10 @@ static void pool_io_hints(struct dm_target *ti, struct queue_limits *limits)
 	if (io_opt_sectors < pool->sectors_per_block ||
 	    !is_factor(io_opt_sectors, pool->sectors_per_block)) {
 		if (is_factor(pool->sectors_per_block, limits->max_sectors))
-			limits->io_min = limits->max_sectors << SECTOR_SHIFT;
+			blk_limits_io_min(limits, limits->max_sectors << SECTOR_SHIFT);
 		else
-			limits->io_min = pool->sectors_per_block << SECTOR_SHIFT;
-		limits->io_opt = pool->sectors_per_block << SECTOR_SHIFT;
+			blk_limits_io_min(limits, pool->sectors_per_block << SECTOR_SHIFT);
+		blk_limits_io_opt(limits, pool->sectors_per_block << SECTOR_SHIFT);
 	}
 
 	/*
@@ -4094,7 +4100,7 @@ static void pool_io_hints(struct dm_target *ti, struct queue_limits *limits)
 	if (pt->adjusted_pf.discard_enabled) {
 		disable_discard_passdown_if_not_supported(pt);
 		if (!pt->adjusted_pf.discard_passdown)
-			limits->max_hw_discard_sectors = 0;
+			limits->max_discard_sectors = 0;
 		/*
 		 * The pool uses the same discard limits as the underlying data
 		 * device.  DM core has already set this up.
@@ -4491,7 +4497,7 @@ static void thin_io_hints(struct dm_target *ti, struct queue_limits *limits)
 
 	if (pool->pf.discard_enabled) {
 		limits->discard_granularity = pool->sectors_per_block << SECTOR_SHIFT;
-		limits->max_hw_discard_sectors = pool->sectors_per_block * BIO_PRISON_MAX_RANGE;
+		limits->max_discard_sectors = pool->sectors_per_block * BIO_PRISON_MAX_RANGE;
 	}
 }
 

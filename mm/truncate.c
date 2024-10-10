@@ -39,25 +39,12 @@ static inline void __clear_shadow_entry(struct address_space *mapping,
 	xas_store(&xas, NULL);
 }
 
-static void clear_shadow_entries(struct address_space *mapping,
-				 struct folio_batch *fbatch, pgoff_t *indices)
+static void clear_shadow_entry(struct address_space *mapping, pgoff_t index,
+			       void *entry)
 {
-	int i;
-
-	/* Handled by shmem itself, or for DAX we do nothing. */
-	if (shmem_mapping(mapping) || dax_mapping(mapping))
-		return;
-
 	spin_lock(&mapping->host->i_lock);
 	xa_lock_irq(&mapping->i_pages);
-
-	for (i = 0; i < folio_batch_count(fbatch); i++) {
-		struct folio *folio = fbatch->folios[i];
-
-		if (xa_is_value(folio))
-			__clear_shadow_entry(mapping, indices[i], folio);
-	}
-
+	__clear_shadow_entry(mapping, index, entry);
 	xa_unlock_irq(&mapping->i_pages);
 	if (mapping_shrinkable(mapping))
 		inode_add_lru(mapping->host);
@@ -118,6 +105,36 @@ static void truncate_folio_batch_exceptionals(struct address_space *mapping,
 	fbatch->nr = j;
 }
 
+/*
+ * Invalidate exceptional entry if easily possible. This handles exceptional
+ * entries for invalidate_inode_pages().
+ */
+static int invalidate_exceptional_entry(struct address_space *mapping,
+					pgoff_t index, void *entry)
+{
+	/* Handled by shmem itself, or for DAX we do nothing. */
+	if (shmem_mapping(mapping) || dax_mapping(mapping))
+		return 1;
+	clear_shadow_entry(mapping, index, entry);
+	return 1;
+}
+
+/*
+ * Invalidate exceptional entry if clean. This handles exceptional entries for
+ * invalidate_inode_pages2() so for DAX it evicts only clean entries.
+ */
+static int invalidate_exceptional_entry2(struct address_space *mapping,
+					 pgoff_t index, void *entry)
+{
+	/* Handled by shmem itself */
+	if (shmem_mapping(mapping))
+		return 1;
+	if (dax_mapping(mapping))
+		return dax_invalidate_mapping_entry_sync(mapping, index);
+	clear_shadow_entry(mapping, index, entry);
+	return 1;
+}
+
 /**
  * folio_invalidate - Invalidate part or all of a folio.
  * @folio: The folio which is affected.
@@ -157,7 +174,7 @@ static void truncate_cleanup_folio(struct folio *folio)
 	if (folio_mapped(folio))
 		unmap_mapping_folio(folio);
 
-	if (folio_needs_release(folio))
+	if (folio_has_private(folio))
 		folio_invalidate(folio, 0, folio_size(folio));
 
 	/*
@@ -216,10 +233,9 @@ bool truncate_inode_partial_folio(struct folio *folio, loff_t start, loff_t end)
 	 * doing a complex calculation here, and then doing the zeroing
 	 * anyway if the page split fails.
 	 */
-	if (!mapping_inaccessible(folio->mapping))
-		folio_zero_range(folio, offset, length);
+	folio_zero_range(folio, offset, length);
 
-	if (folio_needs_release(folio))
+	if (folio_has_private(folio))
 		folio_invalidate(folio, offset, length);
 	if (!folio_test_large(folio))
 		return true;
@@ -478,7 +494,6 @@ unsigned long mapping_try_invalidate(struct address_space *mapping,
 	unsigned long ret;
 	unsigned long count = 0;
 	int i;
-	bool xa_has_values = false;
 
 	folio_batch_init(&fbatch);
 	while (find_lock_entries(mapping, &index, end, &fbatch, indices)) {
@@ -488,8 +503,8 @@ unsigned long mapping_try_invalidate(struct address_space *mapping,
 			/* We rely upon deletion not changing folio->index */
 
 			if (xa_is_value(folio)) {
-				xa_has_values = true;
-				count++;
+				count += invalidate_exceptional_entry(mapping,
+							     indices[i], folio);
 				continue;
 			}
 
@@ -507,10 +522,6 @@ unsigned long mapping_try_invalidate(struct address_space *mapping,
 			}
 			count += ret;
 		}
-
-		if (xa_has_values)
-			clear_shadow_entries(mapping, &fbatch, indices);
-
 		folio_batch_remove_exceptionals(&fbatch);
 		folio_batch_release(&fbatch);
 		cond_resched();
@@ -543,7 +554,7 @@ EXPORT_SYMBOL(invalidate_mapping_pages);
  * This is like mapping_evict_folio(), except it ignores the folio's
  * refcount.  We do this because invalidate_inode_pages2() needs stronger
  * invalidation guarantees, and cannot afford to leave folios behind because
- * shrink_folio_list() has a temp ref on them, or because they're transiently
+ * shrink_page_list() has a temp ref on them, or because they're transiently
  * sitting in the folio_add_lru() caches.
  */
 static int invalidate_complete_folio2(struct address_space *mapping,
@@ -605,7 +616,6 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 	int ret = 0;
 	int ret2 = 0;
 	int did_range_unmap = 0;
-	bool xa_has_values = false;
 
 	if (mapping_empty(mapping))
 		return 0;
@@ -619,9 +629,8 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 			/* We rely upon deletion not changing folio->index */
 
 			if (xa_is_value(folio)) {
-				xa_has_values = true;
-				if (dax_mapping(mapping) &&
-				    !dax_invalidate_mapping_entry_sync(mapping, indices[i]))
+				if (!invalidate_exceptional_entry2(mapping,
+						indices[i], folio))
 					ret = -EBUSY;
 				continue;
 			}
@@ -657,10 +666,6 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 				ret = ret2;
 			folio_unlock(folio);
 		}
-
-		if (xa_has_values)
-			clear_shadow_entries(mapping, &fbatch, indices);
-
 		folio_batch_remove_exceptionals(&fbatch);
 		folio_batch_release(&fbatch);
 		cond_resched();
@@ -759,15 +764,15 @@ EXPORT_SYMBOL(truncate_setsize);
  * @from:	original inode size
  * @to:		new inode size
  *
- * Handle extension of inode size either caused by extending truncate or
- * by write starting after current i_size.  We mark the page straddling
- * current i_size RO so that page_mkwrite() is called on the first
- * write access to the page.  The filesystem will update its per-block
- * information before user writes to the page via mmap after the i_size
- * has been changed.
+ * Handle extension of inode size either caused by extending truncate or by
+ * write starting after current i_size. We mark the page straddling current
+ * i_size RO so that page_mkwrite() is called on the nearest write access to
+ * the page.  This way filesystem can be sure that page_mkwrite() is called on
+ * the page before user writes to the page via mmap after the i_size has been
+ * changed.
  *
  * The function must be called after i_size is updated so that page fault
- * coming after we unlock the folio will already see the new i_size.
+ * coming after we unlock the page will already see the new i_size.
  * The function must be called while we still hold i_rwsem - this not only
  * makes sure i_size is stable but also that userspace cannot observe new
  * i_size value before we are prepared to store mmap writes at new inode size.
@@ -776,29 +781,31 @@ void pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to)
 {
 	int bsize = i_blocksize(inode);
 	loff_t rounded_from;
-	struct folio *folio;
+	struct page *page;
+	pgoff_t index;
 
 	WARN_ON(to > inode->i_size);
 
-	if (from >= to || bsize >= PAGE_SIZE)
+	if (from >= to || bsize == PAGE_SIZE)
 		return;
 	/* Page straddling @from will not have any hole block created? */
 	rounded_from = round_up(from, bsize);
 	if (to <= rounded_from || !(rounded_from & (PAGE_SIZE - 1)))
 		return;
 
-	folio = filemap_lock_folio(inode->i_mapping, from / PAGE_SIZE);
-	/* Folio not cached? Nothing to do */
-	if (IS_ERR(folio))
+	index = from >> PAGE_SHIFT;
+	page = find_lock_page(inode->i_mapping, index);
+	/* Page not cached? Nothing to do */
+	if (!page)
 		return;
 	/*
-	 * See folio_clear_dirty_for_io() for details why folio_mark_dirty()
+	 * See clear_page_dirty_for_io() for details why set_page_dirty()
 	 * is needed.
 	 */
-	if (folio_mkclean(folio))
-		folio_mark_dirty(folio);
-	folio_unlock(folio);
-	folio_put(folio);
+	if (page_mkclean(page))
+		set_page_dirty(page);
+	unlock_page(page);
+	put_page(page);
 }
 EXPORT_SYMBOL(pagecache_isize_extended);
 

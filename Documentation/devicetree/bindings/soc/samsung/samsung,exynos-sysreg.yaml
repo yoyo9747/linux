@@ -15,7 +15,6 @@ properties:
       - items:
           - enum:
               - google,gs101-apm-sysreg
-              - google,gs101-hsi2-sysreg
               - google,gs101-peric0-sysreg
               - google,gs101-peric1-sysreg
               - samsung,exynos3-sysreg
@@ -73,7 +72,6 @@ allOf:
         compatible:
           contains:
             enum:
-              - google,gs101-hsi2-sysreg
               - google,gs101-peric0-sysreg
               - google,gs101-peric1-sysreg
               - samsung,exynos850-cmgp-sysreg

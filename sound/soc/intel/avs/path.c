@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 //
-// Copyright(c) 2021 Intel Corporation
+// Copyright(c) 2021 Intel Corporation. All rights reserved.
 //
 // Authors: Cezary Rojewski <cezary.rojewski@intel.com>
 //          Amadeusz Slawinski <amadeuszx.slawinski@linux.intel.com>
 //
 
-#include <linux/acpi.h>
-#include <acpi/nhlt.h>
+#include <sound/intel-nhlt.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 #include "avs.h"
@@ -144,17 +143,16 @@ static bool avs_dma_type_is_input(u32 dma_type)
 
 static int avs_copier_create(struct avs_dev *adev, struct avs_path_module *mod)
 {
+	struct nhlt_acpi_table *nhlt = adev->nhlt;
 	struct avs_tplg_module *t = mod->template;
 	struct avs_copier_cfg *cfg;
-	struct acpi_nhlt_format_config *ep_blob;
-	struct acpi_nhlt_endpoint *ep;
+	struct nhlt_specific_cfg *ep_blob;
 	union avs_connector_node_id node_id = {0};
-	size_t cfg_size, data_size;
+	size_t cfg_size, data_size = 0;
 	void *data = NULL;
 	u32 dma_type;
 	int ret;
 
-	data_size = sizeof(cfg->gtw_cfg.config);
 	dma_type = t->cfg_ext->copier.dma_type;
 	node_id.dma_type = dma_type;
 
@@ -176,18 +174,18 @@ static int avs_copier_create(struct avs_dev *adev, struct avs_path_module *mod)
 		else
 			fmt = t->cfg_ext->copier.out_fmt;
 
-		ep = acpi_nhlt_find_endpoint(ACPI_NHLT_LINKTYPE_SSP,
-					     ACPI_NHLT_DEVICETYPE_CODEC, direction,
-					     t->cfg_ext->copier.vindex.i2s.instance);
-		ep_blob = acpi_nhlt_endpoint_find_fmtcfg(ep, fmt->num_channels, fmt->sampling_freq,
-							 fmt->valid_bit_depth, fmt->bit_depth);
+		ep_blob = intel_nhlt_get_endpoint_blob(adev->dev,
+			nhlt, t->cfg_ext->copier.vindex.i2s.instance,
+			NHLT_LINK_SSP, fmt->valid_bit_depth, fmt->bit_depth,
+			fmt->num_channels, fmt->sampling_freq, direction,
+			NHLT_DEVICE_I2S);
 		if (!ep_blob) {
 			dev_err(adev->dev, "no I2S ep_blob found\n");
 			return -ENOENT;
 		}
 
-		data = ep_blob->config.capabilities;
-		data_size = ep_blob->config.capabilities_size;
+		data = ep_blob->caps;
+		data_size = ep_blob->size;
 		/* I2S gateway's vindex is statically assigned in topology */
 		node_id.vindex = t->cfg_ext->copier.vindex.val;
 
@@ -201,16 +199,17 @@ static int avs_copier_create(struct avs_dev *adev, struct avs_path_module *mod)
 		else
 			fmt = t->in_fmt;
 
-		ep = acpi_nhlt_find_endpoint(ACPI_NHLT_LINKTYPE_PDM, -1, direction, 0);
-		ep_blob = acpi_nhlt_endpoint_find_fmtcfg(ep, fmt->num_channels, fmt->sampling_freq,
-							 fmt->valid_bit_depth, fmt->bit_depth);
+		ep_blob = intel_nhlt_get_endpoint_blob(adev->dev, nhlt, 0,
+				NHLT_LINK_DMIC, fmt->valid_bit_depth,
+				fmt->bit_depth, fmt->num_channels,
+				fmt->sampling_freq, direction, NHLT_DEVICE_DMIC);
 		if (!ep_blob) {
 			dev_err(adev->dev, "no DMIC ep_blob found\n");
 			return -ENOENT;
 		}
 
-		data = ep_blob->config.capabilities;
-		data_size = ep_blob->config.capabilities_size;
+		data = ep_blob->caps;
+		data_size = ep_blob->size;
 		/* DMIC gateway's vindex is statically assigned in topology */
 		node_id.vindex = t->cfg_ext->copier.vindex.val;
 
@@ -234,7 +233,10 @@ static int avs_copier_create(struct avs_dev *adev, struct avs_path_module *mod)
 		break;
 	}
 
-	cfg_size = offsetof(struct avs_copier_cfg, gtw_cfg.config) + data_size;
+	cfg_size = sizeof(*cfg) + data_size;
+	/* Every config-BLOB contains gateway attributes. */
+	if (data_size)
+		cfg_size -= sizeof(cfg->gtw_cfg.config.attrs);
 	if (cfg_size > AVS_MAILBOX_SIZE)
 		return -EINVAL;
 
@@ -252,7 +254,7 @@ static int avs_copier_create(struct avs_dev *adev, struct avs_path_module *mod)
 	/* config_length in DWORDs */
 	cfg->gtw_cfg.config_length = DIV_ROUND_UP(data_size, 4);
 	if (data)
-		memcpy(&cfg->gtw_cfg.config.blob, data, data_size);
+		memcpy(&cfg->gtw_cfg.config, data, data_size);
 
 	mod->gtw_attrs = cfg->gtw_cfg.config.attrs;
 
@@ -365,7 +367,6 @@ static int avs_asrc_create(struct avs_dev *adev, struct avs_path_module *mod)
 	struct avs_tplg_module *t = mod->template;
 	struct avs_asrc_cfg cfg;
 
-	memset(&cfg, 0, sizeof(cfg));
 	cfg.base.cpc = t->cfg_base->cpc;
 	cfg.base.ibs = t->cfg_base->ibs;
 	cfg.base.obs = t->cfg_base->obs;
@@ -709,6 +710,8 @@ static int avs_path_pipeline_arm(struct avs_dev *adev,
 		/* bind current module to next module on list */
 		source = mod;
 		sink = list_next_entry(mod, node);
+		if (!source || !sink)
+			return -EINVAL;
 
 		ret = avs_ipc_bind(adev, source->module_id, source->instance_id,
 				   sink->module_id, sink->instance_id, 0, 0);

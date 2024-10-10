@@ -43,7 +43,6 @@ properties:
       - const: vcodec_bus
 
   iommus:
-    minItems: 1
     maxItems: 2
 
   interconnects:

@@ -22,7 +22,6 @@
 #include "xfs_trans.h"
 #include "xfs_log.h"
 #include "xfs_log_priv.h"
-#include "xfs_trans_priv.h"
 #include "xfs_buf_item.h"
 #include "xfs_quota.h"
 #include "xfs_dquot_item.h"
@@ -39,11 +38,7 @@
 #include "xfs_iomap.h"
 #include "xfs_buf_mem.h"
 #include "xfs_btree_mem.h"
-#include "xfs_exchmaps.h"
-#include "xfs_exchrange.h"
-#include "xfs_parent.h"
-#include "xfs_rmap.h"
-#include "xfs_refcount.h"
+#include "xfs_bmap.h"
 
 /*
  * We include this last to have the helpers above available for the trace

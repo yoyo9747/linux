@@ -191,7 +191,8 @@ static int rcar_i2c_get_scl(struct i2c_adapter *adap)
 	struct rcar_i2c_priv *priv = i2c_get_adapdata(adap);
 
 	return !!(rcar_i2c_read(priv, ICMCR) & FSCL);
-}
+
+};
 
 static void rcar_i2c_set_scl(struct i2c_adapter *adap, int val)
 {
@@ -203,7 +204,7 @@ static void rcar_i2c_set_scl(struct i2c_adapter *adap, int val)
 		priv->recovery_icmcr &= ~FSCL;
 
 	rcar_i2c_write(priv, ICMCR, priv->recovery_icmcr);
-}
+};
 
 static void rcar_i2c_set_sda(struct i2c_adapter *adap, int val)
 {
@@ -215,14 +216,15 @@ static void rcar_i2c_set_sda(struct i2c_adapter *adap, int val)
 		priv->recovery_icmcr &= ~FSDA;
 
 	rcar_i2c_write(priv, ICMCR, priv->recovery_icmcr);
-}
+};
 
 static int rcar_i2c_get_bus_free(struct i2c_adapter *adap)
 {
 	struct rcar_i2c_priv *priv = i2c_get_adapdata(adap);
 
 	return !(rcar_i2c_read(priv, ICMCR) & FSDA);
-}
+
+};
 
 static struct i2c_bus_recovery_info rcar_i2c_bri = {
 	.get_scl = rcar_i2c_get_scl,
@@ -231,7 +233,6 @@ static struct i2c_bus_recovery_info rcar_i2c_bri = {
 	.get_bus_free = rcar_i2c_get_bus_free,
 	.recover_bus = i2c_generic_scl_recovery,
 };
-
 static void rcar_i2c_init(struct rcar_i2c_priv *priv)
 {
 	/* reset master mode */
@@ -254,14 +255,6 @@ static void rcar_i2c_init(struct rcar_i2c_priv *priv)
 		rcar_i2c_write(priv, ICLPR, priv->scld);
 		rcar_i2c_write(priv, ICFBSCR, TCYC17);
 	}
-}
-
-static void rcar_i2c_reset_slave(struct rcar_i2c_priv *priv)
-{
-	rcar_i2c_write(priv, ICSIER, 0);
-	rcar_i2c_write(priv, ICSSR, 0);
-	rcar_i2c_write(priv, ICSCR, SDBS);
-	rcar_i2c_write(priv, ICSAR, 0); /* Gen2: must be 0 if not using slave */
 }
 
 static int rcar_i2c_bus_barrier(struct rcar_i2c_priv *priv)
@@ -552,7 +545,7 @@ static void rcar_i2c_irq_send(struct rcar_i2c_priv *priv, u32 msr)
 	u32 irqs_to_clear = MDE;
 
 	/* FIXME: sometimes, unknown interrupt happened. Do nothing */
-	if (WARN(!(msr & MDE), "spurious irq"))
+	if (!(msr & MDE))
 		return;
 
 	if (msr & MAT)
@@ -882,10 +875,6 @@ static int rcar_i2c_do_reset(struct rcar_i2c_priv *priv)
 {
 	int ret;
 
-	/* Don't reset if a slave instance is currently running */
-	if (priv->slave)
-		return -EISCONN;
-
 	ret = reset_control_reset(priv->rstc);
 	if (ret)
 		return ret;
@@ -914,10 +903,10 @@ static int rcar_i2c_master_xfer(struct i2c_adapter *adap,
 
 	/* Gen3+ needs a reset. That also allows RXDMA once */
 	if (priv->devtype >= I2C_RCAR_GEN3) {
+		priv->flags &= ~ID_P_NO_RXDMA;
 		ret = rcar_i2c_do_reset(priv);
 		if (ret)
 			goto out;
-		priv->flags &= ~ID_P_NO_RXDMA;
 	}
 
 	rcar_i2c_init(priv);
@@ -1044,8 +1033,11 @@ static int rcar_unreg_slave(struct i2c_client *slave)
 
 	/* ensure no irq is running before clearing ptr */
 	disable_irq(priv->irq);
-	rcar_i2c_reset_slave(priv);
+	rcar_i2c_write(priv, ICSIER, 0);
+	rcar_i2c_write(priv, ICSSR, 0);
 	enable_irq(priv->irq);
+	rcar_i2c_write(priv, ICSCR, SDBS);
+	rcar_i2c_write(priv, ICSAR, 0); /* Gen2: must be 0 if not using slave */
 
 	priv->slave = NULL;
 
@@ -1160,9 +1152,12 @@ static int rcar_i2c_probe(struct platform_device *pdev)
 		goto out_pm_disable;
 	}
 
-	/* Bring hardware to known state */
-	rcar_i2c_init(priv);
-	rcar_i2c_reset_slave(priv);
+	rcar_i2c_write(priv, ICSAR, 0); /* Gen2: must be 0 if not using slave */
+
+	if (priv->devtype < I2C_RCAR_GEN3) {
+		irqflags |= IRQF_NO_THREAD;
+		irqhandler = rcar_i2c_gen2_irq;
+	}
 
 	/* Stay always active when multi-master to keep arbitration working */
 	if (of_property_read_bool(dev->of_node, "multi-master"))
@@ -1173,11 +1168,7 @@ static int rcar_i2c_probe(struct platform_device *pdev)
 	if (of_property_read_bool(dev->of_node, "smbus"))
 		priv->flags |= ID_P_HOST_NOTIFY;
 
-	if (priv->devtype < I2C_RCAR_GEN3) {
-		irqflags |= IRQF_NO_THREAD;
-		irqhandler = rcar_i2c_gen2_irq;
-	} else {
-		/* R-Car Gen3+ needs a reset before every transfer */
+	if (priv->devtype >= I2C_RCAR_GEN3) {
 		priv->rstc = devm_reset_control_get_exclusive(&pdev->dev, NULL);
 		if (IS_ERR(priv->rstc)) {
 			ret = PTR_ERR(priv->rstc);
@@ -1187,9 +1178,6 @@ static int rcar_i2c_probe(struct platform_device *pdev)
 		ret = reset_control_status(priv->rstc);
 		if (ret < 0)
 			goto out_pm_put;
-
-		/* hard reset disturbs HostNotify local target, so disable it */
-		priv->flags &= ~ID_P_HOST_NOTIFY;
 	}
 
 	ret = platform_get_irq(pdev, 0);

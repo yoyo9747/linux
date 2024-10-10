@@ -211,6 +211,7 @@ struct mtk_pcie_port {
  * @base: IO mapped register base
  * @cfg: IO mapped register map for PCIe config
  * @free_ck: free-run reference clock
+ * @mem: non-prefetchable memory resource
  * @ports: pointer to PCIe port information
  * @soc: pointer to SoC-dependent operations
  */
@@ -406,6 +407,12 @@ static void mtk_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 		(int)data->hwirq, msg->address_hi, msg->address_lo);
 }
 
+static int mtk_msi_set_affinity(struct irq_data *irq_data,
+				const struct cpumask *mask, bool force)
+{
+	 return -EINVAL;
+}
+
 static void mtk_msi_ack_irq(struct irq_data *data)
 {
 	struct mtk_pcie_port *port = irq_data_get_irq_chip_data(data);
@@ -417,6 +424,7 @@ static void mtk_msi_ack_irq(struct irq_data *data)
 static struct irq_chip mtk_msi_bottom_irq_chip = {
 	.name			= "MTK MSI",
 	.irq_compose_msi_msg	= mtk_compose_msi_msg,
+	.irq_set_affinity	= mtk_msi_set_affinity,
 	.irq_ack		= mtk_msi_ack_irq,
 };
 
@@ -478,8 +486,8 @@ static struct irq_chip mtk_msi_irq_chip = {
 };
 
 static struct msi_domain_info mtk_msi_domain_info = {
-	.flags	= MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS |
-		  MSI_FLAG_NO_AFFINITY | MSI_FLAG_PCI_MSIX,
+	.flags	= (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS |
+		   MSI_FLAG_PCI_MSIX),
 	.chip	= &mtk_msi_irq_chip,
 };
 
@@ -1244,5 +1252,4 @@ static struct platform_driver mtk_pcie_driver = {
 	},
 };
 module_platform_driver(mtk_pcie_driver);
-MODULE_DESCRIPTION("MediaTek PCIe host controller driver");
 MODULE_LICENSE("GPL v2");

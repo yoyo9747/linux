@@ -22,7 +22,9 @@ struct dp_audio_private {
 	struct platform_device *pdev;
 	struct drm_device *drm_dev;
 	struct dp_catalog *catalog;
+	struct dp_panel *panel;
 
+	bool engine_on;
 	u32 channels;
 
 	struct dp_audio dp_audio;
@@ -32,7 +34,11 @@ static u32 dp_audio_get_header(struct dp_catalog *catalog,
 		enum dp_catalog_audio_sdp_type sdp,
 		enum dp_catalog_audio_header_type header)
 {
-	return dp_catalog_audio_get_header(catalog, sdp, header);
+	catalog->sdp_type = sdp;
+	catalog->sdp_header = header;
+	dp_catalog_audio_get_header(catalog);
+
+	return catalog->audio_data;
 }
 
 static void dp_audio_set_header(struct dp_catalog *catalog,
@@ -40,7 +46,10 @@ static void dp_audio_set_header(struct dp_catalog *catalog,
 		enum dp_catalog_audio_sdp_type sdp,
 		enum dp_catalog_audio_header_type header)
 {
-	dp_catalog_audio_set_header(catalog, sdp, header, data);
+	catalog->sdp_type = sdp;
+	catalog->sdp_header = header;
+	catalog->audio_data = data;
+	dp_catalog_audio_set_header(catalog);
 }
 
 static void dp_audio_stream_sdp(struct dp_audio_private *audio)
@@ -310,7 +319,8 @@ static void dp_audio_setup_acr(struct dp_audio_private *audio)
 		break;
 	}
 
-	dp_catalog_audio_config_acr(catalog, select);
+	catalog->audio_data = select;
+	dp_catalog_audio_config_acr(catalog);
 }
 
 static void dp_audio_safe_to_exit_level(struct dp_audio_private *audio)
@@ -336,14 +346,18 @@ static void dp_audio_safe_to_exit_level(struct dp_audio_private *audio)
 		break;
 	}
 
-	dp_catalog_audio_sfe_level(catalog, safe_to_exit_level);
+	catalog->audio_data = safe_to_exit_level;
+	dp_catalog_audio_sfe_level(catalog);
 }
 
 static void dp_audio_enable(struct dp_audio_private *audio, bool enable)
 {
 	struct dp_catalog *catalog = audio->catalog;
 
-	dp_catalog_audio_enable(catalog, enable);
+	catalog->audio_data = enable;
+	dp_catalog_audio_enable(catalog);
+
+	audio->engine_on = enable;
 }
 
 static struct dp_audio_private *dp_audio_get_data(struct platform_device *pdev)
@@ -557,6 +571,7 @@ struct dp_audio *dp_audio_get(struct platform_device *pdev,
 	}
 
 	audio->pdev = pdev;
+	audio->panel = panel;
 	audio->catalog = catalog;
 
 	dp_audio = &audio->dp_audio;

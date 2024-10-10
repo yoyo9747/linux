@@ -232,7 +232,7 @@ static void sunsab_tx_idle(struct uart_sunsab_port *);
 static void transmit_chars(struct uart_sunsab_port *up,
 			   union sab82532_irq_status *stat)
 {
-	struct tty_port *tport = &up->port.state->port;
+	struct circ_buf *xmit = &up->port.state->xmit;
 	int i;
 
 	if (stat->sreg.isr1 & SAB82532_ISR1_ALLS) {
@@ -252,7 +252,7 @@ static void transmit_chars(struct uart_sunsab_port *up,
 	set_bit(SAB82532_XPR, &up->irqflags);
 	sunsab_tx_idle(up);
 
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(&up->port)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(&up->port)) {
 		up->interrupt_mask1 |= SAB82532_IMR1_XPR;
 		writeb(up->interrupt_mask1, &up->regs->w.imr1);
 		return;
@@ -265,22 +265,21 @@ static void transmit_chars(struct uart_sunsab_port *up,
 	/* Stuff 32 bytes into Transmit FIFO. */
 	clear_bit(SAB82532_XPR, &up->irqflags);
 	for (i = 0; i < up->port.fifosize; i++) {
-		unsigned char ch;
-
-		if (!uart_fifo_get(&up->port, &ch))
+		writeb(xmit->buf[xmit->tail],
+		       &up->regs->w.xfifo[i]);
+		uart_xmit_advance(&up->port, 1);
+		if (uart_circ_empty(xmit))
 			break;
-
-		writeb(ch, &up->regs->w.xfifo[i]);
 	}
 
 	/* Issue a Transmit Frame command. */
 	sunsab_cec_wait(up);
 	writeb(SAB82532_CMDR_XF, &up->regs->w.cmdr);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&up->port);
 
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		sunsab_stop_tx(&up->port);
 }
 
@@ -436,10 +435,10 @@ static void sunsab_start_tx(struct uart_port *port)
 {
 	struct uart_sunsab_port *up =
 		container_of(port, struct uart_sunsab_port, port);
-	struct tty_port *tport = &up->port.state->port;
+	struct circ_buf *xmit = &up->port.state->xmit;
 	int i;
 
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port))
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port))
 		return;
 
 	up->interrupt_mask1 &= ~(SAB82532_IMR1_ALLS|SAB82532_IMR1_XPR);
@@ -452,12 +451,11 @@ static void sunsab_start_tx(struct uart_port *port)
 	clear_bit(SAB82532_XPR, &up->irqflags);
 
 	for (i = 0; i < up->port.fifosize; i++) {
-		unsigned char ch;
-
-		if (!uart_fifo_get(&up->port, &ch))
+		writeb(xmit->buf[xmit->tail],
+		       &up->regs->w.xfifo[i]);
+		uart_xmit_advance(&up->port, 1);
+		if (uart_circ_empty(xmit))
 			break;
-
-		writeb(ch, &up->regs->w.xfifo[i]);
 	}
 
 	/* Issue a Transmit Frame command.  */

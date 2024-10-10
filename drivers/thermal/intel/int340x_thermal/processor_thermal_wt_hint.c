@@ -253,4 +253,3 @@ EXPORT_SYMBOL_NS_GPL(proc_thermal_wt_hint_remove, INT340X_THERMAL);
 
 MODULE_IMPORT_NS(INT340X_THERMAL);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Processor Thermal Work Load type hint Interface");

@@ -290,7 +290,6 @@ static const struct of_device_id ixp4xx_pata_of_match[] = {
 	{ .compatible = "intel,ixp4xx-compact-flash", },
 	{ /* sentinel */ }
 };
-MODULE_DEVICE_TABLE(of, ixp4xx_pata_of_match);
 
 static struct platform_driver ixp4xx_pata_platform_driver = {
 	.driver	 = {

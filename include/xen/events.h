@@ -144,6 +144,4 @@ static inline void xen_evtchn_close(evtchn_port_t port)
 		BUG();
 }
 
-extern bool xen_fifo_events;
-
 #endif	/* _XEN_EVENTS_H */

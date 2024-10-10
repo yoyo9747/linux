@@ -380,9 +380,6 @@ static void otx2_rcv_pkt_handler(struct otx2_nic *pfvf,
 	if (pfvf->netdev->features & NETIF_F_RXCSUM)
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 
-	if (pfvf->flags & OTX2_FLAG_TC_MARK_ENABLED)
-		skb->mark = parse->match_id;
-
 	skb_mark_for_recycle(skb);
 
 	napi_gro_frags(napi);
@@ -513,7 +510,7 @@ process_cqe:
 
 static void otx2_adjust_adaptive_coalese(struct otx2_nic *pfvf, struct otx2_cq_poll *cq_poll)
 {
-	struct dim_sample dim_sample = { 0 };
+	struct dim_sample dim_sample;
 	u64 rx_frames, rx_bytes;
 	u64 tx_frames, tx_bytes;
 
@@ -687,7 +684,7 @@ static void otx2_sqe_add_ext(struct otx2_nic *pfvf, struct otx2_snd_queue *sq,
 		} else if (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4) {
 			__be16 l3_proto = vlan_get_protocol(skb);
 			struct udphdr *udph = udp_hdr(skb);
-			__be16 iplen;
+			u16 iplen;
 
 			ext->lso_sb = skb_transport_offset(skb) +
 					sizeof(struct udphdr);
@@ -1174,11 +1171,8 @@ bool otx2_sq_append_skb(struct net_device *netdev, struct otx2_snd_queue *sq,
 
 	if (skb_shinfo(skb)->gso_size && !is_hw_tso_supported(pfvf, skb)) {
 		/* Insert vlan tag before giving pkt to tso */
-		if (skb_vlan_tag_present(skb)) {
+		if (skb_vlan_tag_present(skb))
 			skb = __vlan_hwaccel_push_inside(skb);
-			if (!skb)
-				return true;
-		}
 		otx2_sq_append_tso(pfvf, sq, skb, qidx);
 		return true;
 	}

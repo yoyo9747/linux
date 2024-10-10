@@ -915,7 +915,6 @@ static int bch_dirty_init_thread(void *arg)
 	k = p = NULL;
 	prev_idx = 0;
 
-	min_heap_init(&iter.heap, NULL, MAX_BSETS);
 	bch_btree_iter_init(&c->root->keys, &iter, NULL);
 	k = bch_btree_iter_next_filter(&iter, &c->root->keys, bch_ptr_bad);
 	BUG_ON(!k);
@@ -984,8 +983,6 @@ void bch_sectors_dirty_init(struct bcache_device *d)
 	struct sectors_dirty_init op;
 	struct cache_set *c = d->c;
 	struct bch_dirty_init_state state;
-
-	min_heap_init(&iter.heap, NULL, MAX_BSETS);
 
 retry_lock:
 	b = c->root;

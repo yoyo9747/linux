@@ -322,7 +322,6 @@ architectures:
 - s390
 - parisc
 - loongarch
-- riscv
 
 Configuring Kprobes
 ===================

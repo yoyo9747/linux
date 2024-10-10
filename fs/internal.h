@@ -17,7 +17,6 @@ struct fs_context;
 struct pipe_inode_info;
 struct iov_iter;
 struct mnt_idmap;
-struct ns_common;
 
 /*
  * block/bdev.c
@@ -63,9 +62,6 @@ int do_mkdirat(int dfd, struct filename *name, umode_t mode);
 int do_symlinkat(struct filename *from, int newdfd, struct filename *to);
 int do_linkat(int olddfd, struct filename *old, int newdfd,
 			struct filename *new, int flags);
-int vfs_tmpfile(struct mnt_idmap *idmap,
-		const struct path *parentpath,
-		struct file *file, umode_t mode);
 
 /*
  * namespace.c
@@ -240,7 +236,6 @@ extern void mnt_pin_kill(struct mount *m);
  * fs/nsfs.c
  */
 extern const struct dentry_operations ns_dentry_operations;
-int open_namespace(struct ns_common *ns);
 
 /*
  * fs/stat.c:
@@ -249,8 +244,6 @@ int open_namespace(struct ns_common *ns);
 int getname_statx_lookup_flags(int flags);
 int do_statx(int dfd, struct filename *filename, unsigned int flags,
 	     unsigned int mask, struct statx __user *buffer);
-int do_statx_fd(int fd, unsigned int flags, unsigned int mask,
-		struct statx __user *buffer);
 
 /*
  * fs/splice.c:
@@ -325,16 +318,3 @@ struct stashed_operations {
 int path_from_stashed(struct dentry **stashed, struct vfsmount *mnt, void *data,
 		      struct path *path);
 void stashed_dentry_prune(struct dentry *dentry);
-/**
- * path_mounted - check whether path is mounted
- * @path: path to check
- *
- * Determine whether @path refers to the root of a mount.
- *
- * Return: true if @path is the root of a mount, false if not.
- */
-static inline bool path_mounted(const struct path *path)
-{
-	return path->mnt->mnt_root == path->dentry;
-}
-void file_f_owner_release(struct file *file);

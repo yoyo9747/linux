@@ -63,14 +63,6 @@ static void release_node(struct config_item *);
 static struct configfs_attribute *comm_attrs[];
 static struct configfs_attribute *node_attrs[];
 
-const struct rhashtable_params dlm_rhash_rsb_params = {
-	.nelem_hint = 3, /* start small */
-	.key_len = DLM_RESNAME_MAXLEN,
-	.key_offset = offsetof(struct dlm_rsb, res_name),
-	.head_offset = offsetof(struct dlm_rsb, res_node),
-	.automatic_shrinking = true,
-};
-
 struct dlm_cluster {
 	struct config_group group;
 	unsigned int cl_tcp_port;
@@ -672,7 +664,7 @@ static ssize_t comm_addr_store(struct config_item *item, const char *buf,
 
 	memcpy(addr, buf, len);
 
-	rv = dlm_midcomms_addr(cm->nodeid, addr);
+	rv = dlm_midcomms_addr(cm->nodeid, addr, len);
 	if (rv) {
 		kfree(addr);
 		return rv;
@@ -928,7 +920,7 @@ int dlm_comm_seq(int nodeid, uint32_t *seq)
 
 int dlm_our_nodeid(void)
 {
-	return local_comm->nodeid;
+	return local_comm ? local_comm->nodeid : 0;
 }
 
 /* num 0 is first addr, num 1 is second addr */

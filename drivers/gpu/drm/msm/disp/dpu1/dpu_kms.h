@@ -31,14 +31,24 @@
  * @fmt: Pointer to format string
  */
 #define DPU_DEBUG(fmt, ...)                                                \
-	DRM_DEBUG_DRIVER(fmt, ##__VA_ARGS__)
+	do {                                                               \
+		if (drm_debug_enabled(DRM_UT_KMS))                         \
+			DRM_DEBUG(fmt, ##__VA_ARGS__); \
+		else                                                       \
+			pr_debug(fmt, ##__VA_ARGS__);                      \
+	} while (0)
 
 /**
  * DPU_DEBUG_DRIVER - macro for hardware driver logging
  * @fmt: Pointer to format string
  */
 #define DPU_DEBUG_DRIVER(fmt, ...)                                         \
-	DRM_DEBUG_DRIVER(fmt, ##__VA_ARGS__)
+	do {                                                               \
+		if (drm_debug_enabled(DRM_UT_DRIVER))                      \
+			DRM_ERROR(fmt, ##__VA_ARGS__); \
+		else                                                       \
+			pr_debug(fmt, ##__VA_ARGS__);                      \
+	} while (0)
 
 #define DPU_ERROR(fmt, ...) pr_err("[dpu error]" fmt, ##__VA_ARGS__)
 #define DPU_ERROR_RATELIMITED(fmt, ...) pr_err_ratelimited("[dpu error]" fmt, ##__VA_ARGS__)
@@ -119,8 +129,6 @@ struct vsync_info {
  */
 struct dpu_global_state {
 	struct drm_private_state base;
-
-	struct dpu_rm *rm;
 
 	uint32_t pingpong_to_enc_id[PINGPONG_MAX - PINGPONG_0];
 	uint32_t mixer_to_enc_id[LM_MAX - LM_0];

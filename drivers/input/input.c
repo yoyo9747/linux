@@ -100,12 +100,44 @@ static void input_stop_autorepeat(struct input_dev *dev)
 }
 
 /*
+ * Pass event first through all filters and then, if event has not been
+ * filtered out, through all open handles. This function is called with
+ * dev->event_lock held and interrupts disabled.
+ */
+static unsigned int input_to_handler(struct input_handle *handle,
+			struct input_value *vals, unsigned int count)
+{
+	struct input_handler *handler = handle->handler;
+	struct input_value *end = vals;
+	struct input_value *v;
+
+	if (handler->filter) {
+		for (v = vals; v != vals + count; v++) {
+			if (handler->filter(handle, v->type, v->code, v->value))
+				continue;
+			if (end != v)
+				*end = *v;
+			end++;
+		}
+		count = end - vals;
+	}
+
+	if (!count)
+		return 0;
+
+	if (handler->events)
+		handler->events(handle, vals, count);
+	else if (handler->event)
+		for (v = vals; v != vals + count; v++)
+			handler->event(handle, v->type, v->code, v->value);
+
+	return count;
+}
+
+/*
  * Pass values first through all filters and then, if event has not been
- * filtered out, through all open handles. This order is achieved by placing
- * filters at the head of the list of handles attached to the device, and
- * placing regular handles at the tail of the list.
- *
- * This function is called with dev->event_lock held and interrupts disabled.
+ * filtered out, through all open handles. This function is called with
+ * dev->event_lock held and interrupts disabled.
  */
 static void input_pass_values(struct input_dev *dev,
 			      struct input_value *vals, unsigned int count)
@@ -115,16 +147,18 @@ static void input_pass_values(struct input_dev *dev,
 
 	lockdep_assert_held(&dev->event_lock);
 
+	if (!count)
+		return;
+
 	rcu_read_lock();
 
 	handle = rcu_dereference(dev->grab);
 	if (handle) {
-		count = handle->handler->events(handle, vals, count);
+		count = input_to_handler(handle, vals, count);
 	} else {
 		list_for_each_entry_rcu(handle, &dev->h_list, d_node)
 			if (handle->open) {
-				count = handle->handler->events(handle, vals,
-								count);
+				count = input_to_handler(handle, vals, count);
 				if (!count)
 					break;
 			}
@@ -319,6 +353,9 @@ static void input_event_dispose(struct input_dev *dev, int disposition,
 {
 	if ((disposition & INPUT_PASS_TO_DEVICE) && dev->event)
 		dev->event(dev, type, code, value);
+
+	if (!dev->vals)
+		return;
 
 	if (disposition & INPUT_PASS_TO_HANDLERS) {
 		struct input_value *v;
@@ -1079,30 +1116,32 @@ static inline void input_wakeup_procfs_readers(void)
 	wake_up(&input_devices_poll_wait);
 }
 
-struct input_seq_state {
-	unsigned short pos;
-	bool mutex_acquired;
-	int input_devices_state;
-};
-
 static __poll_t input_proc_devices_poll(struct file *file, poll_table *wait)
 {
-	struct seq_file *seq = file->private_data;
-	struct input_seq_state *state = seq->private;
-
 	poll_wait(file, &input_devices_poll_wait, wait);
-	if (state->input_devices_state != input_devices_state) {
-		state->input_devices_state = input_devices_state;
+	if (file->f_version != input_devices_state) {
+		file->f_version = input_devices_state;
 		return EPOLLIN | EPOLLRDNORM;
 	}
 
 	return 0;
 }
 
+union input_seq_state {
+	struct {
+		unsigned short pos;
+		bool mutex_acquired;
+	};
+	void *p;
+};
+
 static void *input_devices_seq_start(struct seq_file *seq, loff_t *pos)
 {
-	struct input_seq_state *state = seq->private;
+	union input_seq_state *state = (union input_seq_state *)&seq->private;
 	int error;
+
+	/* We need to fit into seq->private pointer */
+	BUILD_BUG_ON(sizeof(union input_seq_state) != sizeof(seq->private));
 
 	error = mutex_lock_interruptible(&input_mutex);
 	if (error) {
@@ -1122,7 +1161,7 @@ static void *input_devices_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 
 static void input_seq_stop(struct seq_file *seq, void *v)
 {
-	struct input_seq_state *state = seq->private;
+	union input_seq_state *state = (union input_seq_state *)&seq->private;
 
 	if (state->mutex_acquired)
 		mutex_unlock(&input_mutex);
@@ -1208,8 +1247,7 @@ static const struct seq_operations input_devices_seq_ops = {
 
 static int input_proc_devices_open(struct inode *inode, struct file *file)
 {
-	return seq_open_private(file, &input_devices_seq_ops,
-				sizeof(struct input_seq_state));
+	return seq_open(file, &input_devices_seq_ops);
 }
 
 static const struct proc_ops input_devices_proc_ops = {
@@ -1217,13 +1255,16 @@ static const struct proc_ops input_devices_proc_ops = {
 	.proc_poll	= input_proc_devices_poll,
 	.proc_read	= seq_read,
 	.proc_lseek	= seq_lseek,
-	.proc_release	= seq_release_private,
+	.proc_release	= seq_release,
 };
 
 static void *input_handlers_seq_start(struct seq_file *seq, loff_t *pos)
 {
-	struct input_seq_state *state = seq->private;
+	union input_seq_state *state = (union input_seq_state *)&seq->private;
 	int error;
+
+	/* We need to fit into seq->private pointer */
+	BUILD_BUG_ON(sizeof(union input_seq_state) != sizeof(seq->private));
 
 	error = mutex_lock_interruptible(&input_mutex);
 	if (error) {
@@ -1239,7 +1280,7 @@ static void *input_handlers_seq_start(struct seq_file *seq, loff_t *pos)
 
 static void *input_handlers_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
-	struct input_seq_state *state = seq->private;
+	union input_seq_state *state = (union input_seq_state *)&seq->private;
 
 	state->pos = *pos + 1;
 	return seq_list_next(v, &input_handler_list, pos);
@@ -1248,7 +1289,7 @@ static void *input_handlers_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 static int input_handlers_seq_show(struct seq_file *seq, void *v)
 {
 	struct input_handler *handler = container_of(v, struct input_handler, node);
-	struct input_seq_state *state = seq->private;
+	union input_seq_state *state = (union input_seq_state *)&seq->private;
 
 	seq_printf(seq, "N: Number=%u Name=%s", state->pos, handler->name);
 	if (handler->filter)
@@ -1269,15 +1310,14 @@ static const struct seq_operations input_handlers_seq_ops = {
 
 static int input_proc_handlers_open(struct inode *inode, struct file *file)
 {
-	return seq_open_private(file, &input_handlers_seq_ops,
-				sizeof(struct input_seq_state));
+	return seq_open(file, &input_handlers_seq_ops);
 }
 
 static const struct proc_ops input_handlers_proc_ops = {
 	.proc_open	= input_proc_handlers_open,
 	.proc_read	= seq_read,
 	.proc_lseek	= seq_lseek,
-	.proc_release	= seq_release_private,
+	.proc_release	= seq_release,
 };
 
 static int __init input_proc_init(void)
@@ -1338,19 +1378,19 @@ static int input_print_modalias_bits(char *buf, int size,
 				     char name, const unsigned long *bm,
 				     unsigned int min_bit, unsigned int max_bit)
 {
-	int bit = min_bit;
-	int len = 0;
+	int len = 0, i;
 
 	len += snprintf(buf, max(size, 0), "%c", name);
-	for_each_set_bit_from(bit, bm, max_bit)
-		len += snprintf(buf + len, max(size - len, 0), "%X,", bit);
+	for (i = min_bit; i < max_bit; i++)
+		if (bm[BIT_WORD(i)] & BIT_MASK(i))
+			len += snprintf(buf + len, max(size - len, 0), "%X,", i);
 	return len;
 }
 
-static int input_print_modalias_parts(char *buf, int size, int full_len,
-				      const struct input_dev *id)
+static int input_print_modalias(char *buf, int size, const struct input_dev *id,
+				int add_cr)
 {
-	int len, klen, remainder, space;
+	int len;
 
 	len = snprintf(buf, max(size, 0),
 		       "input:b%04Xv%04Xp%04Xe%04X-",
@@ -1359,48 +1399,8 @@ static int input_print_modalias_parts(char *buf, int size, int full_len,
 
 	len += input_print_modalias_bits(buf + len, size - len,
 				'e', id->evbit, 0, EV_MAX);
-
-	/*
-	 * Calculate the remaining space in the buffer making sure we
-	 * have place for the terminating 0.
-	 */
-	space = max(size - (len + 1), 0);
-
-	klen = input_print_modalias_bits(buf + len, size - len,
+	len += input_print_modalias_bits(buf + len, size - len,
 				'k', id->keybit, KEY_MIN_INTERESTING, KEY_MAX);
-	len += klen;
-
-	/*
-	 * If we have more data than we can fit in the buffer, check
-	 * if we can trim key data to fit in the rest. We will indicate
-	 * that key data is incomplete by adding "+" sign at the end, like
-	 * this: * "k1,2,3,45,+,".
-	 *
-	 * Note that we shortest key info (if present) is "k+," so we
-	 * can only try to trim if key data is longer than that.
-	 */
-	if (full_len && size < full_len + 1 && klen > 3) {
-		remainder = full_len - len;
-		/*
-		 * We can only trim if we have space for the remainder
-		 * and also for at least "k+," which is 3 more characters.
-		 */
-		if (remainder <= space - 3) {
-			/*
-			 * We are guaranteed to have 'k' in the buffer, so
-			 * we need at least 3 additional bytes for storing
-			 * "+," in addition to the remainder.
-			 */
-			for (int i = size - 1 - remainder - 3; i >= 0; i--) {
-				if (buf[i] == 'k' || buf[i] == ',') {
-					strcpy(buf + i + 1, "+,");
-					len = i + 3; /* Not counting '\0' */
-					break;
-				}
-			}
-		}
-	}
-
 	len += input_print_modalias_bits(buf + len, size - len,
 				'r', id->relbit, 0, REL_MAX);
 	len += input_print_modalias_bits(buf + len, size - len,
@@ -1416,23 +1416,10 @@ static int input_print_modalias_parts(char *buf, int size, int full_len,
 	len += input_print_modalias_bits(buf + len, size - len,
 				'w', id->swbit, 0, SW_MAX);
 
+	if (add_cr)
+		len += snprintf(buf + len, max(size - len, 0), "\n");
+
 	return len;
-}
-
-static int input_print_modalias(char *buf, int size, const struct input_dev *id)
-{
-	int full_len;
-
-	/*
-	 * Printing is done in 2 passes: first one figures out total length
-	 * needed for the modalias string, second one will try to trim key
-	 * data in case when buffer is too small for the entire modalias.
-	 * If the buffer is too small regardless, it will fill as much as it
-	 * can (without trimming key data) into the buffer and leave it to
-	 * the caller to figure out what to do with the result.
-	 */
-	full_len = input_print_modalias_parts(NULL, 0, 0, id);
-	return input_print_modalias_parts(buf, size, full_len, id);
 }
 
 static ssize_t input_dev_show_modalias(struct device *dev,
@@ -1442,9 +1429,7 @@ static ssize_t input_dev_show_modalias(struct device *dev,
 	struct input_dev *id = to_input_dev(dev);
 	ssize_t len;
 
-	len = input_print_modalias(buf, PAGE_SIZE, id);
-	if (len < PAGE_SIZE - 2)
-		len += snprintf(buf + len, PAGE_SIZE - len, "\n");
+	len = input_print_modalias(buf, PAGE_SIZE, id, 1);
 
 	return min_t(int, len, PAGE_SIZE);
 }
@@ -1656,23 +1641,6 @@ static int input_add_uevent_bm_var(struct kobj_uevent_env *env,
 	return 0;
 }
 
-/*
- * This is a pretty gross hack. When building uevent data the driver core
- * may try adding more environment variables to kobj_uevent_env without
- * telling us, so we have no idea how much of the buffer we can use to
- * avoid overflows/-ENOMEM elsewhere. To work around this let's artificially
- * reduce amount of memory we will use for the modalias environment variable.
- *
- * The potential additions are:
- *
- * SEQNUM=18446744073709551615 - (%llu - 28 bytes)
- * HOME=/ (6 bytes)
- * PATH=/sbin:/bin:/usr/sbin:/usr/bin (34 bytes)
- *
- * 68 bytes total. Allow extra buffer - 96 bytes
- */
-#define UEVENT_ENV_EXTRA_LEN	96
-
 static int input_add_uevent_modalias_var(struct kobj_uevent_env *env,
 					 const struct input_dev *dev)
 {
@@ -1682,11 +1650,9 @@ static int input_add_uevent_modalias_var(struct kobj_uevent_env *env,
 		return -ENOMEM;
 
 	len = input_print_modalias(&env->buf[env->buflen - 1],
-				   (int)sizeof(env->buf) - env->buflen -
-					UEVENT_ENV_EXTRA_LEN,
-				   dev);
-	if (len >= ((int)sizeof(env->buf) - env->buflen -
-					UEVENT_ENV_EXTRA_LEN))
+				   sizeof(env->buf) - env->buflen,
+				   dev, 0);
+	if (len >= (sizeof(env->buf) - env->buflen))
 		return -ENOMEM;
 
 	env->buflen += len;
@@ -1973,40 +1939,21 @@ struct input_dev *input_allocate_device(void)
 	struct input_dev *dev;
 
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-	if (!dev)
-		return NULL;
+	if (dev) {
+		dev->dev.type = &input_dev_type;
+		dev->dev.class = &input_class;
+		device_initialize(&dev->dev);
+		mutex_init(&dev->mutex);
+		spin_lock_init(&dev->event_lock);
+		timer_setup(&dev->timer, NULL, 0);
+		INIT_LIST_HEAD(&dev->h_list);
+		INIT_LIST_HEAD(&dev->node);
 
-	/*
-	 * Start with space for SYN_REPORT + 7 EV_KEY/EV_MSC events + 2 spare,
-	 * see input_estimate_events_per_packet(). We will tune the number
-	 * when we register the device.
-	 */
-	dev->max_vals = 10;
-	dev->vals = kcalloc(dev->max_vals, sizeof(*dev->vals), GFP_KERNEL);
-	if (!dev->vals) {
-		kfree(dev);
-		return NULL;
+		dev_set_name(&dev->dev, "input%lu",
+			     (unsigned long)atomic_inc_return(&input_no));
+
+		__module_get(THIS_MODULE);
 	}
-
-	mutex_init(&dev->mutex);
-	spin_lock_init(&dev->event_lock);
-	timer_setup(&dev->timer, NULL, 0);
-	INIT_LIST_HEAD(&dev->h_list);
-	INIT_LIST_HEAD(&dev->node);
-
-	dev->dev.type = &input_dev_type;
-	dev->dev.class = &input_class;
-	device_initialize(&dev->dev);
-	/*
-	 * From this point on we can no longer simply "kfree(dev)", we need
-	 * to use input_free_device() so that device core properly frees its
-	 * resources associated with the input device.
-	 */
-
-	dev_set_name(&dev->dev, "input%lu",
-		     (unsigned long)atomic_inc_return(&input_no));
-
-	__module_get(THIS_MODULE);
 
 	return dev;
 }
@@ -2221,7 +2168,7 @@ static unsigned int input_estimate_events_per_packet(struct input_dev *dev)
 		mt_slots = dev->mt->num_slots;
 	} else if (test_bit(ABS_MT_TRACKING_ID, dev->absbit)) {
 		mt_slots = dev->absinfo[ABS_MT_TRACKING_ID].maximum -
-			   dev->absinfo[ABS_MT_TRACKING_ID].minimum + 1;
+			   dev->absinfo[ABS_MT_TRACKING_ID].minimum + 1,
 		mt_slots = clamp(mt_slots, 2, 32);
 	} else if (test_bit(ABS_MT_POSITION_X, dev->absbit)) {
 		mt_slots = 2;
@@ -2347,35 +2294,6 @@ bool input_device_enabled(struct input_dev *dev)
 }
 EXPORT_SYMBOL_GPL(input_device_enabled);
 
-static int input_device_tune_vals(struct input_dev *dev)
-{
-	struct input_value *vals;
-	unsigned int packet_size;
-	unsigned int max_vals;
-
-	packet_size = input_estimate_events_per_packet(dev);
-	if (dev->hint_events_per_packet < packet_size)
-		dev->hint_events_per_packet = packet_size;
-
-	max_vals = dev->hint_events_per_packet + 2;
-	if (dev->max_vals >= max_vals)
-		return 0;
-
-	vals = kcalloc(max_vals, sizeof(*vals), GFP_KERNEL);
-	if (!vals)
-		return -ENOMEM;
-
-	spin_lock_irq(&dev->event_lock);
-	dev->max_vals = max_vals;
-	swap(dev->vals, vals);
-	spin_unlock_irq(&dev->event_lock);
-
-	/* Because of swap() above, this frees the old vals memory */
-	kfree(vals);
-
-	return 0;
-}
-
 /**
  * input_register_device - register device with input core
  * @dev: device to be registered
@@ -2403,6 +2321,7 @@ int input_register_device(struct input_dev *dev)
 {
 	struct input_devres *devres = NULL;
 	struct input_handler *handler;
+	unsigned int packet_size;
 	const char *path;
 	int error;
 
@@ -2430,9 +2349,16 @@ int input_register_device(struct input_dev *dev)
 	/* Make sure that bitmasks not mentioned in dev->evbit are clean. */
 	input_cleanse_bitmasks(dev);
 
-	error = input_device_tune_vals(dev);
-	if (error)
+	packet_size = input_estimate_events_per_packet(dev);
+	if (dev->hint_events_per_packet < packet_size)
+		dev->hint_events_per_packet = packet_size;
+
+	dev->max_vals = dev->hint_events_per_packet + 2;
+	dev->vals = kcalloc(dev->max_vals, sizeof(*dev->vals), GFP_KERNEL);
+	if (!dev->vals) {
+		error = -ENOMEM;
 		goto err_devres_free;
+	}
 
 	/*
 	 * If delay and period are pre-set by the driver, then autorepeating
@@ -2452,7 +2378,7 @@ int input_register_device(struct input_dev *dev)
 
 	error = device_add(&dev->dev);
 	if (error)
-		goto err_devres_free;
+		goto err_free_vals;
 
 	path = kobject_get_path(&dev->dev.kobj, GFP_KERNEL);
 	pr_info("%s as %s\n",
@@ -2482,6 +2408,9 @@ int input_register_device(struct input_dev *dev)
 
 err_device_del:
 	device_del(&dev->dev);
+err_free_vals:
+	kfree(dev->vals);
+	dev->vals = NULL;
 err_devres_free:
 	devres_free(devres);
 	return error;
@@ -2514,77 +2443,6 @@ void input_unregister_device(struct input_dev *dev)
 }
 EXPORT_SYMBOL(input_unregister_device);
 
-static int input_handler_check_methods(const struct input_handler *handler)
-{
-	int count = 0;
-
-	if (handler->filter)
-		count++;
-	if (handler->events)
-		count++;
-	if (handler->event)
-		count++;
-
-	if (count > 1) {
-		pr_err("%s: only one event processing method can be defined (%s)\n",
-		       __func__, handler->name);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-/*
- * An implementation of input_handler's events() method that simply
- * invokes handler->event() method for each event one by one.
- */
-static unsigned int input_handler_events_default(struct input_handle *handle,
-						 struct input_value *vals,
-						 unsigned int count)
-{
-	struct input_handler *handler = handle->handler;
-	struct input_value *v;
-
-	for (v = vals; v != vals + count; v++)
-		handler->event(handle, v->type, v->code, v->value);
-
-	return count;
-}
-
-/*
- * An implementation of input_handler's events() method that invokes
- * handler->filter() method for each event one by one and removes events
- * that were filtered out from the "vals" array.
- */
-static unsigned int input_handler_events_filter(struct input_handle *handle,
-						struct input_value *vals,
-						unsigned int count)
-{
-	struct input_handler *handler = handle->handler;
-	struct input_value *end = vals;
-	struct input_value *v;
-
-	for (v = vals; v != vals + count; v++) {
-		if (handler->filter(handle, v->type, v->code, v->value))
-			continue;
-		if (end != v)
-			*end = *v;
-		end++;
-	}
-
-	return end - vals;
-}
-
-/*
- * An implementation of input_handler's events() method that does nothing.
- */
-static unsigned int input_handler_events_null(struct input_handle *handle,
-					      struct input_value *vals,
-					      unsigned int count)
-{
-	return count;
-}
-
 /**
  * input_register_handler - register a new input handler
  * @handler: handler to be registered
@@ -2598,22 +2456,11 @@ int input_register_handler(struct input_handler *handler)
 	struct input_dev *dev;
 	int error;
 
-	error = input_handler_check_methods(handler);
+	error = mutex_lock_interruptible(&input_mutex);
 	if (error)
 		return error;
 
 	INIT_LIST_HEAD(&handler->h_list);
-
-	if (handler->filter)
-		handler->events = input_handler_events_filter;
-	else if (handler->event)
-		handler->events = input_handler_events_default;
-	else if (!handler->events)
-		handler->events = input_handler_events_null;
-
-	error = mutex_lock_interruptible(&input_mutex);
-	if (error)
-		return error;
 
 	list_add_tail(&handler->node, &input_handler_list);
 

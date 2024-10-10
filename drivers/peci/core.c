@@ -25,7 +25,7 @@ static void peci_controller_dev_release(struct device *dev)
 	kfree(controller);
 }
 
-const struct device_type peci_controller_type = {
+struct device_type peci_controller_type = {
 	.release	= peci_controller_dev_release,
 };
 
@@ -163,8 +163,9 @@ EXPORT_SYMBOL_NS_GPL(devm_peci_controller_add, PECI);
 static const struct peci_device_id *
 peci_bus_match_device_id(const struct peci_device_id *id, struct peci_device *device)
 {
-	while (id->x86_vfm != 0) {
-		if (id->x86_vfm == device->info.x86_vfm)
+	while (id->family != 0) {
+		if (id->family == device->info.family &&
+		    id->model == device->info.model)
 			return id;
 		id++;
 	}
@@ -172,10 +173,10 @@ peci_bus_match_device_id(const struct peci_device_id *id, struct peci_device *de
 	return NULL;
 }
 
-static int peci_bus_device_match(struct device *dev, const struct device_driver *drv)
+static int peci_bus_device_match(struct device *dev, struct device_driver *drv)
 {
 	struct peci_device *device = to_peci_device(dev);
-	const struct peci_driver *peci_drv = to_peci_driver(drv);
+	struct peci_driver *peci_drv = to_peci_driver(drv);
 
 	if (dev->type != &peci_device_type)
 		return 0;
@@ -200,7 +201,7 @@ static void peci_bus_device_remove(struct device *dev)
 		driver->remove(device);
 }
 
-const struct bus_type peci_bus_type = {
+struct bus_type peci_bus_type = {
 	.name		= "peci",
 	.match		= peci_bus_device_match,
 	.probe		= peci_bus_device_probe,

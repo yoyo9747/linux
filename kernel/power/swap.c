@@ -200,11 +200,12 @@ void free_all_swap_pages(int swap)
 
 	while ((node = swsusp_extents.rb_node)) {
 		struct swsusp_extent *ext;
+		unsigned long offset;
 
 		ext = rb_entry(node, struct swsusp_extent, node);
 		rb_erase(node, &swsusp_extents);
-		swap_free_nr(swp_entry(swap, ext->start),
-			     ext->end - ext->start + 1);
+		for (offset = ext->start; offset <= ext->end; offset++)
+			swap_free(swp_entry(swap, offset));
 
 		kfree(ext);
 	}
@@ -367,7 +368,11 @@ static int swsusp_swap_check(void)
 	if (IS_ERR(hib_resume_bdev_file))
 		return PTR_ERR(hib_resume_bdev_file);
 
-	return 0;
+	res = set_blocksize(file_bdev(hib_resume_bdev_file), PAGE_SIZE);
+	if (res < 0)
+		fput(hib_resume_bdev_file);
+
+	return res;
 }
 
 /**
@@ -1569,6 +1574,7 @@ int swsusp_check(bool exclusive)
 	hib_resume_bdev_file = bdev_file_open_by_dev(swsusp_resume_device,
 				BLK_OPEN_READ, holder, NULL);
 	if (!IS_ERR(hib_resume_bdev_file)) {
+		set_blocksize(file_bdev(hib_resume_bdev_file), PAGE_SIZE);
 		clear_page(swsusp_header);
 		error = hib_submit_io(REQ_OP_READ, swsusp_resume_block,
 					swsusp_header, NULL);
@@ -1594,7 +1600,7 @@ int swsusp_check(bool exclusive)
 
 put:
 		if (error)
-			bdev_fput(hib_resume_bdev_file);
+			fput(hib_resume_bdev_file);
 		else
 			pr_debug("Image signature found, resuming\n");
 	} else {

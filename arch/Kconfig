@@ -17,15 +17,6 @@ config CPU_MITIGATIONS
 	def_bool y
 endif
 
-#
-# Selected by architectures that need custom DMA operations for e.g. legacy
-# IOMMUs not handled by dma-iommu.  Drivers must never select this symbol.
-#
-config ARCH_HAS_DMA_OPS
-	depends on HAS_DMA
-	select DMA_OPS_HELPERS
-	bool
-
 menu "General architecture-dependent options"
 
 config ARCH_HAS_SUBPAGE_FAULTS
@@ -69,10 +60,10 @@ config GENERIC_ENTRY
 
 config KPROBES
 	bool "Kprobes"
+	depends on MODULES
 	depends on HAVE_KPROBES
 	select KALLSYMS
-	select EXECMEM
-	select NEED_TASKS_RCU
+	select TASKS_RCU if PREEMPTION
 	help
 	  Kprobes allows you to trap at almost any kernel address and
 	  execute a callback function.  register_kprobe() establishes
@@ -121,7 +112,7 @@ config STATIC_CALL_SELFTEST
 config OPTPROBES
 	def_bool y
 	depends on KPROBES && HAVE_OPTPROBES
-	select NEED_TASKS_RCU
+	select TASKS_RCU if PREEMPTION
 
 config KPROBES_ON_FTRACE
 	def_bool y
@@ -519,15 +510,6 @@ config MMU_LAZY_TLB_SHOOTDOWN
 config ARCH_HAVE_NMI_SAFE_CMPXCHG
 	bool
 
-config ARCH_HAVE_EXTRA_ELF_NOTES
-	bool
-	help
-	  An architecture should select this in order to enable adding an
-	  arch-specific ELF note section to core files. It must provide two
-	  functions: elf_coredump_extra_notes_size() and
-	  elf_coredump_extra_notes_write() which are invoked by the ELF core
-	  dumper.
-
 config ARCH_HAS_NMI_SAFE_THIS_CPU_OPS
 	bool
 
@@ -835,38 +817,6 @@ config CFI_CLANG
 
 	    https://clang.llvm.org/docs/ControlFlowIntegrity.html
 
-config CFI_ICALL_NORMALIZE_INTEGERS
-	bool "Normalize CFI tags for integers"
-	depends on CFI_CLANG
-	depends on HAVE_CFI_ICALL_NORMALIZE_INTEGERS
-	help
-	  This option normalizes the CFI tags for integer types so that all
-	  integer types of the same size and signedness receive the same CFI
-	  tag.
-
-	  The option is separate from CONFIG_RUST because it affects the ABI.
-	  When working with build systems that care about the ABI, it is
-	  convenient to be able to turn on this flag first, before Rust is
-	  turned on.
-
-	  This option is necessary for using CFI with Rust. If unsure, say N.
-
-config HAVE_CFI_ICALL_NORMALIZE_INTEGERS
-	def_bool !GCOV_KERNEL && !KASAN
-	depends on CFI_CLANG
-	depends on $(cc-option,-fsanitize=kcfi -fsanitize-cfi-icall-experimental-normalize-integers)
-	help
-	  Is CFI_ICALL_NORMALIZE_INTEGERS supported with the set of compilers
-	  currently in use?
-
-	  This option defaults to false if GCOV or KASAN is enabled, as there is
-	  an LLVM bug that makes normalized integers tags incompatible with
-	  KASAN and GCOV. Kconfig currently does not have the infrastructure to
-	  detect whether your rustc compiler contains the fix for this bug, so
-	  it is assumed that it doesn't. If your compiler has the fix, you can
-	  explicitly enable this option in your config file. The Kconfig logic
-	  needed to detect this will be added in a future kernel release.
-
 config CFI_PERMISSIVE
 	bool "Use CFI in permissive mode"
 	depends on CFI_CLANG
@@ -903,7 +853,7 @@ config HAVE_CONTEXT_TRACKING_USER_OFFSTACK
 	  Architecture neither relies on exception_enter()/exception_exit()
 	  nor on schedule_user(). Also preempt_schedule_notrace() and
 	  preempt_schedule_irq() can't be called in a preemptible section
-	  while context tracking is CT_STATE_USER. This feature reflects a sane
+	  while context tracking is CONTEXT_USER. This feature reflects a sane
 	  entry implementation where the following requirements are met on
 	  critical entry code, ie: before user_exit() or after user_enter():
 
@@ -1017,14 +967,6 @@ config ARCH_WANTS_MODULES_DATA_IN_VMALLOC
 	help
 	  For architectures like powerpc/32 which have constraints on module
 	  allocation and need to allocate module data outside of module area.
-
-config ARCH_WANTS_EXECMEM_LATE
-	bool
-	help
-	  For architectures that do not allocate executable memory early on
-	  boot, but rather require its initialization late when there is
-	  enough entropy for module space randomization, for instance
-	  arm64.
 
 config HAVE_IRQ_EXIT_ON_IRQ_STACK
 	bool
@@ -1635,12 +1577,6 @@ config ARCH_HAS_NONLEAF_PMD_YOUNG
 	  address translations. Page table walkers that clear the accessed bit
 	  may use this capability to reduce their search space.
 
-config ARCH_HAS_KERNEL_FPU_SUPPORT
-	bool
-	help
-	  Architectures that select this option can run floating-point code in
-	  the kernel, as described in Documentation/core-api/floating-point.rst.
-
 source "kernel/gcov/Kconfig"
 
 source "scripts/gcc-plugins/Kconfig"
@@ -1680,8 +1616,5 @@ config CC_HAS_SANE_FUNCTION_ALIGNMENT
 	# available or extra care is required in the kernel. Clang provides
 	# strict alignment always, even with -falign-functions.
 	def_bool CC_HAS_MIN_FUNCTION_ALIGNMENT || CC_IS_CLANG
-
-config ARCH_NEED_CMPXCHG_1_EMU
-	bool
 
 endmenu

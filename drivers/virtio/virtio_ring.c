@@ -2588,7 +2588,7 @@ irqreturn_t vring_interrupt(int irq, void *_vq)
 
 	/* Just a hint for performance: so it's ok that this can be racy! */
 	if (vq->event)
-		data_race(vq->event_triggered = true);
+		vq->event_triggered = true;
 
 	pr_debug("virtqueue callback for %p (%p)\n", vq, vq->vq.callback);
 	if (vq->vq.callback)
@@ -2782,7 +2782,7 @@ EXPORT_SYMBOL_GPL(virtqueue_resize);
  *
  * Returns zero or a negative error.
  * 0: success.
- * -EINVAL: too late to enable premapped mode, the vq already contains buffers.
+ * -EINVAL: vring does not use the dma api, so we can not enable premapped mode.
  */
 int virtqueue_set_dma_premapped(struct virtqueue *_vq)
 {
@@ -2794,6 +2794,11 @@ int virtqueue_set_dma_premapped(struct virtqueue *_vq)
 	num = vq->packed_ring ? vq->packed.vring.num : vq->split.vring.num;
 
 	if (num != vq->vq.num_free) {
+		END_USE(vq);
+		return -EINVAL;
+	}
+
+	if (!vq->use_dma_api) {
 		END_USE(vq);
 		return -EINVAL;
 	}
@@ -3121,10 +3126,8 @@ dma_addr_t virtqueue_dma_map_single_attrs(struct virtqueue *_vq, void *ptr,
 {
 	struct vring_virtqueue *vq = to_vvq(_vq);
 
-	if (!vq->use_dma_api) {
-		kmsan_handle_dma(virt_to_page(ptr), offset_in_page(ptr), size, dir);
+	if (!vq->use_dma_api)
 		return (dma_addr_t)virt_to_phys(ptr);
-	}
 
 	return dma_map_single_attrs(vring_dma_dev(vq), ptr, size, dir, attrs);
 }
@@ -3246,5 +3249,4 @@ void virtqueue_dma_sync_single_range_for_device(struct virtqueue *_vq,
 }
 EXPORT_SYMBOL_GPL(virtqueue_dma_sync_single_range_for_device);
 
-MODULE_DESCRIPTION("Virtio ring implementation");
 MODULE_LICENSE("GPL");

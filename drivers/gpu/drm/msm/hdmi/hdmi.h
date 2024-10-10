@@ -115,17 +115,17 @@ void msm_hdmi_set_mode(struct hdmi *hdmi, bool power_on);
 
 static inline void hdmi_write(struct hdmi *hdmi, u32 reg, u32 data)
 {
-	writel(data, hdmi->mmio + reg);
+	msm_writel(data, hdmi->mmio + reg);
 }
 
 static inline u32 hdmi_read(struct hdmi *hdmi, u32 reg)
 {
-	return readl(hdmi->mmio + reg);
+	return msm_readl(hdmi->mmio + reg);
 }
 
 static inline u32 hdmi_qfprom_read(struct hdmi *hdmi, u32 reg)
 {
-	return readl(hdmi->qfprom_mmio + reg);
+	return msm_readl(hdmi->qfprom_mmio + reg);
 }
 
 /*
@@ -137,7 +137,6 @@ enum hdmi_phy_type {
 	MSM_HDMI_PHY_8960,
 	MSM_HDMI_PHY_8x74,
 	MSM_HDMI_PHY_8996,
-	MSM_HDMI_PHY_8998,
 	MSM_HDMI_PHY_MAX,
 };
 
@@ -155,7 +154,6 @@ extern const struct hdmi_phy_cfg msm_hdmi_phy_8x60_cfg;
 extern const struct hdmi_phy_cfg msm_hdmi_phy_8960_cfg;
 extern const struct hdmi_phy_cfg msm_hdmi_phy_8x74_cfg;
 extern const struct hdmi_phy_cfg msm_hdmi_phy_8996_cfg;
-extern const struct hdmi_phy_cfg msm_hdmi_phy_8998_cfg;
 
 struct hdmi_phy {
 	struct platform_device *pdev;
@@ -168,12 +166,12 @@ struct hdmi_phy {
 
 static inline void hdmi_phy_write(struct hdmi_phy *phy, u32 reg, u32 data)
 {
-	writel(data, phy->mmio + reg);
+	msm_writel(data, phy->mmio + reg);
 }
 
 static inline u32 hdmi_phy_read(struct hdmi_phy *phy, u32 reg)
 {
-	return readl(phy->mmio + reg);
+	return msm_readl(phy->mmio + reg);
 }
 
 int msm_hdmi_phy_resource_enable(struct hdmi_phy *phy);
@@ -186,7 +184,6 @@ void __exit msm_hdmi_phy_driver_unregister(void);
 #ifdef CONFIG_COMMON_CLK
 int msm_hdmi_pll_8960_init(struct platform_device *pdev);
 int msm_hdmi_pll_8996_init(struct platform_device *pdev);
-int msm_hdmi_pll_8998_init(struct platform_device *pdev);
 #else
 static inline int msm_hdmi_pll_8960_init(struct platform_device *pdev)
 {
@@ -194,11 +191,6 @@ static inline int msm_hdmi_pll_8960_init(struct platform_device *pdev)
 }
 
 static inline int msm_hdmi_pll_8996_init(struct platform_device *pdev)
-{
-	return -ENODEV;
-}
-
-static inline int msm_hdmi_pll_8998_init(struct platform_device *pdev)
 {
 	return -ENODEV;
 }

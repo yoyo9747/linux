@@ -197,9 +197,8 @@ static int pmcraid_slave_alloc(struct scsi_device *scsi_dev)
 }
 
 /**
- * pmcraid_device_configure - Configures a SCSI device
+ * pmcraid_slave_configure - Configures a SCSI device
  * @scsi_dev: scsi device struct
- * @lim: queue limits
  *
  * This function is executed by SCSI mid layer just after a device is first
  * scanned (i.e. it has responded to an INQUIRY). For VSET resources, the
@@ -210,8 +209,7 @@ static int pmcraid_slave_alloc(struct scsi_device *scsi_dev)
  * Return value:
  *	  0 on success
  */
-static int pmcraid_device_configure(struct scsi_device *scsi_dev,
-		struct queue_limits *lim)
+static int pmcraid_slave_configure(struct scsi_device *scsi_dev)
 {
 	struct pmcraid_resource_entry *res = scsi_dev->hostdata;
 
@@ -235,7 +233,8 @@ static int pmcraid_device_configure(struct scsi_device *scsi_dev,
 		scsi_dev->allow_restart = 1;
 		blk_queue_rq_timeout(scsi_dev->request_queue,
 				     PMCRAID_VSET_IO_TIMEOUT);
-		lim->max_hw_sectors = PMCRAID_VSET_MAX_SECTORS;
+		blk_queue_max_hw_sectors(scsi_dev->request_queue,
+				      PMCRAID_VSET_MAX_SECTORS);
 	}
 
 	/*
@@ -1946,7 +1945,7 @@ static void pmcraid_soft_reset(struct pmcraid_cmd *cmd)
 	}
 
 	iowrite32(doorbell, pinstance->int_regs.host_ioa_interrupt_reg);
-	ioread32(pinstance->int_regs.host_ioa_interrupt_reg);
+	ioread32(pinstance->int_regs.host_ioa_interrupt_reg),
 	int_reg = ioread32(pinstance->int_regs.ioa_host_interrupt_reg);
 
 	pmcraid_info("Waiting for IOA to become operational %x:%x\n",
@@ -3669,7 +3668,7 @@ static const struct scsi_host_template pmcraid_host_template = {
 	.eh_host_reset_handler = pmcraid_eh_host_reset_handler,
 
 	.slave_alloc = pmcraid_slave_alloc,
-	.device_configure = pmcraid_device_configure,
+	.slave_configure = pmcraid_slave_configure,
 	.slave_destroy = pmcraid_slave_destroy,
 	.change_queue_depth = pmcraid_change_queue_depth,
 	.can_queue = PMCRAID_MAX_IO_CMD,
@@ -4009,7 +4008,7 @@ static void pmcraid_tasklet_function(unsigned long instance)
  * This routine un-registers registered interrupt handler and
  * also frees irqs/vectors.
  *
- * Return Value
+ * Retun Value
  *	None
  */
 static
@@ -4036,7 +4035,7 @@ static int
 pmcraid_register_interrupt_handler(struct pmcraid_instance *pinstance)
 {
 	struct pci_dev *pdev = pinstance->pdev;
-	unsigned int irq_flag = PCI_IRQ_INTX, flag;
+	unsigned int irq_flag = PCI_IRQ_LEGACY, flag;
 	int num_hrrq, rc, i;
 	irq_handler_t isr;
 

@@ -1200,7 +1200,8 @@ static irqreturn_t kmx61_trigger_handler(int irq, void *p)
 		base = KMX61_MAG_XOUT_L;
 
 	mutex_lock(&data->lock);
-	iio_for_each_active_channel(indio_dev, bit) {
+	for_each_set_bit(bit, indio_dev->active_scan_mask,
+			 indio_dev->masklength) {
 		ret = kmx61_read_measurement(data, base, bit);
 		if (ret < 0) {
 			mutex_unlock(&data->lock);
@@ -1504,7 +1505,7 @@ static const struct acpi_device_id kmx61_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, kmx61_acpi_match);
 
 static const struct i2c_device_id kmx61_id[] = {
-	{ "kmx611021" },
+	{"kmx611021", 0},
 	{}
 };
 

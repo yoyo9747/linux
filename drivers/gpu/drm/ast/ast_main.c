@@ -26,7 +26,6 @@
  * Authors: Dave Airlie <airlied@redhat.com>
  */
 
-#include <linux/of.h>
 #include <linux/pci.h>
 
 #include <drm/drm_atomic_helper.h>
@@ -115,10 +114,8 @@ static void ast_detect_tx_chip(struct ast_device *ast, bool need_post)
 	} else if (IS_AST_GEN7(ast)) {
 		if (ast_get_index_reg_mask(ast, AST_IO_VGACRI, 0xD1, TX_TYPE_MASK) ==
 		    ASTDP_DPMCU_TX) {
-			int ret = ast_dp_launch(ast);
-
-			if (!ret)
-				ast->tx_chip_types = AST_TX_ASTDP_BIT;
+			ast->tx_chip_types = AST_TX_ASTDP_BIT;
+			ast_dp_launch(&ast->base);
 		}
 	}
 

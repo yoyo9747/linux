@@ -119,7 +119,7 @@ export LIBGCC
 
 libs-y	+= arch/parisc/lib/ $(LIBGCC)
 
-drivers-$(CONFIG_VIDEO) += arch/parisc/video/
+drivers-y += arch/parisc/video/
 
 boot	:= arch/parisc/boot
 

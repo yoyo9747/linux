@@ -23,7 +23,6 @@
 #include <asm/byteorder.h>
 
 #include "core.h"
-#include <trace/events/firewire.h>
 
 #define define_fw_printk_level(func, kern_level)		\
 void func(const struct fw_card *card, const char *fmt, ...)	\
@@ -168,6 +167,7 @@ static size_t required_space(struct fw_descriptor *desc)
 int fw_core_add_descriptor(struct fw_descriptor *desc)
 {
 	size_t i;
+	int ret;
 
 	/*
 	 * Check descriptor is valid; the length of all blocks in the
@@ -181,25 +181,29 @@ int fw_core_add_descriptor(struct fw_descriptor *desc)
 	if (i != desc->length)
 		return -EINVAL;
 
-	guard(mutex)(&card_mutex);
+	mutex_lock(&card_mutex);
 
-	if (config_rom_length + required_space(desc) > 256)
-		return -EBUSY;
-
-	list_add_tail(&desc->link, &descriptor_list);
-	config_rom_length += required_space(desc);
-	descriptor_count++;
-	if (desc->immediate > 0)
+	if (config_rom_length + required_space(desc) > 256) {
+		ret = -EBUSY;
+	} else {
+		list_add_tail(&desc->link, &descriptor_list);
+		config_rom_length += required_space(desc);
 		descriptor_count++;
-	update_config_roms();
+		if (desc->immediate > 0)
+			descriptor_count++;
+		update_config_roms();
+		ret = 0;
+	}
 
-	return 0;
+	mutex_unlock(&card_mutex);
+
+	return ret;
 }
 EXPORT_SYMBOL(fw_core_add_descriptor);
 
 void fw_core_remove_descriptor(struct fw_descriptor *desc)
 {
-	guard(mutex)(&card_mutex);
+	mutex_lock(&card_mutex);
 
 	list_del(&desc->link);
 	config_rom_length -= required_space(desc);
@@ -207,6 +211,8 @@ void fw_core_remove_descriptor(struct fw_descriptor *desc)
 	if (desc->immediate > 0)
 		descriptor_count--;
 	update_config_roms();
+
+	mutex_unlock(&card_mutex);
 }
 EXPORT_SYMBOL(fw_core_remove_descriptor);
 
@@ -215,15 +221,11 @@ static int reset_bus(struct fw_card *card, bool short_reset)
 	int reg = short_reset ? 5 : 1;
 	int bit = short_reset ? PHY_BUS_SHORT_RESET : PHY_BUS_RESET;
 
-	trace_bus_reset_initiate(card->index, card->generation, short_reset);
-
 	return card->driver->update_phy_reg(card, reg, 0, bit);
 }
 
 void fw_schedule_bus_reset(struct fw_card *card, bool delayed, bool short_reset)
 {
-	trace_bus_reset_schedule(card->index, card->generation, short_reset);
-
 	/* We don't try hard to sort out requests of long vs. short resets. */
 	card->br_short = short_reset;
 
@@ -242,8 +244,6 @@ static void br_work(struct work_struct *work)
 	/* Delay for 2s after last reset per IEEE 1394 clause 8.2.1. */
 	if (card->reset_jiffies != 0 &&
 	    time_before64(get_jiffies_64(), card->reset_jiffies + 2 * HZ)) {
-		trace_bus_reset_postpone(card->index, card->generation, card->br_short);
-
 		if (!queue_delayed_work(fw_workqueue, &card->br_work, 2 * HZ))
 			fw_card_put(card);
 		return;
@@ -374,11 +374,11 @@ static void bm_work(struct work_struct *work)
 
 		bm_id = be32_to_cpu(transaction_data[0]);
 
-		scoped_guard(spinlock_irq, &card->lock) {
-			if (rcode == RCODE_COMPLETE && generation == card->generation)
-				card->bm_node_id =
-				    bm_id == 0x3f ? local_id : 0xffc0 | bm_id;
-		}
+		spin_lock_irq(&card->lock);
+		if (rcode == RCODE_COMPLETE && generation == card->generation)
+			card->bm_node_id =
+			    bm_id == 0x3f ? local_id : 0xffc0 | bm_id;
+		spin_unlock_irq(&card->lock);
 
 		if (rcode == RCODE_COMPLETE && bm_id != 0x3f) {
 			/* Somebody else is BM.  Only act as IRM. */
@@ -571,47 +571,25 @@ void fw_card_initialize(struct fw_card *card,
 }
 EXPORT_SYMBOL(fw_card_initialize);
 
-int fw_card_add(struct fw_card *card, u32 max_receive, u32 link_speed, u64 guid,
-		unsigned int supported_isoc_contexts)
+int fw_card_add(struct fw_card *card,
+		u32 max_receive, u32 link_speed, u64 guid)
 {
-	struct workqueue_struct *isoc_wq;
 	int ret;
-
-	// This workqueue should be:
-	//  * != WQ_BH			Sleepable.
-	//  * == WQ_UNBOUND		Any core can process data for isoc context. The
-	//				implementation of unit protocol could consumes the core
-	//				longer somehow.
-	//  * != WQ_MEM_RECLAIM		Not used for any backend of block device.
-	//  * == WQ_FREEZABLE		Isochronous communication is at regular interval in real
-	//				time, thus should be drained if possible at freeze phase.
-	//  * == WQ_HIGHPRI		High priority to process semi-realtime timestamped data.
-	//  * == WQ_SYSFS		Parameters are available via sysfs.
-	//  * max_active == n_it + n_ir	A hardIRQ could notify events for multiple isochronous
-	//				contexts if they are scheduled to the same cycle.
-	isoc_wq = alloc_workqueue("firewire-isoc-card%u",
-				  WQ_UNBOUND | WQ_FREEZABLE | WQ_HIGHPRI | WQ_SYSFS,
-				  supported_isoc_contexts, card->index);
-	if (!isoc_wq)
-		return -ENOMEM;
 
 	card->max_receive = max_receive;
 	card->link_speed = link_speed;
 	card->guid = guid;
 
-	guard(mutex)(&card_mutex);
+	mutex_lock(&card_mutex);
 
 	generate_config_rom(card, tmp_config_rom);
 	ret = card->driver->enable(card, tmp_config_rom, config_rom_length);
-	if (ret < 0) {
-		destroy_workqueue(isoc_wq);
-		return ret;
-	}
+	if (ret == 0)
+		list_add_tail(&card->link, &card_list);
 
-	card->isoc_wq = isoc_wq;
-	list_add_tail(&card->link, &card_list);
+	mutex_unlock(&card_mutex);
 
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL(fw_card_add);
 
@@ -729,30 +707,28 @@ EXPORT_SYMBOL_GPL(fw_card_release);
 void fw_core_remove_card(struct fw_card *card)
 {
 	struct fw_card_driver dummy_driver = dummy_driver_template;
-
-	might_sleep();
+	unsigned long flags;
 
 	card->driver->update_phy_reg(card, 4,
 				     PHY_LINK_ACTIVE | PHY_CONTENDER, 0);
 	fw_schedule_bus_reset(card, false, true);
 
-	scoped_guard(mutex, &card_mutex)
-		list_del_init(&card->link);
+	mutex_lock(&card_mutex);
+	list_del_init(&card->link);
+	mutex_unlock(&card_mutex);
 
 	/* Switch off most of the card driver interface. */
 	dummy_driver.free_iso_context	= card->driver->free_iso_context;
 	dummy_driver.stop_iso		= card->driver->stop_iso;
 	card->driver = &dummy_driver;
-	drain_workqueue(card->isoc_wq);
 
-	scoped_guard(spinlock_irqsave, &card->lock)
-		fw_destroy_nodes(card);
+	spin_lock_irqsave(&card->lock, flags);
+	fw_destroy_nodes(card);
+	spin_unlock_irqrestore(&card->lock, flags);
 
 	/* Wait for all users, especially device workqueue jobs, to finish. */
 	fw_card_put(card);
 	wait_for_completion(&card->done);
-
-	destroy_workqueue(card->isoc_wq);
 
 	WARN_ON(!list_empty(&card->transaction_list));
 }

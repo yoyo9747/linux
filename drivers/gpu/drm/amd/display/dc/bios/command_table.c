@@ -399,7 +399,7 @@ static enum bp_result transmitter_control_v1_6(
 static void init_transmitter_control(struct bios_parser *bp)
 {
 	uint8_t frev;
-	uint8_t crev = 0;
+	uint8_t crev;
 
 	if (BIOS_CMD_TABLE_REVISION(UNIPHYTransmitterControl,
 			frev, crev) == false)

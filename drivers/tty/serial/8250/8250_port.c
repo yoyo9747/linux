@@ -612,6 +612,13 @@ int serial8250_em485_config(struct uart_port *port, struct ktermios *termios,
 {
 	struct uart_8250_port *up = up_to_u8250p(port);
 
+	/* pick sane settings if the user hasn't */
+	if (!!(rs485->flags & SER_RS485_RTS_ON_SEND) ==
+	    !!(rs485->flags & SER_RS485_RTS_AFTER_SEND)) {
+		rs485->flags |= SER_RS485_RTS_ON_SEND;
+		rs485->flags &= ~SER_RS485_RTS_AFTER_SEND;
+	}
+
 	/*
 	 * Both serial8250_em485_init() and serial8250_em485_destroy()
 	 * are idempotent.
@@ -1623,7 +1630,7 @@ static void serial8250_start_tx(struct uart_port *port)
 	/* Port locked to synchronize UART_IER access against the console. */
 	lockdep_assert_held_once(&port->lock);
 
-	if (!port->x_char && kfifo_is_empty(&port->state->port.xmit_fifo))
+	if (!port->x_char && uart_circ_empty(&port->state->xmit))
 		return;
 
 	serial8250_rpm_get_tx(up);
@@ -1771,7 +1778,7 @@ EXPORT_SYMBOL_GPL(serial8250_rx_chars);
 void serial8250_tx_chars(struct uart_8250_port *up)
 {
 	struct uart_port *port = &up->port;
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	int count;
 
 	if (port->x_char) {
@@ -1782,19 +1789,14 @@ void serial8250_tx_chars(struct uart_8250_port *up)
 		serial8250_stop_tx(port);
 		return;
 	}
-	if (kfifo_is_empty(&tport->xmit_fifo)) {
+	if (uart_circ_empty(xmit)) {
 		__stop_tx(up);
 		return;
 	}
 
 	count = up->tx_loadsz;
 	do {
-		unsigned char c;
-
-		if (!uart_fifo_get(port, &c))
-			break;
-
-		serial_out(up, UART_TX, c);
+		serial_out(up, UART_TX, xmit->buf[xmit->tail]);
 		if (up->bugs & UART_BUG_TXRACE) {
 			/*
 			 * The Aspeed BMC virtual UARTs have a bug where data
@@ -1807,7 +1809,9 @@ void serial8250_tx_chars(struct uart_8250_port *up)
 			 */
 			serial_in(up, UART_SCR);
 		}
-
+		uart_xmit_advance(port, 1);
+		if (uart_circ_empty(xmit))
+			break;
 		if ((up->capabilities & UART_CAP_HFIFO) &&
 		    !uart_lsr_tx_empty(serial_in(up, UART_LSR)))
 			break;
@@ -1817,7 +1821,7 @@ void serial8250_tx_chars(struct uart_8250_port *up)
 			break;
 	} while (--count > 0);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 
 	/*
@@ -1825,8 +1829,7 @@ void serial8250_tx_chars(struct uart_8250_port *up)
 	 * HW can go idle. So we get here once again with empty FIFO and disable
 	 * the interrupt and RPM in __stop_tx()
 	 */
-	if (kfifo_is_empty(&tport->xmit_fifo) &&
-	    !(up->capabilities & UART_CAP_RPM))
+	if (uart_circ_empty(xmit) && !(up->capabilities & UART_CAP_RPM))
 		__stop_tx(up);
 }
 EXPORT_SYMBOL_GPL(serial8250_tx_chars);
@@ -2609,7 +2612,7 @@ static unsigned char serial8250_compute_lcr(struct uart_8250_port *up,
 }
 
 void serial8250_do_set_divisor(struct uart_port *port, unsigned int baud,
-			       unsigned int quot)
+			       unsigned int quot, unsigned int quot_frac)
 {
 	struct uart_8250_port *up = up_to_u8250p(port);
 
@@ -2641,7 +2644,7 @@ static void serial8250_set_divisor(struct uart_port *port, unsigned int baud,
 	if (port->set_divisor)
 		port->set_divisor(port, baud, quot, quot_frac);
 	else
-		serial8250_do_set_divisor(port, baud, quot);
+		serial8250_do_set_divisor(port, baud, quot, quot_frac);
 }
 
 static unsigned int serial8250_get_baud_rate(struct uart_port *port,
@@ -3473,5 +3476,4 @@ int serial8250_console_exit(struct uart_port *port)
 
 #endif /* CONFIG_SERIAL_8250_CONSOLE */
 
-MODULE_DESCRIPTION("Base port operations for 8250/16550-type serial ports");
 MODULE_LICENSE("GPL");

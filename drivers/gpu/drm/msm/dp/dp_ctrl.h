@@ -12,6 +12,7 @@
 #include "dp_catalog.h"
 
 struct dp_ctrl {
+	atomic_t aborted;
 	bool wide_bus_en;
 };
 

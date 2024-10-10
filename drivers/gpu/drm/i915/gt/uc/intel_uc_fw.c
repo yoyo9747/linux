@@ -698,18 +698,12 @@ static int check_gsc_manifest(struct intel_gt *gt,
 			      const struct firmware *fw,
 			      struct intel_uc_fw *uc_fw)
 {
-	int ret;
-
 	switch (uc_fw->type) {
 	case INTEL_UC_FW_TYPE_HUC:
-		ret = intel_huc_fw_get_binary_info(uc_fw, fw->data, fw->size);
-		if (ret)
-			return ret;
+		intel_huc_fw_get_binary_info(uc_fw, fw->data, fw->size);
 		break;
 	case INTEL_UC_FW_TYPE_GSC:
-		ret = intel_gsc_fw_get_binary_info(uc_fw, fw->data, fw->size);
-		if (ret)
-			return ret;
+		intel_gsc_fw_get_binary_info(uc_fw, fw->data, fw->size);
 		break;
 	default:
 		MISSING_CASE(uc_fw->type);
@@ -813,7 +807,7 @@ static int try_firmware_load(struct intel_uc_fw *uc_fw, const struct firmware **
 static int check_mtl_huc_guc_compatibility(struct intel_gt *gt,
 					   struct intel_uc_fw_file *huc_selected)
 {
-	struct intel_uc_fw_file *guc_selected = &gt_to_guc(gt)->fw.file_selected;
+	struct intel_uc_fw_file *guc_selected = &gt->uc.guc.fw.file_selected;
 	struct intel_uc_fw_ver *huc_ver = &huc_selected->ver;
 	struct intel_uc_fw_ver *guc_ver = &guc_selected->ver;
 	bool new_huc, new_guc;
@@ -1215,7 +1209,7 @@ static int uc_fw_rsa_data_create(struct intel_uc_fw *uc_fw)
 	 * since its GGTT offset will be GuC accessible.
 	 */
 	GEM_BUG_ON(uc_fw->rsa_size > PAGE_SIZE);
-	vma = intel_guc_allocate_vma(gt_to_guc(gt), PAGE_SIZE);
+	vma = intel_guc_allocate_vma(&gt->uc.guc, PAGE_SIZE);
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 

@@ -56,7 +56,6 @@ int simatic_ipc_leds_gpio_probe(struct platform_device *pdev,
 	case SIMATIC_IPC_DEVICE_127E:
 	case SIMATIC_IPC_DEVICE_227G:
 	case SIMATIC_IPC_DEVICE_BX_21A:
-	case SIMATIC_IPC_DEVICE_BX_59A:
 		break;
 	default:
 		return -ENODEV;
@@ -102,7 +101,6 @@ out:
 }
 EXPORT_SYMBOL_GPL(simatic_ipc_leds_gpio_probe);
 
-MODULE_DESCRIPTION("Siemens SIMATIC IPC core driver for GPIO based LEDs");
 MODULE_LICENSE("GPL v2");
 MODULE_SOFTDEP("pre: platform:leds-gpio");
 MODULE_AUTHOR("Henning Schild <henning.schild@siemens.com>");

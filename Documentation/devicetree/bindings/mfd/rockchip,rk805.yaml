@@ -82,7 +82,7 @@ properties:
     patternProperties:
       "^(DCDC_REG[1-4]|LDO_REG[1-3])$":
         type: object
-        $ref: /schemas/regulator/regulator.yaml#
+        $ref: ../regulator/regulator.yaml#
         unevaluatedProperties: false
     unevaluatedProperties: false
 

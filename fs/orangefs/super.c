@@ -201,8 +201,7 @@ static int orangefs_statfs(struct dentry *dentry, struct kstatfs *buf)
 		     (long)new_op->downcall.resp.statfs.files_avail);
 
 	buf->f_type = sb->s_magic;
-	buf->f_fsid.val[0] = ORANGEFS_SB(sb)->fs_id;
-	buf->f_fsid.val[1] = ORANGEFS_SB(sb)->id;
+	memcpy(&buf->f_fsid, &ORANGEFS_SB(sb)->fs_id, sizeof(buf->f_fsid));
 	buf->f_bsize = new_op->downcall.resp.statfs.block_size;
 	buf->f_namelen = ORANGEFS_NAME_MAX;
 
@@ -254,8 +253,9 @@ int orangefs_remount(struct orangefs_sb_info_s *orangefs_sb)
 	new_op = op_alloc(ORANGEFS_VFS_OP_FS_MOUNT);
 	if (!new_op)
 		return -ENOMEM;
-	strscpy(new_op->upcall.req.fs_mount.orangefs_config_server,
-		orangefs_sb->devname);
+	strncpy(new_op->upcall.req.fs_mount.orangefs_config_server,
+		orangefs_sb->devname,
+		ORANGEFS_MAX_SERVER_ADDR_LEN);
 
 	gossip_debug(GOSSIP_SUPER_DEBUG,
 		     "Attempting ORANGEFS Remount via host %s\n",
@@ -400,7 +400,8 @@ static int orangefs_unmount(int id, __s32 fs_id, const char *devname)
 		return -ENOMEM;
 	op->upcall.req.fs_umount.id = id;
 	op->upcall.req.fs_umount.fs_id = fs_id;
-	strscpy(op->upcall.req.fs_umount.orangefs_config_server, devname);
+	strncpy(op->upcall.req.fs_umount.orangefs_config_server,
+	    devname, ORANGEFS_MAX_SERVER_ADDR_LEN - 1);
 	r = service_operation(op, "orangefs_fs_umount", 0);
 	/* Not much to do about an error here. */
 	if (r)
@@ -493,7 +494,9 @@ struct dentry *orangefs_mount(struct file_system_type *fst,
 	if (!new_op)
 		return ERR_PTR(-ENOMEM);
 
-	strscpy(new_op->upcall.req.fs_mount.orangefs_config_server, devname);
+	strncpy(new_op->upcall.req.fs_mount.orangefs_config_server,
+		devname,
+		ORANGEFS_MAX_SERVER_ADDR_LEN - 1);
 
 	gossip_debug(GOSSIP_SUPER_DEBUG,
 		     "Attempting ORANGEFS Mount via host %s\n",
@@ -540,8 +543,9 @@ struct dentry *orangefs_mount(struct file_system_type *fst,
 	 * on successful mount, store the devname and data
 	 * used
 	 */
-	strscpy(ORANGEFS_SB(sb)->devname, devname);
-
+	strncpy(ORANGEFS_SB(sb)->devname,
+		devname,
+		ORANGEFS_MAX_SERVER_ADDR_LEN - 1);
 
 	/* mount_pending must be cleared */
 	ORANGEFS_SB(sb)->mount_pending = 0;

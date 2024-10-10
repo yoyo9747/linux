@@ -150,6 +150,8 @@ static int __init n64cart_probe(struct platform_device *pdev)
 	set_capacity(disk, size >> SECTOR_SHIFT);
 	set_disk_ro(disk, 1);
 
+	blk_queue_flag_set(QUEUE_FLAG_NONROT, disk->queue);
+
 	err = add_disk(disk);
 	if (err)
 		goto out_cleanup_disk;

@@ -51,11 +51,8 @@ static int vti_input(struct sk_buff *skb, int nexthdr, __be32 spi,
 	const struct iphdr *iph = ip_hdr(skb);
 	struct net *net = dev_net(skb->dev);
 	struct ip_tunnel_net *itn = net_generic(net, vti_net_id);
-	IP_TUNNEL_DECLARE_FLAGS(flags) = { };
 
-	__set_bit(IP_TUNNEL_NO_KEY_BIT, flags);
-
-	tunnel = ip_tunnel_lookup(itn, skb->dev->ifindex, flags,
+	tunnel = ip_tunnel_lookup(itn, skb->dev->ifindex, TUNNEL_NO_KEY,
 				  iph->saddr, iph->daddr, 0);
 	if (tunnel) {
 		if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb))
@@ -170,7 +167,7 @@ static netdev_tx_t vti_xmit(struct sk_buff *skb, struct net_device *dev,
 			    struct flowi *fl)
 {
 	struct ip_tunnel *tunnel = netdev_priv(dev);
-	struct ip_tunnel_parm_kern *parms = &tunnel->parms;
+	struct ip_tunnel_parm *parms = &tunnel->parms;
 	struct dst_entry *dst = skb_dst(skb);
 	struct net_device *tdev;	/* Device to other host */
 	int pkt_len = skb->len;
@@ -325,11 +322,8 @@ static int vti4_err(struct sk_buff *skb, u32 info)
 	const struct iphdr *iph = (const struct iphdr *)skb->data;
 	int protocol = iph->protocol;
 	struct ip_tunnel_net *itn = net_generic(net, vti_net_id);
-	IP_TUNNEL_DECLARE_FLAGS(flags) = { };
 
-	__set_bit(IP_TUNNEL_NO_KEY_BIT, flags);
-
-	tunnel = ip_tunnel_lookup(itn, skb->dev->ifindex, flags,
+	tunnel = ip_tunnel_lookup(itn, skb->dev->ifindex, TUNNEL_NO_KEY,
 				  iph->daddr, iph->saddr, 0);
 	if (!tunnel)
 		return -1;
@@ -379,9 +373,8 @@ static int vti4_err(struct sk_buff *skb, u32 info)
 }
 
 static int
-vti_tunnel_ctl(struct net_device *dev, struct ip_tunnel_parm_kern *p, int cmd)
+vti_tunnel_ctl(struct net_device *dev, struct ip_tunnel_parm *p, int cmd)
 {
-	IP_TUNNEL_DECLARE_FLAGS(flags) = { };
 	int err = 0;
 
 	if (cmd == SIOCADDTUNNEL || cmd == SIOCCHGTUNNEL) {
@@ -390,26 +383,20 @@ vti_tunnel_ctl(struct net_device *dev, struct ip_tunnel_parm_kern *p, int cmd)
 			return -EINVAL;
 	}
 
-	if (!ip_tunnel_flags_is_be16_compat(p->i_flags) ||
-	    !ip_tunnel_flags_is_be16_compat(p->o_flags))
-		return -EOVERFLOW;
-
-	if (!(ip_tunnel_flags_to_be16(p->i_flags) & GRE_KEY))
+	if (!(p->i_flags & GRE_KEY))
 		p->i_key = 0;
-	if (!(ip_tunnel_flags_to_be16(p->o_flags) & GRE_KEY))
+	if (!(p->o_flags & GRE_KEY))
 		p->o_key = 0;
 
-	__set_bit(IP_TUNNEL_VTI_BIT, flags);
-	ip_tunnel_flags_copy(p->i_flags, flags);
+	p->i_flags = VTI_ISVTI;
 
 	err = ip_tunnel_ctl(dev, p, cmd);
 	if (err)
 		return err;
 
 	if (cmd != SIOCDELTUNNEL) {
-		ip_tunnel_flags_from_be16(flags, GRE_KEY);
-		ip_tunnel_flags_or(p->i_flags, p->i_flags, flags);
-		ip_tunnel_flags_or(p->o_flags, p->o_flags, flags);
+		p->i_flags |= GRE_KEY;
+		p->o_flags |= GRE_KEY;
 	}
 	return 0;
 }
@@ -443,7 +430,7 @@ static int vti_tunnel_init(struct net_device *dev)
 
 	dev->flags		= IFF_NOARP;
 	dev->addr_len		= 4;
-	dev->lltx		= true;
+	dev->features		|= NETIF_F_LLTX;
 	netif_keep_dst(dev);
 
 	return ip_tunnel_init(dev);
@@ -544,7 +531,7 @@ static int vti_tunnel_validate(struct nlattr *tb[], struct nlattr *data[],
 }
 
 static void vti_netlink_parms(struct nlattr *data[],
-			      struct ip_tunnel_parm_kern *parms,
+			      struct ip_tunnel_parm *parms,
 			      __u32 *fwmark)
 {
 	memset(parms, 0, sizeof(*parms));
@@ -554,7 +541,7 @@ static void vti_netlink_parms(struct nlattr *data[],
 	if (!data)
 		return;
 
-	__set_bit(IP_TUNNEL_VTI_BIT, parms->i_flags);
+	parms->i_flags = VTI_ISVTI;
 
 	if (data[IFLA_VTI_LINK])
 		parms->link = nla_get_u32(data[IFLA_VTI_LINK]);
@@ -579,7 +566,7 @@ static int vti_newlink(struct net *src_net, struct net_device *dev,
 		       struct nlattr *tb[], struct nlattr *data[],
 		       struct netlink_ext_ack *extack)
 {
-	struct ip_tunnel_parm_kern parms;
+	struct ip_tunnel_parm parms;
 	__u32 fwmark = 0;
 
 	vti_netlink_parms(data, &parms, &fwmark);
@@ -591,8 +578,8 @@ static int vti_changelink(struct net_device *dev, struct nlattr *tb[],
 			  struct netlink_ext_ack *extack)
 {
 	struct ip_tunnel *t = netdev_priv(dev);
-	struct ip_tunnel_parm_kern p;
 	__u32 fwmark = t->fwmark;
+	struct ip_tunnel_parm p;
 
 	vti_netlink_parms(data, &p, &fwmark);
 	return ip_tunnel_changelink(dev, tb, &p, fwmark);
@@ -619,7 +606,7 @@ static size_t vti_get_size(const struct net_device *dev)
 static int vti_fill_info(struct sk_buff *skb, const struct net_device *dev)
 {
 	struct ip_tunnel *t = netdev_priv(dev);
-	struct ip_tunnel_parm_kern *p = &t->parms;
+	struct ip_tunnel_parm *p = &t->parms;
 
 	if (nla_put_u32(skb, IFLA_VTI_LINK, p->link) ||
 	    nla_put_be32(skb, IFLA_VTI_IKEY, p->i_key) ||

@@ -101,15 +101,19 @@ static struct inode *romfs_iget(struct super_block *sb, unsigned long pos);
  */
 static int romfs_read_folio(struct file *file, struct folio *folio)
 {
-	struct inode *inode = folio->mapping->host;
+	struct page *page = &folio->page;
+	struct inode *inode = page->mapping->host;
 	loff_t offset, size;
 	unsigned long fillsize, pos;
 	void *buf;
 	int ret;
 
-	buf = kmap_local_folio(folio, 0);
+	buf = kmap(page);
+	if (!buf)
+		return -ENOMEM;
 
-	offset = folio_pos(folio);
+	/* 32 bit warning -- but not for us :) */
+	offset = page_offset(page);
 	size = i_size_read(inode);
 	fillsize = 0;
 	ret = 0;
@@ -121,14 +125,20 @@ static int romfs_read_folio(struct file *file, struct folio *folio)
 
 		ret = romfs_dev_read(inode->i_sb, pos, buf, fillsize);
 		if (ret < 0) {
+			SetPageError(page);
 			fillsize = 0;
 			ret = -EIO;
 		}
 	}
 
-	buf = folio_zero_tail(folio, fillsize, buf + fillsize);
-	kunmap_local(buf);
-	folio_end_read(folio, ret == 0);
+	if (fillsize < PAGE_SIZE)
+		memset(buf + fillsize, 0, PAGE_SIZE - fillsize);
+	if (ret == 0)
+		SetPageUptodate(page);
+
+	flush_dcache_page(page);
+	kunmap(page);
+	unlock_page(page);
 	return ret;
 }
 

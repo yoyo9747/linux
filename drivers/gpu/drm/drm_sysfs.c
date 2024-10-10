@@ -209,9 +209,10 @@ static ssize_t status_store(struct device *device,
 		ret = -EINVAL;
 
 	if (old_force != connector->force || !connector->force) {
-		drm_dbg_kms(dev, "[CONNECTOR:%d:%s] force updated from %d to %d or reprobing\n",
-			    connector->base.id, connector->name,
-			    old_force, connector->force);
+		DRM_DEBUG_KMS("[CONNECTOR:%d:%s] force updated from %d to %d or reprobing\n",
+			      connector->base.id,
+			      connector->name,
+			      old_force, connector->force);
 
 		connector->funcs->fill_modes(connector,
 					     dev->mode_config.max_width,
@@ -266,9 +267,29 @@ static ssize_t edid_show(struct file *filp, struct kobject *kobj,
 {
 	struct device *connector_dev = kobj_to_dev(kobj);
 	struct drm_connector *connector = to_drm_connector(connector_dev);
-	ssize_t ret;
+	unsigned char *edid;
+	size_t size;
+	ssize_t ret = 0;
 
-	ret = drm_edid_connector_property_show(connector, buf, off, count);
+	mutex_lock(&connector->dev->mode_config.mutex);
+	if (!connector->edid_blob_ptr)
+		goto unlock;
+
+	edid = connector->edid_blob_ptr->data;
+	size = connector->edid_blob_ptr->length;
+	if (!edid)
+		goto unlock;
+
+	if (off >= size)
+		goto unlock;
+
+	if (off + count > size)
+		count = size - off;
+	memcpy(buf, edid + off, count);
+
+	ret = count;
+unlock:
+	mutex_unlock(&connector->dev->mode_config.mutex);
 
 	return ret;
 }
@@ -362,8 +383,8 @@ int drm_sysfs_connector_add(struct drm_connector *connector)
 	if (r)
 		goto err_free;
 
-	drm_dbg_kms(dev, "[CONNECTOR:%d:%s] adding connector to sysfs\n",
-		    connector->base.id, connector->name);
+	DRM_DEBUG("adding \"%s\" to sysfs\n",
+		  connector->name);
 
 	r = device_add(kdev);
 	if (r) {
@@ -409,9 +430,8 @@ void drm_sysfs_connector_remove(struct drm_connector *connector)
 	if (dev_fwnode(connector->kdev))
 		component_del(connector->kdev, &typec_connector_ops);
 
-	drm_dbg_kms(connector->dev,
-		    "[CONNECTOR:%d:%s] removing connector from sysfs\n",
-		    connector->base.id, connector->name);
+	DRM_DEBUG("removing \"%s\" from sysfs\n",
+		  connector->name);
 
 	device_unregister(connector->kdev);
 	connector->kdev = NULL;
@@ -422,7 +442,7 @@ void drm_sysfs_lease_event(struct drm_device *dev)
 	char *event_string = "LEASE=1";
 	char *envp[] = { event_string, NULL };
 
-	drm_dbg_lease(dev, "generating lease event\n");
+	DRM_DEBUG("generating lease event\n");
 
 	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
 }
@@ -443,7 +463,7 @@ void drm_sysfs_hotplug_event(struct drm_device *dev)
 	char *event_string = "HOTPLUG=1";
 	char *envp[] = { event_string, NULL };
 
-	drm_dbg_kms(dev, "generating hotplug event\n");
+	DRM_DEBUG("generating hotplug event\n");
 
 	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
 }

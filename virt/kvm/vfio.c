@@ -194,7 +194,7 @@ static int kvm_vfio_file_del(struct kvm_device *dev, unsigned int fd)
 	int ret;
 
 	f = fdget(fd);
-	if (!fd_file(f))
+	if (!f.file)
 		return -EBADF;
 
 	ret = -ENOENT;
@@ -202,7 +202,7 @@ static int kvm_vfio_file_del(struct kvm_device *dev, unsigned int fd)
 	mutex_lock(&kv->lock);
 
 	list_for_each_entry(kvf, &kv->file_list, node) {
-		if (kvf->file != fd_file(f))
+		if (kvf->file != f.file)
 			continue;
 
 		list_del(&kvf->node);
@@ -240,7 +240,7 @@ static int kvm_vfio_file_set_spapr_tce(struct kvm_device *dev,
 		return -EFAULT;
 
 	f = fdget(param.groupfd);
-	if (!fd_file(f))
+	if (!f.file)
 		return -EBADF;
 
 	ret = -ENOENT;
@@ -248,7 +248,7 @@ static int kvm_vfio_file_set_spapr_tce(struct kvm_device *dev,
 	mutex_lock(&kv->lock);
 
 	list_for_each_entry(kvf, &kv->file_list, node) {
-		if (kvf->file != fd_file(f))
+		if (kvf->file != f.file)
 			continue;
 
 		if (!kvf->iommu_group) {
@@ -365,8 +365,6 @@ static int kvm_vfio_create(struct kvm_device *dev, u32 type)
 {
 	struct kvm_device *tmp;
 	struct kvm_vfio *kv;
-
-	lockdep_assert_held(&dev->kvm->lock);
 
 	/* Only one VFIO "device" per VM */
 	list_for_each_entry(tmp, &dev->kvm->devices, vm_node)

@@ -82,9 +82,6 @@ static void __gfs2_ail_flush(struct gfs2_glock *gl, bool fsync,
 	GLOCK_BUG_ON(gl, !fsync && atomic_read(&gl->gl_ail_count));
 	spin_unlock(&sdp->sd_ail_lock);
 	gfs2_log_unlock(sdp);
-
-	if (gfs2_withdrawing(sdp))
-		gfs2_withdraw(sdp);
 }
 
 
@@ -385,6 +382,23 @@ static void inode_go_inval(struct gfs2_glock *gl, int flags)
 	gfs2_clear_glop_pending(ip);
 }
 
+/**
+ * inode_go_demote_ok - Check to see if it's ok to unlock an inode glock
+ * @gl: the glock
+ *
+ * Returns: 1 if it's ok
+ */
+
+static int inode_go_demote_ok(const struct gfs2_glock *gl)
+{
+	struct gfs2_sbd *sdp = gl->gl_name.ln_sbd;
+
+	if (sdp->sd_jindex == gl->gl_object || sdp->sd_rindex == gl->gl_object)
+		return 0;
+
+	return 1;
+}
+
 static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
 {
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
@@ -395,14 +409,10 @@ static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
 	struct inode *inode = &ip->i_inode;
 	bool is_new = inode->i_state & I_NEW;
 
-	if (unlikely(ip->i_no_addr != be64_to_cpu(str->di_num.no_addr))) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
-	if (unlikely(!is_new && inode_wrong_type(inode, mode))) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
+	if (unlikely(ip->i_no_addr != be64_to_cpu(str->di_num.no_addr)))
+		goto corrupt;
+	if (unlikely(!is_new && inode_wrong_type(inode, mode)))
+		goto corrupt;
 	ip->i_no_formal_ino = be64_to_cpu(str->di_num.no_formal_ino);
 	inode->i_mode = mode;
 	if (is_new) {
@@ -439,28 +449,26 @@ static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
 	/* i_diskflags and i_eattr must be set before gfs2_set_inode_flags() */
 	gfs2_set_inode_flags(inode);
 	height = be16_to_cpu(str->di_height);
-	if (unlikely(height > sdp->sd_max_height)) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
+	if (unlikely(height > sdp->sd_max_height))
+		goto corrupt;
 	ip->i_height = (u8)height;
 
 	depth = be16_to_cpu(str->di_depth);
-	if (unlikely(depth > GFS2_DIR_MAX_DEPTH)) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
+	if (unlikely(depth > GFS2_DIR_MAX_DEPTH))
+		goto corrupt;
 	ip->i_depth = (u8)depth;
 	ip->i_entries = be32_to_cpu(str->di_entries);
 
-	if (gfs2_is_stuffed(ip) && inode->i_size > gfs2_max_stuffed_size(ip)) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
+	if (gfs2_is_stuffed(ip) && inode->i_size > gfs2_max_stuffed_size(ip))
+		goto corrupt;
+
 	if (S_ISREG(inode->i_mode))
 		gfs2_set_aops(inode);
 
 	return 0;
+corrupt:
+	gfs2_consist_inode(ip);
+	return -EIO;
 }
 
 /**
@@ -631,21 +639,21 @@ static void iopen_go_callback(struct gfs2_glock *gl, bool remote)
 }
 
 /**
- * inode_go_unlocked - wake up anyone waiting for dlm's unlock ast
- * @gl: glock being unlocked
+ * inode_go_free - wake up anyone waiting for dlm's unlock ast to free it
+ * @gl: glock being freed
  *
  * For now, this is only used for the journal inode glock. In withdraw
- * situations, we need to wait for the glock to be unlocked so that we know
+ * situations, we need to wait for the glock to be freed so that we know
  * other nodes may proceed with recovery / journal replay.
  */
-static void inode_go_unlocked(struct gfs2_glock *gl)
+static void inode_go_free(struct gfs2_glock *gl)
 {
 	/* Note that we cannot reference gl_object because it's already set
 	 * to NULL by this point in its lifecycle. */
-	if (!test_bit(GLF_UNLOCKED, &gl->gl_flags))
+	if (!test_bit(GLF_FREEING, &gl->gl_flags))
 		return;
-	clear_bit_unlock(GLF_UNLOCKED, &gl->gl_flags);
-	wake_up_bit(&gl->gl_flags, GLF_UNLOCKED);
+	clear_bit_unlock(GLF_FREEING, &gl->gl_flags);
+	wake_up_bit(&gl->gl_flags, GLF_FREEING);
 }
 
 /**
@@ -705,12 +713,13 @@ const struct gfs2_glock_operations gfs2_meta_glops = {
 const struct gfs2_glock_operations gfs2_inode_glops = {
 	.go_sync = inode_go_sync,
 	.go_inval = inode_go_inval,
+	.go_demote_ok = inode_go_demote_ok,
 	.go_instantiate = inode_go_instantiate,
 	.go_held = inode_go_held,
 	.go_dump = inode_go_dump,
 	.go_type = LM_TYPE_INODE,
-	.go_flags = GLOF_ASPACE | GLOF_LVB,
-	.go_unlocked = inode_go_unlocked,
+	.go_flags = GLOF_ASPACE | GLOF_LRU | GLOF_LVB,
+	.go_free = inode_go_free,
 };
 
 const struct gfs2_glock_operations gfs2_rgrp_glops = {
@@ -733,13 +742,13 @@ const struct gfs2_glock_operations gfs2_iopen_glops = {
 	.go_type = LM_TYPE_IOPEN,
 	.go_callback = iopen_go_callback,
 	.go_dump = inode_go_dump,
-	.go_flags = GLOF_NONDISK,
+	.go_flags = GLOF_LRU | GLOF_NONDISK,
 	.go_subclass = 1,
 };
 
 const struct gfs2_glock_operations gfs2_flock_glops = {
 	.go_type = LM_TYPE_FLOCK,
-	.go_flags = GLOF_NONDISK,
+	.go_flags = GLOF_LRU | GLOF_NONDISK,
 };
 
 const struct gfs2_glock_operations gfs2_nondisk_glops = {
@@ -750,7 +759,7 @@ const struct gfs2_glock_operations gfs2_nondisk_glops = {
 
 const struct gfs2_glock_operations gfs2_quota_glops = {
 	.go_type = LM_TYPE_QUOTA,
-	.go_flags = GLOF_LVB | GLOF_NONDISK,
+	.go_flags = GLOF_LVB | GLOF_LRU | GLOF_NONDISK,
 };
 
 const struct gfs2_glock_operations gfs2_journal_glops = {

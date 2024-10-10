@@ -224,9 +224,6 @@ static void davinci_fifo_data_trans(struct mmc_davinci_host *host,
 	}
 	p = sgm->addr;
 
-	if (n > sgm->length)
-		n = sgm->length;
-
 	/* NOTE:  we never transfer more than rw_threshold bytes
 	 * to/from the fifo here; there's no I/O overlap.
 	 * This also assumes that access width( i.e. ACCWD) is 4 bytes
@@ -1187,7 +1184,7 @@ static int davinci_mmcsd_probe(struct platform_device *pdev)
 	struct mmc_davinci_host *host = NULL;
 	struct mmc_host *mmc = NULL;
 	struct resource *r, *mem = NULL;
-	int ret, irq, bus_width;
+	int ret, irq;
 	size_t mem_size;
 	const struct platform_device_id *id_entry;
 
@@ -1317,14 +1314,9 @@ static int davinci_mmcsd_probe(struct platform_device *pdev)
 
 	rename_region(mem, mmc_hostname(mmc));
 
-	if (mmc->caps & MMC_CAP_8_BIT_DATA)
-		bus_width = 8;
-	else if (mmc->caps & MMC_CAP_4_BIT_DATA)
-		bus_width = 4;
-	else
-		bus_width = 1;
 	dev_info(mmc_dev(host->mmc), "Using %s, %d-bit mode\n",
-		 host->use_dma ? "DMA" : "PIO", bus_width);
+		host->use_dma ? "DMA" : "PIO",
+		(mmc->caps & MMC_CAP_4_BIT_DATA) ? 4 : 1);
 
 	return 0;
 
@@ -1345,7 +1337,7 @@ ioremap_fail:
 	return ret;
 }
 
-static void davinci_mmcsd_remove(struct platform_device *pdev)
+static void __exit davinci_mmcsd_remove(struct platform_device *pdev)
 {
 	struct mmc_davinci_host *host = platform_get_drvdata(pdev);
 
@@ -1400,7 +1392,7 @@ static struct platform_driver davinci_mmcsd_driver = {
 		.of_match_table = davinci_mmc_dt_ids,
 	},
 	.probe		= davinci_mmcsd_probe,
-	.remove_new	= davinci_mmcsd_remove,
+	.remove_new	= __exit_p(davinci_mmcsd_remove),
 	.id_table	= davinci_mmc_devtype,
 };
 

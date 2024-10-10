@@ -124,5 +124,4 @@ static struct platform_driver altra_led_driver = {
 module_platform_driver(altra_led_driver);
 
 MODULE_AUTHOR("D Scott Phillips <scott@os.amperecomputing.com>");
-MODULE_DESCRIPTION("ACPI PCI Hot Plug Extension for Ampere Altra");
 MODULE_LICENSE("GPL");

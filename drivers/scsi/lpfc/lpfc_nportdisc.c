@@ -47,18 +47,6 @@
 #include "lpfc_debugfs.h"
 
 
-/* Called to clear RSCN discovery flags when driver is unloading. */
-static bool
-lpfc_check_unload_and_clr_rscn(unsigned long *fc_flag)
-{
-	/* If unloading, then clear the FC_RSCN_DEFERRED flag */
-	if (test_bit(FC_UNLOADING, fc_flag)) {
-		clear_bit(FC_RSCN_DEFERRED, fc_flag);
-		return false;
-	}
-	return test_bit(FC_RSCN_DEFERRED, fc_flag);
-}
-
 /* Called to verify a rcv'ed ADISC was intended for us. */
 static int
 lpfc_check_adisc(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
@@ -225,10 +213,8 @@ void
 lpfc_els_abort(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
 {
 	LIST_HEAD(abort_list);
-	LIST_HEAD(drv_cmpl_list);
 	struct lpfc_sli_ring *pring;
 	struct lpfc_iocbq *iocb, *next_iocb;
-	int retval = 0;
 
 	pring = lpfc_phba_elsring(phba);
 
@@ -264,20 +250,11 @@ lpfc_els_abort(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
 
 	/* Abort the targeted IOs and remove them from the abort list. */
 	list_for_each_entry_safe(iocb, next_iocb, &abort_list, dlist) {
-		spin_lock_irq(&phba->hbalock);
-		list_del_init(&iocb->dlist);
-		retval = lpfc_sli_issue_abort_iotag(phba, pring, iocb, NULL);
-		spin_unlock_irq(&phba->hbalock);
-
-		if (retval && test_bit(FC_UNLOADING, &phba->pport->load_flag)) {
-			list_del_init(&iocb->list);
-			list_add_tail(&iocb->list, &drv_cmpl_list);
-		}
+			spin_lock_irq(&phba->hbalock);
+			list_del_init(&iocb->dlist);
+			lpfc_sli_issue_abort_iotag(phba, pring, iocb, NULL);
+			spin_unlock_irq(&phba->hbalock);
 	}
-
-	lpfc_sli_cancel_iocbs(phba, &drv_cmpl_list, IOSTAT_LOCAL_REJECT,
-			      IOERR_SLI_ABORTED);
-
 	/* Make sure HBA is alive */
 	lpfc_issue_hb_tmo(phba);
 
@@ -504,7 +481,7 @@ lpfc_rcv_plogi(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 		 * must have ACCed the remote NPorts FLOGI to us
 		 * to make it here.
 		 */
-		if (test_bit(HBA_FLOGI_OUTSTANDING, &phba->hba_flag))
+		if (phba->hba_flag & HBA_FLOGI_OUTSTANDING)
 			lpfc_els_abort_flogi(phba);
 
 		ed_tov = be32_to_cpu(sp->cmn.e_d_tov);
@@ -1627,8 +1604,10 @@ lpfc_device_recov_plogi_issue(struct lpfc_vport *vport,
 {
 	struct lpfc_hba  *phba = vport->phba;
 
-	/* Don't do anything that disrupts the RSCN unless lpfc is unloading. */
-	if (lpfc_check_unload_and_clr_rscn(&vport->fc_flag))
+	/* Don't do anything that will mess up processing of the
+	 * previous RSCN.
+	 */
+	if (test_bit(FC_RSCN_DEFERRED, &vport->fc_flag))
 		return ndlp->nlp_state;
 
 	/* software abort outstanding PLOGI */
@@ -1811,8 +1790,10 @@ lpfc_device_recov_adisc_issue(struct lpfc_vport *vport,
 {
 	struct lpfc_hba  *phba = vport->phba;
 
-	/* Don't do anything that disrupts the RSCN unless lpfc is unloading. */
-	if (lpfc_check_unload_and_clr_rscn(&vport->fc_flag))
+	/* Don't do anything that will mess up processing of the
+	 * previous RSCN.
+	 */
+	if (test_bit(FC_RSCN_DEFERRED, &vport->fc_flag))
 		return ndlp->nlp_state;
 
 	/* software abort outstanding ADISC */
@@ -2078,8 +2059,10 @@ lpfc_device_recov_reglogin_issue(struct lpfc_vport *vport,
 				 void *arg,
 				 uint32_t evt)
 {
-	/* Don't do anything that disrupts the RSCN unless lpfc is unloading. */
-	if (lpfc_check_unload_and_clr_rscn(&vport->fc_flag))
+	/* Don't do anything that will mess up processing of the
+	 * previous RSCN.
+	 */
+	if (test_bit(FC_RSCN_DEFERRED, &vport->fc_flag))
 		return ndlp->nlp_state;
 
 	ndlp->nlp_prev_state = NLP_STE_REG_LOGIN_ISSUE;
@@ -2392,8 +2375,10 @@ lpfc_device_recov_prli_issue(struct lpfc_vport *vport,
 {
 	struct lpfc_hba  *phba = vport->phba;
 
-	/* Don't do anything that disrupts the RSCN unless lpfc is unloading. */
-	if (lpfc_check_unload_and_clr_rscn(&vport->fc_flag))
+	/* Don't do anything that will mess up processing of the
+	 * previous RSCN.
+	 */
+	if (test_bit(FC_RSCN_DEFERRED, &vport->fc_flag))
 		return ndlp->nlp_state;
 
 	/* software abort outstanding PRLI */
@@ -2652,26 +2637,8 @@ lpfc_rcv_prlo_mapped_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	/* flush the target */
 	lpfc_sli_abort_iocb(vport, ndlp->nlp_sid, 0, LPFC_CTX_TGT);
 
-	/* Send PRLO_ACC */
-	spin_lock_irq(&ndlp->lock);
-	ndlp->nlp_flag |= NLP_LOGO_ACC;
-	spin_unlock_irq(&ndlp->lock);
-	lpfc_els_rsp_acc(vport, ELS_CMD_PRLO, cmdiocb, ndlp, NULL);
-
-	/* Save ELS_CMD_PRLO as the last elscmd and then set to NPR.
-	 * lpfc_cmpl_els_logo_acc is expected to restart discovery.
-	 */
-	ndlp->nlp_last_elscmd = ELS_CMD_PRLO;
-	ndlp->nlp_prev_state = ndlp->nlp_state;
-
-	lpfc_printf_vlog(vport, KERN_INFO, LOG_NODE | LOG_ELS | LOG_DISCOVERY,
-			 "3422 DID x%06x nflag x%x lastels x%x ref cnt %u\n",
-			 ndlp->nlp_DID, ndlp->nlp_flag,
-			 ndlp->nlp_last_elscmd,
-			 kref_read(&ndlp->kref));
-
-	lpfc_nlp_set_state(vport, ndlp, NLP_STE_NPR_NODE);
-
+	/* Treat like rcv logo */
+	lpfc_rcv_logo(vport, ndlp, cmdiocb, ELS_CMD_PRLO);
 	return ndlp->nlp_state;
 }
 
@@ -2927,8 +2894,10 @@ static uint32_t
 lpfc_device_recov_npr_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 			   void *arg, uint32_t evt)
 {
-	/* Don't do anything that disrupts the RSCN unless lpfc is unloading. */
-	if (lpfc_check_unload_and_clr_rscn(&vport->fc_flag))
+	/* Don't do anything that will mess up processing of the
+	 * previous RSCN.
+	 */
+	if (test_bit(FC_RSCN_DEFERRED, &vport->fc_flag))
 		return ndlp->nlp_state;
 
 	lpfc_cancel_retry_delay_tmo(vport, ndlp);

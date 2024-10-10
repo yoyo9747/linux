@@ -1401,10 +1401,8 @@ static int fsl_ssi_imx_probe(struct platform_device *pdev,
 			goto error_pcm;
 	} else {
 		ret = imx_pcm_dma_init(pdev);
-		if (ret) {
-			dev_err_probe(dev, ret, "Failed to init PCM DMA\n");
+		if (ret)
 			goto error_pcm;
-		}
 	}
 
 	return 0;
@@ -1693,6 +1691,7 @@ static void fsl_ssi_remove(struct platform_device *pdev)
 	}
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int fsl_ssi_suspend(struct device *dev)
 {
 	struct fsl_ssi *ssi = dev_get_drvdata(dev);
@@ -1722,19 +1721,20 @@ static int fsl_ssi_resume(struct device *dev)
 
 	return regcache_sync(regs);
 }
+#endif /* CONFIG_PM_SLEEP */
 
 static const struct dev_pm_ops fsl_ssi_pm = {
-	SYSTEM_SLEEP_PM_OPS(fsl_ssi_suspend, fsl_ssi_resume)
+	SET_SYSTEM_SLEEP_PM_OPS(fsl_ssi_suspend, fsl_ssi_resume)
 };
 
 static struct platform_driver fsl_ssi_driver = {
 	.driver = {
 		.name = "fsl-ssi-dai",
 		.of_match_table = fsl_ssi_ids,
-		.pm = pm_sleep_ptr(&fsl_ssi_pm),
+		.pm = &fsl_ssi_pm,
 	},
 	.probe = fsl_ssi_probe,
-	.remove = fsl_ssi_remove,
+	.remove_new = fsl_ssi_remove,
 };
 
 module_platform_driver(fsl_ssi_driver);

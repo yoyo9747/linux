@@ -588,5 +588,4 @@ static struct kunit_suite drm_dp_mst_helper_test_suite = {
 
 kunit_test_suite(drm_dp_mst_helper_test_suite);
 
-MODULE_DESCRIPTION("Test cases for the DRM DP MST helpers");
 MODULE_LICENSE("GPL");

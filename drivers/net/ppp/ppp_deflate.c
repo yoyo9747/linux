@@ -16,7 +16,7 @@
 #include <linux/ppp-comp.h>
 
 #include <linux/zlib.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 /*
  * State for a Deflate (de)compressor.

@@ -8,7 +8,6 @@ Unsorted Documentation
 
    crc32
    lzo
-   magic-number
    remoteproc
    rpmsg
    speculation

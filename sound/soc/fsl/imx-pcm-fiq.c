@@ -319,5 +319,4 @@ void imx_pcm_fiq_exit(struct platform_device *pdev)
 }
 EXPORT_SYMBOL_GPL(imx_pcm_fiq_exit);
 
-MODULE_DESCRIPTION("Freescale i.MX PCM FIQ handler");
 MODULE_LICENSE("GPL");

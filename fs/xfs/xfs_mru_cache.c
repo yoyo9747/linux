@@ -230,8 +230,9 @@ _xfs_mru_cache_clear_reap_list(
 		__releases(mru->lock) __acquires(mru->lock)
 {
 	struct xfs_mru_cache_elem *elem, *next;
-	LIST_HEAD(tmp);
+	struct list_head	tmp;
 
+	INIT_LIST_HEAD(&tmp);
 	list_for_each_entry_safe(elem, next, &mru->reap_list, list_node) {
 
 		/* Remove the element from the data store. */

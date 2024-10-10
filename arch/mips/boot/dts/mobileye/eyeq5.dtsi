@@ -5,7 +5,7 @@
 
 #include <dt-bindings/interrupt-controller/mips-gic.h>
 
-#include "eyeq5-clocks.dtsi"
+#include "eyeq5-fixed-clocks.dtsi"
 
 / {
 	#address-cells = <2>;
@@ -78,9 +78,6 @@
 			interrupts = <GIC_SHARED 6 IRQ_TYPE_LEVEL_HIGH>;
 			clocks  = <&uart_clk>, <&occ_periph>;
 			clock-names = "uartclk", "apb_pclk";
-			resets = <&olb 0 10>;
-			pinctrl-names = "default";
-			pinctrl-0 = <&uart0_pins>;
 		};
 
 		uart1: serial@900000 {
@@ -91,9 +88,6 @@
 			interrupts = <GIC_SHARED 6 IRQ_TYPE_LEVEL_HIGH>;
 			clocks  = <&uart_clk>, <&occ_periph>;
 			clock-names = "uartclk", "apb_pclk";
-			resets = <&olb 0 11>;
-			pinctrl-names = "default";
-			pinctrl-0 = <&uart1_pins>;
 		};
 
 		uart2: serial@a00000 {
@@ -104,18 +98,6 @@
 			interrupts = <GIC_SHARED 6 IRQ_TYPE_LEVEL_HIGH>;
 			clocks  = <&uart_clk>, <&occ_periph>;
 			clock-names = "uartclk", "apb_pclk";
-			resets = <&olb 0 12>;
-			pinctrl-names = "default";
-			pinctrl-0 = <&uart2_pins>;
-		};
-
-		olb: system-controller@e00000 {
-			compatible = "mobileye,eyeq5-olb", "syscon";
-			reg = <0 0xe00000 0x0 0x400>;
-			#reset-cells = <2>;
-			#clock-cells = <1>;
-			clocks = <&xtal>;
-			clock-names = "ref";
 		};
 
 		gic: interrupt-controller@140000 {
@@ -140,5 +122,3 @@
 		};
 	};
 };
-
-#include "eyeq5-pins.dtsi"

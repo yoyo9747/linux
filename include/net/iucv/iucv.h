@@ -15,7 +15,7 @@
  * To explore any of the IUCV functions, one must first register their
  * program using iucv_register(). Once your program has successfully
  * completed a register, it can exploit the other functions.
- * For further reference on all IUCV functionality, refer to the
+ * For furthur reference on all IUCV functionality, refer to the
  * CP Programming Services book, also available on the web thru
  * www.vm.ibm.com/pubs, manual # SC24-6084
  *
@@ -82,12 +82,7 @@ struct iucv_array {
 } __attribute__ ((aligned (8)));
 
 extern const struct bus_type iucv_bus;
-
-struct device_driver;
-
-struct device *iucv_alloc_device(const struct attribute_group **attrs,
-				 struct device_driver *driver, void *priv,
-				 const char *fmt, ...) __printf(4, 5);
+extern struct device *iucv_root;
 
 /*
  * struct iucv_path

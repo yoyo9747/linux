@@ -32,16 +32,11 @@ properties:
       - enum:
           - samsung,exynos850-usi
 
-  reg:
-    maxItems: 1
+  reg: true
 
-  clocks:
-    maxItems: 2
+  clocks: true
 
-  clock-names:
-    items:
-      - const: pclk
-      - const: ipclk
+  clock-names: true
 
   ranges: true
 
@@ -118,7 +113,9 @@ then:
         - description: Operating clock for UART/SPI/I2C protocol
 
     clock-names:
-      maxItems: 2
+      items:
+        - const: pclk
+        - const: ipclk
 
   required:
     - reg

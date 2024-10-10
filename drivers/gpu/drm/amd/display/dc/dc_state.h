@@ -29,7 +29,7 @@
 #include "dc.h"
 #include "inc/core_status.h"
 
-struct dc_state *dc_state_create(struct dc *dc, struct dc_state_create_params *params);
+struct dc_state *dc_state_create(struct dc *dc);
 void dc_state_copy(struct dc_state *dst_state, struct dc_state *src_state);
 struct dc_state *dc_state_create_copy(struct dc_state *src_state);
 void dc_state_copy_current(struct dc *dc, struct dc_state *dst_state);
@@ -39,12 +39,12 @@ void dc_state_destruct(struct dc_state *state);
 void dc_state_retain(struct dc_state *state);
 void dc_state_release(struct dc_state *state);
 
-enum dc_status dc_state_add_stream(const struct dc *dc,
+enum dc_status dc_state_add_stream(struct dc *dc,
 				    struct dc_state *state,
 				    struct dc_stream_state *stream);
 
 enum dc_status dc_state_remove_stream(
-		const struct dc *dc,
+		struct dc *dc,
 		struct dc_state *state,
 		struct dc_stream_state *stream);
 
@@ -74,5 +74,5 @@ bool dc_state_add_all_planes_for_stream(
 
 struct dc_stream_status *dc_state_get_stream_status(
 	struct dc_state *state,
-	const struct dc_stream_state *stream);
+	struct dc_stream_state *stream);
 #endif /* _DC_STATE_H_ */

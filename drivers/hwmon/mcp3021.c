@@ -116,12 +116,13 @@ static const struct hwmon_chip_info mcp3021_chip_info = {
 	.info = mcp3021_info,
 };
 
+static const struct i2c_device_id mcp3021_id[];
+
 static int mcp3021_probe(struct i2c_client *client)
 {
 	struct mcp3021_data *data = NULL;
 	struct device_node *np = client->dev.of_node;
 	struct device *hwmon_dev;
-	enum chips type;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
 		return -ENODEV;
@@ -148,8 +149,7 @@ static int mcp3021_probe(struct i2c_client *client)
 			data->vdd = MCP3021_VDD_REF_DEFAULT;
 	}
 
-	type = (uintptr_t)i2c_get_match_data(client);
-	switch (type) {
+	switch (i2c_match_id(mcp3021_id, client)->driver_data) {
 	case mcp3021:
 		data->sar_shift = MCP3021_SAR_SHIFT;
 		data->sar_mask = MCP3021_SAR_MASK;

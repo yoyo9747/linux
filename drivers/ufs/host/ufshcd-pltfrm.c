@@ -31,7 +31,8 @@ static int ufshcd_parse_clock_info(struct ufs_hba *hba)
 	const char *name;
 	u32 *clkfreq = NULL;
 	struct ufs_clk_info *clki;
-	ssize_t sz = 0;
+	int len = 0;
+	size_t sz = 0;
 
 	if (!np)
 		goto out;
@@ -49,12 +50,15 @@ static int ufshcd_parse_clock_info(struct ufs_hba *hba)
 	if (cnt <= 0)
 		goto out;
 
-	sz = of_property_count_u32_elems(np, "freq-table-hz");
-	if (sz <= 0) {
+	if (!of_get_property(np, "freq-table-hz", &len)) {
 		dev_info(dev, "freq-table-hz property not specified\n");
 		goto out;
 	}
 
+	if (len <= 0)
+		goto out;
+
+	sz = len / sizeof(*clkfreq);
 	if (sz != 2 * cnt) {
 		dev_err(dev, "%s len mismatch\n", "freq-table-hz");
 		ret = -EINVAL;
@@ -268,10 +272,10 @@ static int ufshcd_parse_operating_points(struct ufs_hba *hba)
 	const char **clk_names;
 	int cnt, i, ret;
 
-	if (!of_property_present(np, "operating-points-v2"))
+	if (!of_find_property(np, "operating-points-v2", NULL))
 		return 0;
 
-	if (of_property_present(np, "freq-table-hz")) {
+	if (of_find_property(np, "freq-table-hz", NULL)) {
 		dev_err(dev, "%s: operating-points and freq-table-hz are incompatible\n",
 			 __func__);
 		return -EINVAL;

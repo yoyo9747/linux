@@ -66,7 +66,7 @@ def generate_crates(srctree, objtree, sysroot_src, external_src, cfgs):
 
     append_crate(
         "alloc",
-        sysroot_src / "alloc" / "src" / "lib.rs",
+        srctree / "rust" / "alloc" / "lib.rs",
         ["core", "compiler_builtins"],
         cfg=crates_cfgs.get("alloc", []),
     )
@@ -145,7 +145,6 @@ def main():
     parser.add_argument('--cfgs', action='append', default=[])
     parser.add_argument("srctree", type=pathlib.Path)
     parser.add_argument("objtree", type=pathlib.Path)
-    parser.add_argument("sysroot", type=pathlib.Path)
     parser.add_argument("sysroot_src", type=pathlib.Path)
     parser.add_argument("exttree", type=pathlib.Path, nargs="?")
     args = parser.parse_args()
@@ -155,12 +154,9 @@ def main():
         level=logging.INFO if args.verbose else logging.WARNING
     )
 
-    # Making sure that the `sysroot` and `sysroot_src` belong to the same toolchain.
-    assert args.sysroot in args.sysroot_src.parents
-
     rust_project = {
         "crates": generate_crates(args.srctree, args.objtree, args.sysroot_src, args.exttree, args.cfgs),
-        "sysroot": str(args.sysroot),
+        "sysroot_src": str(args.sysroot_src),
     }
 
     json.dump(rust_project, sys.stdout, sort_keys=True, indent=4)

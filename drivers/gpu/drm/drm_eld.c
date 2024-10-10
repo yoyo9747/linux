@@ -3,12 +3,10 @@
  * Copyright © 2023 Intel Corporation
  */
 
-#include <linux/export.h>
-
 #include <drm/drm_edid.h>
 #include <drm/drm_eld.h>
 
-#include "drm_crtc_internal.h"
+#include "drm_internal.h"
 
 /**
  * drm_eld_sad_get - get SAD from ELD to struct cea_sad

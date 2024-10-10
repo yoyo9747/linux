@@ -12,13 +12,14 @@
 #include "fw/api/debug.h"
 #include "fw/api/paging.h"
 #include "fw/api/power.h"
-#include "iwl-nvm-utils.h"
+#include "iwl-eeprom-parse.h"
 #include "fw/acpi.h"
 #include "fw/regulatory.h"
 
 struct iwl_fw_runtime_ops {
 	void (*dump_start)(void *ctx);
 	void (*dump_end)(void *ctx);
+	bool (*fw_running)(void *ctx);
 	int (*send_hcmd)(void *ctx, struct iwl_host_cmd *host_cmd);
 	bool (*d3_debug_enable)(void *ctx);
 };
@@ -45,10 +46,6 @@ struct iwl_fwrt_shared_mem_cfg {
  * struct iwl_fwrt_dump_data - dump data
  * @trig: trigger the worker was scheduled upon
  * @fw_pkt: packet received from FW
- *
- * Note that the decision which part of the union is used
- * is based on iwl_trans_dbg_ini_valid(): the 'trig' part
- * is used if it is %true, the 'desc' part otherwise.
  */
 struct iwl_fwrt_dump_data {
 	union {
@@ -57,7 +54,6 @@ struct iwl_fwrt_dump_data {
 			struct iwl_rx_packet *fw_pkt;
 		};
 		struct {
-			/* must be first to be same as 'trig' */
 			const struct iwl_fw_dump_desc *desc;
 			bool monitor_only;
 		};
@@ -103,6 +99,7 @@ struct iwl_txf_iter_data {
  * @cur_fw_img: current firmware image, must be maintained by
  *	the driver by calling &iwl_fw_set_current_image()
  * @dump: debug dump data
+ * @uats_enabled: VLP or AFC AP is enabled
  * @uats_table: AP type table
  * @uefi_tables_lock_status: The status of the WIFI GUID UEFI variables lock:
  *	0: Unlocked, 1 and 2: Locked.
@@ -180,8 +177,9 @@ struct iwl_fw_runtime {
 	u8 ppag_ver;
 	struct iwl_sar_offset_mapping_cmd sgom_table;
 	bool sgom_enabled;
-	struct iwl_mcc_allowed_ap_type_cmd uats_table;
+	struct iwl_uats_table_cmd uats_table;
 	u8 uefi_tables_lock_status;
+	bool uats_enabled;
 };
 
 void iwl_fw_runtime_init(struct iwl_fw_runtime *fwrt, struct iwl_trans *trans,

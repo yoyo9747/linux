@@ -7,8 +7,6 @@
 #include <linux/types.h>
 #include <linux/perf_event.h>
 #include "util/evsel_fprintf.h"
-#include "util/pmu.h"
-#include "util/pmus.h"
 #include "trace-event.h"
 
 struct bit_names {
@@ -77,12 +75,9 @@ static void __p_read_format(char *buf, size_t size, u64 value)
 }
 
 #define ENUM_ID_TO_STR_CASE(x) case x: return (#x);
-static const char *stringify_perf_type_id(struct perf_pmu *pmu, u32 type)
+static const char *stringify_perf_type_id(u64 value)
 {
-	if (pmu)
-		return pmu->name;
-
-	switch (type) {
+	switch (value) {
 	ENUM_ID_TO_STR_CASE(PERF_TYPE_HARDWARE)
 	ENUM_ID_TO_STR_CASE(PERF_TYPE_SOFTWARE)
 	ENUM_ID_TO_STR_CASE(PERF_TYPE_TRACEPOINT)
@@ -180,9 +175,9 @@ do {								\
 #define print_id_unsigned(_s)	PRINT_ID(_s, "%"PRIu64)
 #define print_id_hex(_s)	PRINT_ID(_s, "%#"PRIx64)
 
-static void __p_type_id(struct perf_pmu *pmu, char *buf, size_t size, u64 value)
+static void __p_type_id(char *buf, size_t size, u64 value)
 {
-	print_id_unsigned(stringify_perf_type_id(pmu, value));
+	print_id_unsigned(stringify_perf_type_id(value));
 }
 
 static void __p_config_hw_id(char *buf, size_t size, u64 value)
@@ -222,14 +217,8 @@ static void __p_config_tracepoint_id(char *buf, size_t size, u64 value)
 }
 #endif
 
-static void __p_config_id(struct perf_pmu *pmu, char *buf, size_t size, u32 type, u64 value)
+static void __p_config_id(char *buf, size_t size, u32 type, u64 value)
 {
-	const char *name = perf_pmu__name_from_config(pmu, value);
-
-	if (name) {
-		print_id_hex(name);
-		return;
-	}
 	switch (type) {
 	case PERF_TYPE_HARDWARE:
 		return __p_config_hw_id(buf, size, value);
@@ -257,8 +246,8 @@ static void __p_config_id(struct perf_pmu *pmu, char *buf, size_t size, u32 type
 #define p_sample_type(val)	__p_sample_type(buf, BUF_SIZE, val)
 #define p_branch_sample_type(val) __p_branch_sample_type(buf, BUF_SIZE, val)
 #define p_read_format(val)	__p_read_format(buf, BUF_SIZE, val)
-#define p_type_id(val)		__p_type_id(pmu, buf, BUF_SIZE, val)
-#define p_config_id(val)	__p_config_id(pmu, buf, BUF_SIZE, attr->type, val)
+#define p_type_id(val)		__p_type_id(buf, BUF_SIZE, val)
+#define p_config_id(val)	__p_config_id(buf, BUF_SIZE, attr->type, val)
 
 #define PRINT_ATTRn(_n, _f, _p, _a)			\
 do {							\
@@ -273,7 +262,6 @@ do {							\
 int perf_event_attr__fprintf(FILE *fp, struct perf_event_attr *attr,
 			     attr__fprintf_f attr__fprintf, void *priv)
 {
-	struct perf_pmu *pmu = perf_pmus__find_by_type(attr->type);
 	char buf[BUF_SIZE];
 	int ret = 0;
 

@@ -7,7 +7,6 @@
 
 #include <linux/bitfield.h>
 #include <linux/bits.h>
-#include <linux/circ_buf.h>
 #include <linux/clk.h>
 #include <linux/console.h>
 #include <linux/delay.h>
@@ -474,7 +473,7 @@ static void lpuart32_stop_rx(struct uart_port *port)
 
 static void lpuart_dma_tx(struct lpuart_port *sport)
 {
-	struct tty_port *tport = &sport->port.state->port;
+	struct circ_buf *xmit = &sport->port.state->xmit;
 	struct scatterlist *sgl = sport->tx_sgl;
 	struct device *dev = sport->port.dev;
 	struct dma_chan *chan = sport->dma_tx_chan;
@@ -483,10 +482,18 @@ static void lpuart_dma_tx(struct lpuart_port *sport)
 	if (sport->dma_tx_in_progress)
 		return;
 
-	sg_init_table(sgl, ARRAY_SIZE(sport->tx_sgl));
-	sport->dma_tx_bytes = kfifo_len(&tport->xmit_fifo);
-	sport->dma_tx_nents = kfifo_dma_out_prepare(&tport->xmit_fifo, sgl,
-			ARRAY_SIZE(sport->tx_sgl), sport->dma_tx_bytes);
+	sport->dma_tx_bytes = uart_circ_chars_pending(xmit);
+
+	if (xmit->tail < xmit->head || xmit->head == 0) {
+		sport->dma_tx_nents = 1;
+		sg_init_one(sgl, xmit->buf + xmit->tail, sport->dma_tx_bytes);
+	} else {
+		sport->dma_tx_nents = 2;
+		sg_init_table(sgl, 2);
+		sg_set_buf(sgl, xmit->buf + xmit->tail,
+				UART_XMIT_SIZE - xmit->tail);
+		sg_set_buf(sgl + 1, xmit->buf, xmit->head);
+	}
 
 	ret = dma_map_sg(chan->device->dev, sgl, sport->dma_tx_nents,
 			 DMA_TO_DEVICE);
@@ -514,15 +521,14 @@ static void lpuart_dma_tx(struct lpuart_port *sport)
 
 static bool lpuart_stopped_or_empty(struct uart_port *port)
 {
-	return kfifo_is_empty(&port->state->port.xmit_fifo) ||
-		uart_tx_stopped(port);
+	return uart_circ_empty(&port->state->xmit) || uart_tx_stopped(port);
 }
 
 static void lpuart_dma_tx_complete(void *arg)
 {
 	struct lpuart_port *sport = arg;
 	struct scatterlist *sgl = &sport->tx_sgl[0];
-	struct tty_port *tport = &sport->port.state->port;
+	struct circ_buf *xmit = &sport->port.state->xmit;
 	struct dma_chan *chan = sport->dma_tx_chan;
 	unsigned long flags;
 
@@ -539,7 +545,7 @@ static void lpuart_dma_tx_complete(void *arg)
 	sport->dma_tx_in_progress = false;
 	uart_port_unlock_irqrestore(&sport->port, flags);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&sport->port);
 
 	if (waitqueue_active(&sport->dma_wait)) {
@@ -750,9 +756,8 @@ static inline void lpuart_transmit_buffer(struct lpuart_port *sport)
 
 static inline void lpuart32_transmit_buffer(struct lpuart_port *sport)
 {
-	struct tty_port *tport = &sport->port.state->port;
+	struct circ_buf *xmit = &sport->port.state->xmit;
 	unsigned long txcnt;
-	unsigned char c;
 
 	if (sport->port.x_char) {
 		lpuart32_write(&sport->port, sport->port.x_char, UARTDATA);
@@ -769,18 +774,18 @@ static inline void lpuart32_transmit_buffer(struct lpuart_port *sport)
 	txcnt = lpuart32_read(&sport->port, UARTWATER);
 	txcnt = txcnt >> UARTWATER_TXCNT_OFF;
 	txcnt &= UARTWATER_COUNT_MASK;
-	while (txcnt < sport->txfifo_size &&
-			uart_fifo_get(&sport->port, &c)) {
-		lpuart32_write(&sport->port, c, UARTDATA);
+	while (!uart_circ_empty(xmit) && (txcnt < sport->txfifo_size)) {
+		lpuart32_write(&sport->port, xmit->buf[xmit->tail], UARTDATA);
+		uart_xmit_advance(&sport->port, 1);
 		txcnt = lpuart32_read(&sport->port, UARTWATER);
 		txcnt = txcnt >> UARTWATER_TXCNT_OFF;
 		txcnt &= UARTWATER_COUNT_MASK;
 	}
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&sport->port);
 
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		lpuart32_stop_tx(&sport->port);
 }
 
@@ -2879,7 +2884,8 @@ static int lpuart_probe(struct platform_device *pdev)
 	sport->ipg_clk = devm_clk_get(&pdev->dev, "ipg");
 	if (IS_ERR(sport->ipg_clk)) {
 		ret = PTR_ERR(sport->ipg_clk);
-		return dev_err_probe(&pdev->dev, ret, "failed to get uart ipg clk\n");
+		dev_err(&pdev->dev, "failed to get uart ipg clk: %d\n", ret);
+		return ret;
 	}
 
 	sport->baud_clk = NULL;
@@ -2887,7 +2893,8 @@ static int lpuart_probe(struct platform_device *pdev)
 		sport->baud_clk = devm_clk_get(&pdev->dev, "baud");
 		if (IS_ERR(sport->baud_clk)) {
 			ret = PTR_ERR(sport->baud_clk);
-			return dev_err_probe(&pdev->dev, ret, "failed to get uart baud clk\n");
+			dev_err(&pdev->dev, "failed to get uart baud clk: %d\n", ret);
+			return ret;
 		}
 	}
 
@@ -2923,7 +2930,6 @@ static int lpuart_probe(struct platform_device *pdev)
 	pm_runtime_set_autosuspend_delay(&pdev->dev, UART_AUTOSUSPEND_TIMEOUT);
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
-	pm_runtime_mark_last_busy(&pdev->dev);
 
 	ret = lpuart_global_reset(sport);
 	if (ret)

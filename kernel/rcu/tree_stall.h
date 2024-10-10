@@ -7,10 +7,8 @@
  * Author: Paul E. McKenney <paulmck@linux.ibm.com>
  */
 
-#include <linux/console.h>
 #include <linux/kvm_para.h>
 #include <linux/rcu_notifier.h>
-#include <linux/smp.h>
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -372,7 +370,6 @@ static void rcu_dump_cpu_stacks(void)
 	struct rcu_node *rnp;
 
 	rcu_for_each_leaf_node(rnp) {
-		printk_deferred_enter();
 		raw_spin_lock_irqsave_rcu_node(rnp, flags);
 		for_each_leaf_node_possible_cpu(rnp, cpu)
 			if (rnp->qsmask & leaf_node_cpu_bit(rnp, cpu)) {
@@ -382,7 +379,6 @@ static void rcu_dump_cpu_stacks(void)
 					dump_cpu_task(cpu);
 			}
 		raw_spin_unlock_irqrestore_rcu_node(rnp, flags);
-		printk_deferred_exit();
 	}
 }
 
@@ -505,11 +501,10 @@ static void print_cpu_stall_info(int cpu)
 	}
 	delta = rcu_seq_ctr(rdp->mynode->gp_seq - rdp->rcu_iw_gp_seq);
 	falsepositive = rcu_is_gp_kthread_starving(NULL) &&
-			rcu_watching_snap_in_eqs(ct_rcu_watching_cpu(cpu));
+			rcu_dynticks_in_eqs(rcu_dynticks_snap(cpu));
 	rcuc_starved = rcu_is_rcuc_kthread_starving(rdp, &j);
 	if (rcuc_starved)
-		// Print signed value, as negative values indicate a probable bug.
-		snprintf(buf, sizeof(buf), " rcuc=%ld jiffies(starved)", j);
+		sprintf(buf, " rcuc=%ld jiffies(starved)", j);
 	pr_err("\t%d-%c%c%c%c: (%lu %s) idle=%04x/%ld/%#lx softirq=%u/%u fqs=%ld%s%s\n",
 	       cpu,
 	       "O."[!!cpu_online(cpu)],
@@ -519,8 +514,8 @@ static void print_cpu_stall_info(int cpu)
 			rdp->rcu_iw_pending ? (int)min(delta, 9UL) + '0' :
 				"!."[!delta],
 	       ticks_value, ticks_title,
-	       ct_rcu_watching_cpu(cpu) & 0xffff,
-	       ct_nesting_cpu(cpu), ct_nmi_nesting_cpu(cpu),
+	       rcu_dynticks_snap(cpu) & 0xffff,
+	       ct_dynticks_nesting_cpu(cpu), ct_dynticks_nmi_nesting_cpu(cpu),
 	       rdp->softirq_snap, kstat_softirqs_cpu(RCU_SOFTIRQ, cpu),
 	       data_race(rcu_state.n_force_qs) - rcu_state.n_force_qs_gpstart,
 	       rcuc_starved ? buf : "",
@@ -584,7 +579,7 @@ static void rcu_check_gp_kthread_expired_fqs_timer(void)
 		pr_err("%s kthread timer wakeup didn't happen for %ld jiffies! g%ld f%#x %s(%d) ->state=%#x\n",
 		       rcu_state.name, (jiffies - jiffies_fqs),
 		       (long)rcu_seq_current(&rcu_state.gp_seq),
-		       data_race(READ_ONCE(rcu_state.gp_flags)), // Diagnostic read
+		       data_race(rcu_state.gp_flags),
 		       gp_state_getname(RCU_GP_WAIT_FQS), RCU_GP_WAIT_FQS,
 		       data_race(READ_ONCE(gpk->__state)));
 		pr_err("\tPossible timer handling issue on cpu=%d timer-softirq=%u\n",
@@ -608,8 +603,6 @@ static void print_other_cpu_stall(unsigned long gp_seq, unsigned long gps)
 	rcu_stall_kick_kthreads();
 	if (rcu_stall_is_suppressed())
 		return;
-
-	nbcon_cpu_emergency_enter();
 
 	/*
 	 * OK, time to rat on our buddy...
@@ -635,8 +628,7 @@ static void print_other_cpu_stall(unsigned long gp_seq, unsigned long gps)
 		totqlen += rcu_get_n_cbs_cpu(cpu);
 	pr_err("\t(detected by %d, t=%ld jiffies, g=%ld, q=%lu ncpus=%d)\n",
 	       smp_processor_id(), (long)(jiffies - gps),
-	       (long)rcu_seq_current(&rcu_state.gp_seq), totqlen,
-	       data_race(rcu_state.n_online_cpus)); // Diagnostic read
+	       (long)rcu_seq_current(&rcu_state.gp_seq), totqlen, rcu_state.n_online_cpus);
 	if (ndetected) {
 		rcu_dump_cpu_stacks();
 
@@ -663,8 +655,6 @@ static void print_other_cpu_stall(unsigned long gp_seq, unsigned long gps)
 	rcu_check_gp_kthread_expired_fqs_timer();
 	rcu_check_gp_kthread_starvation();
 
-	nbcon_cpu_emergency_exit();
-
 	panic_on_rcu_stall();
 
 	rcu_force_quiescent_state();  /* Kick them all. */
@@ -685,8 +675,6 @@ static void print_cpu_stall(unsigned long gps)
 	if (rcu_stall_is_suppressed())
 		return;
 
-	nbcon_cpu_emergency_enter();
-
 	/*
 	 * OK, time to rat on ourselves...
 	 * See Documentation/RCU/stallwarn.rst for info on how to debug
@@ -701,8 +689,7 @@ static void print_cpu_stall(unsigned long gps)
 		totqlen += rcu_get_n_cbs_cpu(cpu);
 	pr_err("\t(t=%lu jiffies g=%ld q=%lu ncpus=%d)\n",
 		jiffies - gps,
-		(long)rcu_seq_current(&rcu_state.gp_seq), totqlen,
-		data_race(rcu_state.n_online_cpus)); // Diagnostic read
+		(long)rcu_seq_current(&rcu_state.gp_seq), totqlen, rcu_state.n_online_cpus);
 
 	rcu_check_gp_kthread_expired_fqs_timer();
 	rcu_check_gp_kthread_starvation();
@@ -716,8 +703,6 @@ static void print_cpu_stall(unsigned long gps)
 			   jiffies + 3 * rcu_jiffies_till_stall_check() + 3);
 	raw_spin_unlock_irqrestore_rcu_node(rnp, flags);
 
-	nbcon_cpu_emergency_exit();
-
 	panic_on_rcu_stall();
 
 	/*
@@ -730,9 +715,6 @@ static void print_cpu_stall(unsigned long gps)
 	set_tsk_need_resched(current);
 	set_preempt_need_resched();
 }
-
-static bool csd_lock_suppress_rcu_stall;
-module_param(csd_lock_suppress_rcu_stall, bool, 0644);
 
 static void check_cpu_stall(struct rcu_data *rdp)
 {
@@ -806,9 +788,7 @@ static void check_cpu_stall(struct rcu_data *rdp)
 			return;
 
 		rcu_stall_notifier_call_chain(RCU_STALL_NOTIFY_NORM, (void *)j - gps);
-		if (READ_ONCE(csd_lock_suppress_rcu_stall) && csd_lock_is_stuck()) {
-			pr_err("INFO: %s detected stall, but suppressed full report due to a stuck CSD-lock.\n", rcu_state.name);
-		} else if (self_detected) {
+		if (self_detected) {
 			/* We haven't checked in, so go dump stack. */
 			print_cpu_stall(gps);
 		} else {

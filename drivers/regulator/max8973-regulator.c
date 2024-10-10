@@ -470,7 +470,8 @@ static const struct thermal_zone_device_ops max77621_tz_ops = {
 static int max8973_thermal_init(struct max8973_chip *mchip)
 {
 	struct thermal_zone_device *tzd;
-	unsigned long irq_flags;
+	struct irq_data *irq_data;
+	unsigned long irq_flags = 0;
 	int ret;
 
 	if (mchip->id != MAX77621)
@@ -488,7 +489,9 @@ static int max8973_thermal_init(struct max8973_chip *mchip)
 	if (mchip->irq <= 0)
 		return 0;
 
-	irq_flags = irq_get_trigger_type(mchip->irq);
+	irq_data = irq_get_irq_data(mchip->irq);
+	if (irq_data)
+		irq_flags = irqd_get_trigger_type(irq_data);
 
 	ret = devm_request_threaded_irq(mchip->dev, mchip->irq, NULL,
 					max8973_thermal_irq,
@@ -507,7 +510,7 @@ static const struct regmap_config max8973_regmap_config = {
 	.reg_bits		= 8,
 	.val_bits		= 8,
 	.max_register		= MAX8973_CHIPID2,
-	.cache_type		= REGCACHE_MAPLE,
+	.cache_type		= REGCACHE_RBTREE,
 };
 
 static struct max8973_regulator_platform_data *max8973_parse_dt(

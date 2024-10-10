@@ -545,5 +545,4 @@ EXPORT_SYMBOL(unload_nls);
 EXPORT_SYMBOL(load_nls);
 EXPORT_SYMBOL(load_nls_default);
 
-MODULE_DESCRIPTION("Base file system native language support");
 MODULE_LICENSE("Dual BSD/GPL");

@@ -379,5 +379,4 @@ static struct kunit_suite drm_framebuffer_test_suite = {
 
 kunit_test_suite(drm_framebuffer_test_suite);
 
-MODULE_DESCRIPTION("Test cases for the drm_framebuffer functions");
 MODULE_LICENSE("GPL");

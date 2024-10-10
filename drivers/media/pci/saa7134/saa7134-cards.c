@@ -5152,7 +5152,7 @@ struct saa7134_board saa7134_boards[] = {
 		},
 	},
 	[SAA7134_BOARD_AVERMEDIA_STUDIO_507UA] = {
-		/* Andy Shevchenko <andy@kernel.org> */
+		/* Andy Shevchenko <andy@smile.org.ua> */
 		.name           = "Avermedia AVerTV Studio 507UA",
 		.audio_clock    = 0x00187de7,
 		.tuner_type     = TUNER_PHILIPS_FM1216ME_MK3, /* Should be MK5 */

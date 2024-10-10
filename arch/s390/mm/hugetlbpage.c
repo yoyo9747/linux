@@ -121,7 +121,7 @@ static inline pte_t __rste_to_pte(unsigned long rste)
 
 static void clear_huge_pte_skeys(struct mm_struct *mm, unsigned long rste)
 {
-	struct folio *folio;
+	struct page *page;
 	unsigned long size, paddr;
 
 	if (!mm_uses_skeys(mm) ||
@@ -129,16 +129,16 @@ static void clear_huge_pte_skeys(struct mm_struct *mm, unsigned long rste)
 		return;
 
 	if ((rste & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R3) {
-		folio = page_folio(pud_page(__pud(rste)));
+		page = pud_page(__pud(rste));
 		size = PUD_SIZE;
 		paddr = rste & PUD_MASK;
 	} else {
-		folio = page_folio(pmd_page(__pmd(rste)));
+		page = pmd_page(__pmd(rste));
 		size = PMD_SIZE;
 		paddr = rste & PMD_MASK;
 	}
 
-	if (!test_and_set_bit(PG_arch_1, &folio->flags))
+	if (!test_and_set_bit(PG_arch_1, &page->flags))
 		__storage_key_init_range(paddr, paddr + size);
 }
 
@@ -169,7 +169,7 @@ void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
 	__set_huge_pte_at(mm, addr, ptep, pte);
 }
 
-pte_t huge_ptep_get(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
+pte_t huge_ptep_get(pte_t *ptep)
 {
 	return __rste_to_pte(pte_val(*ptep));
 }
@@ -177,7 +177,7 @@ pte_t huge_ptep_get(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
 pte_t huge_ptep_get_and_clear(struct mm_struct *mm,
 			      unsigned long addr, pte_t *ptep)
 {
-	pte_t pte = huge_ptep_get(mm, addr, ptep);
+	pte_t pte = huge_ptep_get(ptep);
 	pmd_t *pmdp = (pmd_t *) ptep;
 	pud_t *pudp = (pud_t *) ptep;
 
@@ -233,6 +233,16 @@ pte_t *huge_pte_offset(struct mm_struct *mm,
 	return (pte_t *) pmdp;
 }
 
+int pmd_huge(pmd_t pmd)
+{
+	return pmd_leaf(pmd);
+}
+
+int pud_huge(pud_t pud)
+{
+	return pud_leaf(pud);
+}
+
 bool __init arch_hugetlb_valid_size(unsigned long size)
 {
 	if (MACHINE_HAS_EDAT1 && size == PMD_SIZE)
@@ -248,12 +258,14 @@ static unsigned long hugetlb_get_unmapped_area_bottomup(struct file *file,
 		unsigned long pgoff, unsigned long flags)
 {
 	struct hstate *h = hstate_file(file);
-	struct vm_unmapped_area_info info = {};
+	struct vm_unmapped_area_info info;
 
+	info.flags = 0;
 	info.length = len;
 	info.low_limit = current->mm->mmap_base;
 	info.high_limit = TASK_SIZE;
 	info.align_mask = PAGE_MASK & ~huge_page_mask(h);
+	info.align_offset = 0;
 	return vm_unmapped_area(&info);
 }
 
@@ -262,7 +274,7 @@ static unsigned long hugetlb_get_unmapped_area_topdown(struct file *file,
 		unsigned long pgoff, unsigned long flags)
 {
 	struct hstate *h = hstate_file(file);
-	struct vm_unmapped_area_info info = {};
+	struct vm_unmapped_area_info info;
 	unsigned long addr;
 
 	info.flags = VM_UNMAPPED_AREA_TOPDOWN;
@@ -270,6 +282,7 @@ static unsigned long hugetlb_get_unmapped_area_topdown(struct file *file,
 	info.low_limit = PAGE_SIZE;
 	info.high_limit = current->mm->mmap_base;
 	info.align_mask = PAGE_MASK & ~huge_page_mask(h);
+	info.align_offset = 0;
 	addr = vm_unmapped_area(&info);
 
 	/*
@@ -315,7 +328,7 @@ unsigned long hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
 			goto check_asce_limit;
 	}
 
-	if (!test_bit(MMF_TOPDOWN, &mm->flags))
+	if (mm->get_unmapped_area == arch_get_unmapped_area)
 		addr = hugetlb_get_unmapped_area_bottomup(file, addr, len,
 				pgoff, flags);
 	else

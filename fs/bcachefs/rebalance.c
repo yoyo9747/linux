@@ -13,7 +13,6 @@
 #include "errcode.h"
 #include "error.h"
 #include "inode.h"
-#include "io_write.h"
 #include "move.h"
 #include "rebalance.h"
 #include "subvolume.h"
@@ -43,7 +42,7 @@ static int __bch2_set_rebalance_needs_scan(struct btree_trans *trans, u64 inum)
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_rebalance_work,
 			     SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
-			     BTREE_ITER_intent);
+			     BTREE_ITER_INTENT);
 	k = bch2_btree_iter_peek_slot(&iter);
 	ret = bkey_err(k);
 	if (ret)
@@ -90,7 +89,7 @@ static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, u64 inum, 
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_rebalance_work,
 			     SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
-			     BTREE_ITER_intent);
+			     BTREE_ITER_INTENT);
 	k = bch2_btree_iter_peek_slot(&iter);
 	ret = bkey_err(k);
 	if (ret)
@@ -141,7 +140,7 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 	bch2_trans_iter_init(trans, extent_iter,
 			     work_pos.inode ? BTREE_ID_extents : BTREE_ID_reflink,
 			     work_pos,
-			     BTREE_ITER_all_snapshots);
+			     BTREE_ITER_ALL_SNAPSHOTS);
 	k = bch2_btree_iter_peek_slot(extent_iter);
 	if (bkey_err(k))
 		return k;
@@ -157,7 +156,6 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 	data_opts->rewrite_ptrs		=
 		bch2_bkey_ptrs_need_rebalance(c, k, r->target, r->compression);
 	data_opts->target		= r->target;
-	data_opts->write_flags		|= BCH_WRITE_ONLY_SPECIFIED_DEVS;
 
 	if (!data_opts->rewrite_ptrs) {
 		/*
@@ -265,7 +263,6 @@ static bool rebalance_pred(struct bch_fs *c, void *arg,
 
 	data_opts->rewrite_ptrs		= bch2_bkey_ptrs_need_rebalance(c, k, target, compression);
 	data_opts->target		= target;
-	data_opts->write_flags		|= BCH_WRITE_ONLY_SPECIFIED_DEVS;
 	return data_opts->rewrite_ptrs != 0;
 }
 
@@ -326,14 +323,12 @@ static int do_rebalance(struct moving_context *ctxt)
 	struct bkey_s_c k;
 	int ret = 0;
 
-	bch2_trans_begin(trans);
-
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
 	bch2_move_stats_init(&r->scan_stats, "rebalance_scan");
 
 	bch2_trans_iter_init(trans, &rebalance_work_iter,
 			     BTREE_ID_rebalance_work, POS_MIN,
-			     BTREE_ITER_all_snapshots);
+			     BTREE_ITER_ALL_SNAPSHOTS);
 
 	while (!bch2_move_ratelimit(ctxt)) {
 		if (!r->enabled) {

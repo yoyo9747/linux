@@ -67,8 +67,7 @@ int main(void)
 		dump_maps();
 		ksft_exit_fail_msg("Error: munmap failed!?\n");
 	}
-	ksft_print_msg("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
-	ksft_test_result_pass("mmap() 5*PAGE_SIZE at base\n");
+	ksft_test_result_pass("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
 
 	addr = base_addr + page_size;
 	size = 3 * page_size;
@@ -77,8 +76,7 @@ int main(void)
 		dump_maps();
 		ksft_exit_fail_msg("Error: first mmap() failed unexpectedly\n");
 	}
-	ksft_print_msg("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
-	ksft_test_result_pass("mmap() 3*PAGE_SIZE at base+PAGE_SIZE\n");
+	ksft_test_result_pass("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
 
 	/*
 	 * Exact same mapping again:
@@ -95,8 +93,7 @@ int main(void)
 		dump_maps();
 		ksft_exit_fail_msg("Error:1: mmap() succeeded when it shouldn't have\n");
 	}
-	ksft_print_msg("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
-	ksft_test_result_pass("mmap() 5*PAGE_SIZE at base\n");
+	ksft_test_result_pass("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
 
 	/*
 	 * Second mapping contained within first:
@@ -114,8 +111,7 @@ int main(void)
 		dump_maps();
 		ksft_exit_fail_msg("Error:2: mmap() succeeded when it shouldn't have\n");
 	}
-	ksft_print_msg("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
-	ksft_test_result_pass("mmap() 2*PAGE_SIZE at base+PAGE_SIZE\n");
+	ksft_test_result_pass("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
 
 	/*
 	 * Overlap end of existing mapping:
@@ -132,8 +128,7 @@ int main(void)
 		dump_maps();
 		ksft_exit_fail_msg("Error:3: mmap() succeeded when it shouldn't have\n");
 	}
-	ksft_print_msg("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
-	ksft_test_result_pass("mmap() 2*PAGE_SIZE  at base+(3*PAGE_SIZE)\n");
+	ksft_test_result_pass("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
 
 	/*
 	 * Overlap start of existing mapping:
@@ -150,8 +145,7 @@ int main(void)
 		dump_maps();
 		ksft_exit_fail_msg("Error:4: mmap() succeeded when it shouldn't have\n");
 	}
-	ksft_print_msg("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
-	ksft_test_result_pass("mmap() 2*PAGE_SIZE bytes at base\n");
+	ksft_test_result_pass("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
 
 	/*
 	 * Adjacent to start of existing mapping:
@@ -168,8 +162,7 @@ int main(void)
 		dump_maps();
 		ksft_exit_fail_msg("Error:5: mmap() failed when it shouldn't have\n");
 	}
-	ksft_print_msg("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
-	ksft_test_result_pass("mmap() PAGE_SIZE at base\n");
+	ksft_test_result_pass("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
 
 	/*
 	 * Adjacent to end of existing mapping:
@@ -186,8 +179,7 @@ int main(void)
 		dump_maps();
 		ksft_exit_fail_msg("Error:6: mmap() failed when it shouldn't have\n");
 	}
-	ksft_print_msg("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
-	ksft_test_result_pass("mmap() PAGE_SIZE at base+(4*PAGE_SIZE)\n");
+	ksft_test_result_pass("mmap() @ 0x%lx-0x%lx p=%p result=%m\n", addr, addr + size, p);
 
 	addr = base_addr;
 	size = 5 * page_size;

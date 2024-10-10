@@ -763,7 +763,7 @@ static bool exynos5_i2c_poll_irqs_timeout(struct exynos5_i2c *i2c,
 static int exynos5_i2c_xfer_msg(struct exynos5_i2c *i2c,
 			      struct i2c_msg *msgs, int stop)
 {
-	unsigned long time_left;
+	unsigned long timeout;
 	int ret;
 
 	i2c->msg = msgs;
@@ -775,13 +775,13 @@ static int exynos5_i2c_xfer_msg(struct exynos5_i2c *i2c,
 	exynos5_i2c_message_start(i2c, stop);
 
 	if (!i2c->atomic)
-		time_left = wait_for_completion_timeout(&i2c->msg_complete,
-							EXYNOS5_I2C_TIMEOUT);
+		timeout = wait_for_completion_timeout(&i2c->msg_complete,
+						      EXYNOS5_I2C_TIMEOUT);
 	else
-		time_left = exynos5_i2c_poll_irqs_timeout(i2c,
-							  EXYNOS5_I2C_TIMEOUT);
+		timeout = exynos5_i2c_poll_irqs_timeout(i2c,
+							EXYNOS5_I2C_TIMEOUT);
 
-	if (time_left == 0)
+	if (timeout == 0)
 		ret = -ETIMEDOUT;
 	else
 		ret = i2c->state;

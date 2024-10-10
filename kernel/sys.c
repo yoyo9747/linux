@@ -146,15 +146,6 @@
 #ifndef RISCV_V_GET_CONTROL
 # define RISCV_V_GET_CONTROL()		(-EINVAL)
 #endif
-#ifndef RISCV_SET_ICACHE_FLUSH_CTX
-# define RISCV_SET_ICACHE_FLUSH_CTX(a, b)	(-EINVAL)
-#endif
-#ifndef PPC_GET_DEXCR_ASPECT
-# define PPC_GET_DEXCR_ASPECT(a, b)	(-EINVAL)
-#endif
-#ifndef PPC_SET_DEXCR_ASPECT
-# define PPC_SET_DEXCR_ASPECT(a, b, c)	(-EINVAL)
-#endif
 
 /*
  * this is where the system-wide overflow UID and GID are defined, for
@@ -1916,10 +1907,10 @@ static int prctl_set_mm_exe_file(struct mm_struct *mm, unsigned int fd)
 	int err;
 
 	exe = fdget(fd);
-	if (!fd_file(exe))
+	if (!exe.file)
 		return -EBADF;
 
-	inode = file_inode(fd_file(exe));
+	inode = file_inode(exe.file);
 
 	/*
 	 * Because the original mm->exe_file points to executable file, make
@@ -1927,14 +1918,14 @@ static int prctl_set_mm_exe_file(struct mm_struct *mm, unsigned int fd)
 	 * overall picture.
 	 */
 	err = -EACCES;
-	if (!S_ISREG(inode->i_mode) || path_noexec(&fd_file(exe)->f_path))
+	if (!S_ISREG(inode->i_mode) || path_noexec(&exe.file->f_path))
 		goto exit;
 
-	err = file_permission(fd_file(exe), MAY_EXEC);
+	err = file_permission(exe.file, MAY_EXEC);
 	if (err)
 		goto exit;
 
-	err = replace_mm_exe_file(mm, fd_file(exe));
+	err = replace_mm_exe_file(mm, exe.file);
 exit:
 	fdput(exe);
 	return err;
@@ -2557,8 +2548,6 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			error = current->timer_slack_ns;
 		break;
 	case PR_SET_TIMERSLACK:
-		if (rt_or_dl_task_policy(current))
-			break;
 		if (arg2 <= 0)
 			current->timer_slack_ns =
 					current->default_timer_slack_ns;
@@ -2737,16 +2726,6 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	case PR_GET_MDWE:
 		error = prctl_get_mdwe(arg2, arg3, arg4, arg5);
 		break;
-	case PR_PPC_GET_DEXCR:
-		if (arg3 || arg4 || arg5)
-			return -EINVAL;
-		error = PPC_GET_DEXCR_ASPECT(me, arg2);
-		break;
-	case PR_PPC_SET_DEXCR:
-		if (arg4 || arg5)
-			return -EINVAL;
-		error = PPC_SET_DEXCR_ASPECT(me, arg2, arg3);
-		break;
 	case PR_SET_VMA:
 		error = prctl_set_vma(arg2, arg3, arg4, arg5);
 		break;
@@ -2780,9 +2759,6 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		break;
 	case PR_RISCV_V_GET_CONTROL:
 		error = RISCV_V_GET_CONTROL();
-		break;
-	case PR_RISCV_SET_ICACHE_FLUSH_CTX:
-		error = RISCV_SET_ICACHE_FLUSH_CTX(arg2, arg3);
 		break;
 	default:
 		error = -EINVAL;

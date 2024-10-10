@@ -13,7 +13,6 @@
 #include "uvc_configfs.h"
 
 #include <linux/sort.h>
-#include <linux/usb/uvc.h>
 #include <linux/usb/video.h>
 
 /* -----------------------------------------------------------------------------
@@ -2261,8 +2260,6 @@ static ssize_t uvcg_uncompressed_guid_format_store(struct config_item *item,
 	struct f_uvc_opts *opts;
 	struct config_item *opts_item;
 	struct mutex *su_mutex = &ch->fmt.group.cg_subsys->su_mutex;
-	const struct uvc_format_desc *format;
-	u8 tmpguidFormat[sizeof(ch->desc.guidFormat)];
 	int ret;
 
 	mutex_lock(su_mutex); /* for navigating configfs hierarchy */
@@ -2276,16 +2273,7 @@ static ssize_t uvcg_uncompressed_guid_format_store(struct config_item *item,
 		goto end;
 	}
 
-	memcpy(tmpguidFormat, page,
-	       min(sizeof(tmpguidFormat), len));
-
-	format = uvc_format_by_guid(tmpguidFormat);
-	if (!format) {
-		ret = -EINVAL;
-		goto end;
-	}
-
-	memcpy(ch->desc.guidFormat, tmpguidFormat,
+	memcpy(ch->desc.guidFormat, page,
 	       min(sizeof(ch->desc.guidFormat), len));
 	ret = sizeof(ch->desc.guidFormat);
 

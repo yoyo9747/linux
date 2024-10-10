@@ -42,7 +42,7 @@
 
 static bool no_buildid_cache;
 
-int build_id__mark_dso_hit(const struct perf_tool *tool __maybe_unused,
+int build_id__mark_dso_hit(struct perf_tool *tool __maybe_unused,
 			   union perf_event *event,
 			   struct perf_sample *sample,
 			   struct evsel *evsel __maybe_unused,
@@ -60,12 +60,44 @@ int build_id__mark_dso_hit(const struct perf_tool *tool __maybe_unused,
 
 	addr_location__init(&al);
 	if (thread__find_map(thread, sample->cpumode, sample->ip, &al))
-		dso__set_hit(map__dso(al.map));
+		map__dso(al.map)->hit = 1;
 
 	addr_location__exit(&al);
 	thread__put(thread);
 	return 0;
 }
+
+static int perf_event__exit_del_thread(struct perf_tool *tool __maybe_unused,
+				       union perf_event *event,
+				       struct perf_sample *sample
+				       __maybe_unused,
+				       struct machine *machine)
+{
+	struct thread *thread = machine__findnew_thread(machine,
+							event->fork.pid,
+							event->fork.tid);
+
+	dump_printf("(%d:%d):(%d:%d)\n", event->fork.pid, event->fork.tid,
+		    event->fork.ppid, event->fork.ptid);
+
+	if (thread) {
+		machine__remove_thread(machine, thread);
+		thread__put(thread);
+	}
+
+	return 0;
+}
+
+struct perf_tool build_id__mark_dso_hit_ops = {
+	.sample	= build_id__mark_dso_hit,
+	.mmap	= perf_event__process_mmap,
+	.mmap2	= perf_event__process_mmap2,
+	.fork	= perf_event__process_fork,
+	.exit	= perf_event__exit_del_thread,
+	.attr		 = perf_event__process_attr,
+	.build_id	 = perf_event__process_build_id,
+	.ordered_events	 = true,
+};
 
 int build_id__sprintf(const struct build_id *build_id, char *bf)
 {
@@ -240,10 +272,10 @@ char *__dso__build_id_filename(const struct dso *dso, char *bf, size_t size,
 	bool alloc = (bf == NULL);
 	int ret;
 
-	if (!dso__has_build_id(dso))
+	if (!dso->has_build_id)
 		return NULL;
 
-	build_id__sprintf(dso__bid_const(dso), sbuild_id);
+	build_id__sprintf(&dso->bid, sbuild_id);
 	linkname = build_id_cache__linkname(sbuild_id, NULL, 0);
 	if (!linkname)
 		return NULL;
@@ -277,8 +309,8 @@ static int write_buildid(const char *name, size_t name_len, struct build_id *bid
 	struct perf_record_header_build_id b;
 	size_t len;
 
-	len = sizeof(b) + name_len + 1;
-	len = PERF_ALIGN(len, sizeof(u64));
+	len = name_len + 1;
+	len = PERF_ALIGN(len, NAME_ALIGN);
 
 	memset(&b, 0, sizeof(b));
 	memcpy(&b.data, bid->data, bid->size);
@@ -286,7 +318,7 @@ static int write_buildid(const char *name, size_t name_len, struct build_id *bid
 	misc |= PERF_RECORD_MISC_BUILD_ID_SIZE;
 	b.pid = pid;
 	b.header.misc = misc;
-	b.header.size = len;
+	b.header.size = sizeof(b) + len;
 
 	err = do_write(fd, &b, sizeof(b));
 	if (err < 0)
@@ -295,56 +327,48 @@ static int write_buildid(const char *name, size_t name_len, struct build_id *bid
 	return write_padded(fd, name, name_len + 1, len);
 }
 
-struct machine__write_buildid_table_cb_args {
-	struct machine *machine;
-	struct feat_fd *fd;
-	u16 kmisc, umisc;
-};
-
-static int machine__write_buildid_table_cb(struct dso *dso, void *data)
+static int machine__write_buildid_table(struct machine *machine,
+					struct feat_fd *fd)
 {
-	struct machine__write_buildid_table_cb_args *args = data;
-	const char *name;
-	size_t name_len;
-	bool in_kernel = false;
-
-	if (!dso__has_build_id(dso))
-		return 0;
-
-	if (!dso__hit(dso) && !dso__is_vdso(dso))
-		return 0;
-
-	if (dso__is_vdso(dso)) {
-		name = dso__short_name(dso);
-		name_len = dso__short_name_len(dso);
-	} else if (dso__is_kcore(dso)) {
-		name = args->machine->mmap_name;
-		name_len = strlen(name);
-	} else {
-		name = dso__long_name(dso);
-		name_len = dso__long_name_len(dso);
-	}
-
-	in_kernel = dso__kernel(dso) || is_kernel_module(name, PERF_RECORD_MISC_CPUMODE_UNKNOWN);
-	return write_buildid(name, name_len, dso__bid(dso), args->machine->pid,
-			     in_kernel ? args->kmisc : args->umisc, args->fd);
-}
-
-static int machine__write_buildid_table(struct machine *machine, struct feat_fd *fd)
-{
-	struct machine__write_buildid_table_cb_args args = {
-		.machine = machine,
-		.fd = fd,
-		.kmisc = PERF_RECORD_MISC_KERNEL,
-		.umisc = PERF_RECORD_MISC_USER,
-	};
+	int err = 0;
+	struct dso *pos;
+	u16 kmisc = PERF_RECORD_MISC_KERNEL,
+	    umisc = PERF_RECORD_MISC_USER;
 
 	if (!machine__is_host(machine)) {
-		args.kmisc = PERF_RECORD_MISC_GUEST_KERNEL;
-		args.umisc = PERF_RECORD_MISC_GUEST_USER;
+		kmisc = PERF_RECORD_MISC_GUEST_KERNEL;
+		umisc = PERF_RECORD_MISC_GUEST_USER;
 	}
 
-	return dsos__for_each_dso(&machine->dsos, machine__write_buildid_table_cb, &args);
+	dsos__for_each_with_build_id(pos, &machine->dsos.head) {
+		const char *name;
+		size_t name_len;
+		bool in_kernel = false;
+
+		if (!pos->hit && !dso__is_vdso(pos))
+			continue;
+
+		if (dso__is_vdso(pos)) {
+			name = pos->short_name;
+			name_len = pos->short_name_len;
+		} else if (dso__is_kcore(pos)) {
+			name = machine->mmap_name;
+			name_len = strlen(name);
+		} else {
+			name = pos->long_name;
+			name_len = pos->long_name_len;
+		}
+
+		in_kernel = pos->kernel ||
+				is_kernel_module(name,
+					PERF_RECORD_MISC_CPUMODE_UNKNOWN);
+		err = write_buildid(name, name_len, &pos->bid, machine->pid,
+				    in_kernel ? kmisc : umisc, fd);
+		if (err)
+			break;
+	}
+
+	return err;
 }
 
 int perf_session__write_buildid_table(struct perf_session *session,
@@ -364,6 +388,42 @@ int perf_session__write_buildid_table(struct perf_session *session,
 			break;
 	}
 	return err;
+}
+
+static int __dsos__hit_all(struct list_head *head)
+{
+	struct dso *pos;
+
+	list_for_each_entry(pos, head, node)
+		pos->hit = true;
+
+	return 0;
+}
+
+static int machine__hit_all_dsos(struct machine *machine)
+{
+	return __dsos__hit_all(&machine->dsos.head);
+}
+
+int dsos__hit_all(struct perf_session *session)
+{
+	struct rb_node *nd;
+	int err;
+
+	err = machine__hit_all_dsos(&session->machines.host);
+	if (err)
+		return err;
+
+	for (nd = rb_first_cached(&session->machines.guests); nd;
+	     nd = rb_next(nd)) {
+		struct machine *pos = rb_entry(nd, struct machine, rb_node);
+
+		err = machine__hit_all_dsos(pos);
+		if (err)
+			return err;
+	}
+
+	return 0;
 }
 
 void disable_buildid_cache(void)
@@ -844,11 +904,11 @@ static bool dso__build_id_mismatch(struct dso *dso, const char *name)
 	struct build_id bid;
 	bool ret = false;
 
-	mutex_lock(dso__lock(dso));
-	if (filename__read_build_id_ns(name, &bid, dso__nsinfo(dso)) >= 0)
+	mutex_lock(&dso->lock);
+	if (filename__read_build_id_ns(name, &bid, dso->nsinfo) >= 0)
 		ret = !dso__build_id_equal(dso, &bid);
 
-	mutex_unlock(dso__lock(dso));
+	mutex_unlock(&dso->lock);
 
 	return ret;
 }
@@ -858,13 +918,13 @@ static int dso__cache_build_id(struct dso *dso, struct machine *machine,
 {
 	bool is_kallsyms = dso__is_kallsyms(dso);
 	bool is_vdso = dso__is_vdso(dso);
-	const char *name = dso__long_name(dso);
+	const char *name = dso->long_name;
 	const char *proper_name = NULL;
 	const char *root_dir = NULL;
 	char *allocated_name = NULL;
 	int ret = 0;
 
-	if (!dso__has_build_id(dso))
+	if (!dso->has_build_id)
 		return 0;
 
 	if (dso__is_kcore(dso)) {
@@ -889,10 +949,10 @@ static int dso__cache_build_id(struct dso *dso, struct machine *machine,
 	if (!is_kallsyms && dso__build_id_mismatch(dso, name))
 		goto out_free;
 
-	mutex_lock(dso__lock(dso));
-	ret = build_id_cache__add_b(dso__bid(dso), name, dso__nsinfo(dso),
+	mutex_lock(&dso->lock);
+	ret = build_id_cache__add_b(&dso->bid, name, dso->nsinfo,
 				    is_kallsyms, is_vdso, proper_name, root_dir);
-	mutex_unlock(dso__lock(dso));
+	mutex_unlock(&dso->lock);
 out_free:
 	free(allocated_name);
 	return ret;
@@ -932,7 +992,7 @@ int perf_session__cache_build_ids(struct perf_session *session)
 
 static bool machine__read_build_ids(struct machine *machine, bool with_hits)
 {
-	return dsos__read_build_ids(&machine->dsos, with_hits);
+	return __dsos__read_build_ids(&machine->dsos.head, with_hits);
 }
 
 bool perf_session__read_build_ids(struct perf_session *session, bool with_hits)

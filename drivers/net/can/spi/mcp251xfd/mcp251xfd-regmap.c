@@ -8,7 +8,7 @@
 
 #include "mcp251xfd.h"
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 static const struct regmap_config mcp251xfd_regmap_crc;
 
@@ -397,7 +397,7 @@ mcp251xfd_regmap_crc_read(void *context,
 
 		return err;
 	}
-out:
+ out:
 	memcpy(val_buf, buf_rx->data, val_len);
 
 	return 0;

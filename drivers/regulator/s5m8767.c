@@ -3,7 +3,6 @@
 // Copyright (c) 2011 Samsung Electronics Co., Ltd
 //              http://www.samsung.com
 
-#include <linux/cleanup.h>
 #include <linux/err.h>
 #include <linux/of_gpio.h>
 #include <linux/gpio/consumer.h>
@@ -522,7 +521,7 @@ static int s5m8767_pmic_dt_parse_pdata(struct platform_device *pdev,
 					struct sec_platform_data *pdata)
 {
 	struct sec_pmic_dev *iodev = dev_get_drvdata(pdev->dev.parent);
-	struct device_node *pmic_np, *reg_np;
+	struct device_node *pmic_np, *regulators_np, *reg_np;
 	struct sec_regulator_data *rdata;
 	struct sec_opmode_data *rmode;
 	unsigned int i, dvs_voltage_nr = 8, ret;
@@ -533,8 +532,7 @@ static int s5m8767_pmic_dt_parse_pdata(struct platform_device *pdev,
 		return -ENODEV;
 	}
 
-	struct device_node *regulators_np __free(device_node) = of_get_child_by_name(pmic_np,
-										     "regulators");
+	regulators_np = of_get_child_by_name(pmic_np, "regulators");
 	if (!regulators_np) {
 		dev_err(iodev->dev, "could not find regulators sub-node\n");
 		return -EINVAL;
@@ -546,14 +544,18 @@ static int s5m8767_pmic_dt_parse_pdata(struct platform_device *pdev,
 	rdata = devm_kcalloc(&pdev->dev,
 			     pdata->num_regulators, sizeof(*rdata),
 			     GFP_KERNEL);
-	if (!rdata)
+	if (!rdata) {
+		of_node_put(regulators_np);
 		return -ENOMEM;
+	}
 
 	rmode = devm_kcalloc(&pdev->dev,
 			     pdata->num_regulators, sizeof(*rmode),
 			     GFP_KERNEL);
-	if (!rmode)
+	if (!rmode) {
+		of_node_put(regulators_np);
 		return -ENOMEM;
+	}
 
 	pdata->regulators = rdata;
 	pdata->opmode = rmode;
@@ -579,6 +581,7 @@ static int s5m8767_pmic_dt_parse_pdata(struct platform_device *pdev,
 			rdata->ext_control_gpiod = NULL;
 		} else if (IS_ERR(rdata->ext_control_gpiod)) {
 			of_node_put(reg_np);
+			of_node_put(regulators_np);
 			return PTR_ERR(rdata->ext_control_gpiod);
 		}
 
@@ -599,6 +602,8 @@ static int s5m8767_pmic_dt_parse_pdata(struct platform_device *pdev,
 		}
 		rmode++;
 	}
+
+	of_node_put(regulators_np);
 
 	if (of_property_read_bool(pmic_np, "s5m8767,pmic-buck2-uses-gpio-dvs")) {
 		pdata->buck2_gpiodvs = true;

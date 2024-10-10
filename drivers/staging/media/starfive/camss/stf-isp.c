@@ -10,6 +10,9 @@
 
 #include "stf-camss.h"
 
+#define SINK_FORMATS_INDEX	0
+#define SOURCE_FORMATS_INDEX	1
+
 static int isp_set_selection(struct v4l2_subdev *sd,
 			     struct v4l2_subdev_state *state,
 			     struct v4l2_subdev_selection *sel);
@@ -91,7 +94,10 @@ static void isp_try_format(struct stf_isp_dev *isp_dev,
 		return;
 	}
 
-	formats = &isp_dev->formats[pad];
+	if (pad == STF_ISP_PAD_SINK)
+		formats = &isp_dev->formats[SINK_FORMATS_INDEX];
+	else if (pad == STF_ISP_PAD_SRC)
+		formats = &isp_dev->formats[SOURCE_FORMATS_INDEX];
 
 	fmt->width = clamp_t(u32, fmt->width, STFCAMSS_FRAME_MIN_WIDTH,
 			     STFCAMSS_FRAME_MAX_WIDTH);
@@ -117,7 +123,7 @@ static int isp_enum_mbus_code(struct v4l2_subdev *sd,
 		if (code->index >= ARRAY_SIZE(isp_formats_sink))
 			return -EINVAL;
 
-		formats = &isp_dev->formats[code->pad];
+		formats = &isp_dev->formats[SINK_FORMATS_INDEX];
 		code->code = formats->fmts[code->index].code;
 	} else {
 		struct v4l2_mbus_framefmt *sink_fmt;

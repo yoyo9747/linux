@@ -21,7 +21,7 @@
 #include "ebitmap.h"
 #include "policydb.h"
 
-#define BITS_PER_U64 ((u32)(sizeof(u64) * 8))
+#define BITS_PER_U64 (sizeof(u64) * 8)
 
 static struct kmem_cache *ebitmap_node_cachep __ro_after_init;
 
@@ -79,8 +79,7 @@ int ebitmap_and(struct ebitmap *dst, const struct ebitmap *e1,
 		const struct ebitmap *e2)
 {
 	struct ebitmap_node *n;
-	u32 bit;
-	int rc;
+	int bit, rc;
 
 	ebitmap_init(dst);
 
@@ -257,7 +256,7 @@ int ebitmap_contains(const struct ebitmap *e1, const struct ebitmap *e2,
 	return 1;
 }
 
-int ebitmap_get_bit(const struct ebitmap *e, u32 bit)
+int ebitmap_get_bit(const struct ebitmap *e, unsigned long bit)
 {
 	const struct ebitmap_node *n;
 
@@ -274,7 +273,7 @@ int ebitmap_get_bit(const struct ebitmap *e, u32 bit)
 	return 0;
 }
 
-int ebitmap_set_bit(struct ebitmap *e, u32 bit, int value)
+int ebitmap_set_bit(struct ebitmap *e, unsigned long bit, int value)
 {
 	struct ebitmap_node *n, *prev, *new;
 
@@ -285,7 +284,7 @@ int ebitmap_set_bit(struct ebitmap *e, u32 bit, int value)
 			if (value) {
 				ebitmap_node_set_bit(n, bit);
 			} else {
-				u32 s;
+				unsigned int s;
 
 				ebitmap_node_clr_bit(n, bit);
 
@@ -363,12 +362,12 @@ void ebitmap_destroy(struct ebitmap *e)
 int ebitmap_read(struct ebitmap *e, void *fp)
 {
 	struct ebitmap_node *n = NULL;
-	u32 mapunit, count, startbit, index, i;
+	u32 mapunit, count, startbit, index;
 	__le32 ebitmap_start;
 	u64 map;
 	__le64 mapbits;
 	__le32 buf[3];
-	int rc;
+	int rc, i;
 
 	ebitmap_init(e);
 
@@ -382,7 +381,7 @@ int ebitmap_read(struct ebitmap *e, void *fp)
 
 	if (mapunit != BITS_PER_U64) {
 		pr_err("SELinux: ebitmap: map size %u does not "
-		       "match my size %u (high bit was %u)\n",
+		       "match my size %zd (high bit was %d)\n",
 		       mapunit, BITS_PER_U64, e->highbit);
 		goto bad;
 	}
@@ -408,13 +407,13 @@ int ebitmap_read(struct ebitmap *e, void *fp)
 		startbit = le32_to_cpu(ebitmap_start);
 
 		if (startbit & (mapunit - 1)) {
-			pr_err("SELinux: ebitmap start bit (%u) is "
+			pr_err("SELinux: ebitmap start bit (%d) is "
 			       "not a multiple of the map unit size (%u)\n",
 			       startbit, mapunit);
 			goto bad;
 		}
 		if (startbit > e->highbit - mapunit) {
-			pr_err("SELinux: ebitmap start bit (%u) is "
+			pr_err("SELinux: ebitmap start bit (%d) is "
 			       "beyond the end of the bitmap (%u)\n",
 			       startbit, (e->highbit - mapunit));
 			goto bad;
@@ -437,8 +436,8 @@ int ebitmap_read(struct ebitmap *e, void *fp)
 				e->node = tmp;
 			n = tmp;
 		} else if (startbit <= n->startbit) {
-			pr_err("SELinux: ebitmap: start bit %u"
-			       " comes after start bit %u\n",
+			pr_err("SELinux: ebitmap: start bit %d"
+			       " comes after start bit %d\n",
 			       startbit, n->startbit);
 			goto bad;
 		}
@@ -449,10 +448,6 @@ int ebitmap_read(struct ebitmap *e, void *fp)
 			goto bad;
 		}
 		map = le64_to_cpu(mapbits);
-		if (!map) {
-			pr_err("SELinux: ebitmap: empty map\n");
-			goto bad;
-		}
 
 		index = (startbit - n->startbit) / EBITMAP_UNIT_SIZE;
 		while (map) {
@@ -460,13 +455,6 @@ int ebitmap_read(struct ebitmap *e, void *fp)
 			map = EBITMAP_SHIFT_UNIT_SIZE(map);
 		}
 	}
-
-	if (n && n->startbit + EBITMAP_SIZE != e->highbit) {
-		pr_err("SELinux: ebitmap: high bit %u is not equal to the expected value %zu\n",
-		       e->highbit, n->startbit + EBITMAP_SIZE);
-		goto bad;
-	}
-
 ok:
 	rc = 0;
 out:
@@ -481,20 +469,19 @@ bad:
 int ebitmap_write(const struct ebitmap *e, void *fp)
 {
 	struct ebitmap_node *n;
-	u32 bit, count, last_bit, last_startbit;
+	u32 count;
 	__le32 buf[3];
 	u64 map;
-	int rc;
+	int bit, last_bit, last_startbit, rc;
 
 	buf[0] = cpu_to_le32(BITS_PER_U64);
 
 	count = 0;
 	last_bit = 0;
-	last_startbit = U32_MAX;
+	last_startbit = -1;
 	ebitmap_for_each_positive_bit(e, n, bit)
 	{
-		if (last_startbit == U32_MAX ||
-		    rounddown(bit, BITS_PER_U64) > last_startbit) {
+		if (rounddown(bit, (int)BITS_PER_U64) > last_startbit) {
 			count++;
 			last_startbit = rounddown(bit, BITS_PER_U64);
 		}
@@ -508,11 +495,10 @@ int ebitmap_write(const struct ebitmap *e, void *fp)
 		return rc;
 
 	map = 0;
-	last_startbit = U32_MAX;
+	last_startbit = INT_MIN;
 	ebitmap_for_each_positive_bit(e, n, bit)
 	{
-		if (last_startbit == U32_MAX ||
-		    rounddown(bit, BITS_PER_U64) > last_startbit) {
+		if (rounddown(bit, (int)BITS_PER_U64) > last_startbit) {
 			__le64 buf64[1];
 
 			/* this is the very first bit */
@@ -572,5 +558,7 @@ u32 ebitmap_hash(const struct ebitmap *e, u32 hash)
 
 void __init ebitmap_cache_init(void)
 {
-	ebitmap_node_cachep = KMEM_CACHE(ebitmap_node, SLAB_PANIC);
+	ebitmap_node_cachep = kmem_cache_create("ebitmap_node",
+						sizeof(struct ebitmap_node), 0,
+						SLAB_PANIC, NULL);
 }

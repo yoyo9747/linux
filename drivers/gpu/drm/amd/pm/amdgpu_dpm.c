@@ -168,11 +168,7 @@ int amdgpu_dpm_set_mp1_state(struct amdgpu_device *adev,
 	int ret = 0;
 	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
 
-	if (mp1_state == PP_MP1_STATE_FLR) {
-		/* VF lost access to SMU */
-		if (amdgpu_sriov_vf(adev))
-			adev->pm.dpm_enabled = false;
-	} else if (pp_funcs && pp_funcs->set_mp1_state) {
+	if (pp_funcs && pp_funcs->set_mp1_state) {
 		mutex_lock(&adev->pm.mutex);
 
 		ret = pp_funcs->set_mp1_state(
@@ -203,14 +199,14 @@ int amdgpu_dpm_notify_rlc_state(struct amdgpu_device *adev, bool en)
 	return ret;
 }
 
-int amdgpu_dpm_is_baco_supported(struct amdgpu_device *adev)
+bool amdgpu_dpm_is_baco_supported(struct amdgpu_device *adev)
 {
 	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
 	void *pp_handle = adev->powerplay.pp_handle;
-	int ret;
+	bool ret;
 
 	if (!pp_funcs || !pp_funcs->get_asic_baco_capability)
-		return 0;
+		return false;
 	/* Don't use baco for reset in S3.
 	 * This is a workaround for some platforms
 	 * where entering BACO during suspend
@@ -221,7 +217,7 @@ int amdgpu_dpm_is_baco_supported(struct amdgpu_device *adev)
 	 * devices.  Needs more investigation.
 	 */
 	if (adev->in_s3)
-		return 0;
+		return false;
 
 	mutex_lock(&adev->pm.mutex);
 
@@ -372,30 +368,43 @@ int amdgpu_dpm_set_df_cstate(struct amdgpu_device *adev,
 	return ret;
 }
 
-ssize_t amdgpu_dpm_get_pm_policy_info(struct amdgpu_device *adev,
-				      enum pp_pm_policy p_type, char *buf)
+int amdgpu_dpm_get_xgmi_plpd_mode(struct amdgpu_device *adev, char **mode_desc)
 {
 	struct smu_context *smu = adev->powerplay.pp_handle;
-	int ret = -EOPNOTSUPP;
+	int mode = XGMI_PLPD_NONE;
 
 	if (is_support_sw_smu(adev)) {
-		mutex_lock(&adev->pm.mutex);
-		ret = smu_get_pm_policy_info(smu, p_type, buf);
-		mutex_unlock(&adev->pm.mutex);
+		mode = smu->plpd_mode;
+		if (mode_desc == NULL)
+			return mode;
+		switch (smu->plpd_mode) {
+		case XGMI_PLPD_DISALLOW:
+			*mode_desc = "disallow";
+			break;
+		case XGMI_PLPD_DEFAULT:
+			*mode_desc = "default";
+			break;
+		case XGMI_PLPD_OPTIMIZED:
+			*mode_desc = "optimized";
+			break;
+		case XGMI_PLPD_NONE:
+		default:
+			*mode_desc = "none";
+			break;
+		}
 	}
 
-	return ret;
+	return mode;
 }
 
-int amdgpu_dpm_set_pm_policy(struct amdgpu_device *adev, int policy_type,
-			     int policy_level)
+int amdgpu_dpm_set_xgmi_plpd_mode(struct amdgpu_device *adev, int mode)
 {
 	struct smu_context *smu = adev->powerplay.pp_handle;
 	int ret = -EOPNOTSUPP;
 
 	if (is_support_sw_smu(adev)) {
 		mutex_lock(&adev->pm.mutex);
-		ret = smu_set_pm_policy(smu, policy_type, policy_level);
+		ret = smu_set_xgmi_plpd_mode(smu, mode);
 		mutex_unlock(&adev->pm.mutex);
 	}
 
@@ -622,8 +631,7 @@ int amdgpu_pm_load_smu_firmware(struct amdgpu_device *adev, uint32_t *smu_versio
 	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
 	int r = 0;
 
-	if (!pp_funcs || !pp_funcs->load_firmware ||
-	    (is_support_sw_smu(adev) && (adev->flags & AMD_IS_APU)))
+	if (!pp_funcs || !pp_funcs->load_firmware)
 		return 0;
 
 	mutex_lock(&adev->pm.mutex);

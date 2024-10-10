@@ -17,7 +17,6 @@
 #include <linux/gfp.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
-#include <linux/lsm_hooks.h>
 #include <net/sock.h>
 #include <net/netlabel.h>
 #include <net/ip.h>
@@ -63,13 +62,13 @@ static int selinux_netlbl_sidlookup_cached(struct sk_buff *skb,
  * Description:
  * Generate the NetLabel security attributes for a socket, making full use of
  * the socket's attribute cache.  Returns a pointer to the security attributes
- * on success, or an ERR_PTR on failure.
+ * on success, NULL on failure.
  *
  */
 static struct netlbl_lsm_secattr *selinux_netlbl_sock_genattr(struct sock *sk)
 {
 	int rc;
-	struct sk_security_struct *sksec = selinux_sock(sk);
+	struct sk_security_struct *sksec = sk->sk_security;
 	struct netlbl_lsm_secattr *secattr;
 
 	if (sksec->nlbl_secattr != NULL)
@@ -77,12 +76,11 @@ static struct netlbl_lsm_secattr *selinux_netlbl_sock_genattr(struct sock *sk)
 
 	secattr = netlbl_secattr_alloc(GFP_ATOMIC);
 	if (secattr == NULL)
-		return ERR_PTR(-ENOMEM);
-
+		return NULL;
 	rc = security_netlbl_sid_to_secattr(sksec->sid, secattr);
 	if (rc != 0) {
 		netlbl_secattr_free(secattr);
-		return ERR_PTR(rc);
+		return NULL;
 	}
 	sksec->nlbl_secattr = secattr;
 
@@ -102,7 +100,7 @@ static struct netlbl_lsm_secattr *selinux_netlbl_sock_getattr(
 							const struct sock *sk,
 							u32 sid)
 {
-	struct sk_security_struct *sksec = selinux_sock(sk);
+	struct sk_security_struct *sksec = sk->sk_security;
 	struct netlbl_lsm_secattr *secattr = sksec->nlbl_secattr;
 
 	if (secattr == NULL)
@@ -242,7 +240,7 @@ int selinux_netlbl_skbuff_setsid(struct sk_buff *skb,
 	 * being labeled by it's parent socket, if it is just exit */
 	sk = skb_to_full_sk(skb);
 	if (sk != NULL) {
-		struct sk_security_struct *sksec = selinux_sock(sk);
+		struct sk_security_struct *sksec = sk->sk_security;
 
 		if (sksec->nlbl_state != NLBL_REQSKB)
 			return 0;
@@ -279,7 +277,7 @@ int selinux_netlbl_sctp_assoc_request(struct sctp_association *asoc,
 {
 	int rc;
 	struct netlbl_lsm_secattr secattr;
-	struct sk_security_struct *sksec = selinux_sock(asoc->base.sk);
+	struct sk_security_struct *sksec = asoc->base.sk->sk_security;
 	struct sockaddr_in addr4;
 	struct sockaddr_in6 addr6;
 
@@ -358,9 +356,9 @@ inet_conn_request_return:
  */
 void selinux_netlbl_inet_csk_clone(struct sock *sk, u16 family)
 {
-	struct sk_security_struct *sksec = selinux_sock(sk);
+	struct sk_security_struct *sksec = sk->sk_security;
 
-	if (family == PF_INET || family == PF_INET6)
+	if (family == PF_INET)
 		sksec->nlbl_state = NLBL_LABELED;
 	else
 		sksec->nlbl_state = NLBL_UNSET;
@@ -376,8 +374,8 @@ void selinux_netlbl_inet_csk_clone(struct sock *sk, u16 family)
  */
 void selinux_netlbl_sctp_sk_clone(struct sock *sk, struct sock *newsk)
 {
-	struct sk_security_struct *sksec = selinux_sock(sk);
-	struct sk_security_struct *newsksec = selinux_sock(newsk);
+	struct sk_security_struct *sksec = sk->sk_security;
+	struct sk_security_struct *newsksec = newsk->sk_security;
 
 	newsksec->nlbl_state = sksec->nlbl_state;
 }
@@ -395,19 +393,16 @@ void selinux_netlbl_sctp_sk_clone(struct sock *sk, struct sock *newsk)
 int selinux_netlbl_socket_post_create(struct sock *sk, u16 family)
 {
 	int rc;
-	struct sk_security_struct *sksec = selinux_sock(sk);
+	struct sk_security_struct *sksec = sk->sk_security;
 	struct netlbl_lsm_secattr *secattr;
 
 	if (family != PF_INET && family != PF_INET6)
 		return 0;
 
 	secattr = selinux_netlbl_sock_genattr(sk);
-	if (IS_ERR(secattr))
-		return PTR_ERR(secattr);
-	/* On socket creation, replacement of IP options is safe even if
-	 * the caller does not hold the socket lock.
-	 */
-	rc = netlbl_sock_setattr(sk, family, secattr, true);
+	if (secattr == NULL)
+		return -ENOMEM;
+	rc = netlbl_sock_setattr(sk, family, secattr);
 	switch (rc) {
 	case 0:
 		sksec->nlbl_state = NLBL_LABELED;
@@ -512,7 +507,7 @@ int selinux_netlbl_socket_setsockopt(struct socket *sock,
 {
 	int rc = 0;
 	struct sock *sk = sock->sk;
-	struct sk_security_struct *sksec = selinux_sock(sk);
+	struct sk_security_struct *sksec = sk->sk_security;
 	struct netlbl_lsm_secattr secattr;
 
 	if (selinux_netlbl_option(level, optname) &&
@@ -550,7 +545,7 @@ static int selinux_netlbl_socket_connect_helper(struct sock *sk,
 						struct sockaddr *addr)
 {
 	int rc;
-	struct sk_security_struct *sksec = selinux_sock(sk);
+	struct sk_security_struct *sksec = sk->sk_security;
 	struct netlbl_lsm_secattr *secattr;
 
 	/* connected sockets are allowed to disconnect when the address family
@@ -563,9 +558,10 @@ static int selinux_netlbl_socket_connect_helper(struct sock *sk,
 		return rc;
 	}
 	secattr = selinux_netlbl_sock_genattr(sk);
-	if (IS_ERR(secattr))
-		return PTR_ERR(secattr);
-
+	if (secattr == NULL) {
+		rc = -ENOMEM;
+		return rc;
+	}
 	rc = netlbl_conn_setattr(sk, addr, secattr);
 	if (rc == 0)
 		sksec->nlbl_state = NLBL_CONNLABELED;
@@ -588,7 +584,7 @@ static int selinux_netlbl_socket_connect_helper(struct sock *sk,
 int selinux_netlbl_socket_connect_locked(struct sock *sk,
 					 struct sockaddr *addr)
 {
-	struct sk_security_struct *sksec = selinux_sock(sk);
+	struct sk_security_struct *sksec = sk->sk_security;
 
 	if (sksec->nlbl_state != NLBL_REQSKB &&
 	    sksec->nlbl_state != NLBL_CONNLABELED)

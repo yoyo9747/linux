@@ -120,5 +120,5 @@ int main(int argc, char **argv)
 
 	test_clone3_clear_sighand();
 
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

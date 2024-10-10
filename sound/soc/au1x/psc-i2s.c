@@ -404,7 +404,7 @@ static struct platform_driver au1xpsc_i2s_driver = {
 		.pm	= AU1XPSCI2S_PMOPS,
 	},
 	.probe		= au1xpsc_i2s_drvprobe,
-	.remove		= au1xpsc_i2s_drvremove,
+	.remove_new	= au1xpsc_i2s_drvremove,
 };
 
 module_platform_driver(au1xpsc_i2s_driver);

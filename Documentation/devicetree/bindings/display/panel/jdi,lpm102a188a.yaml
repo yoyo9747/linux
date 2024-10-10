@@ -26,9 +26,7 @@ properties:
   compatible:
     const: jdi,lpm102a188a
 
-  reg:
-    maxItems: 1
-
+  reg: true
   enable-gpios: true
   reset-gpios: true
   power-supply: true

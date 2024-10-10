@@ -837,7 +837,7 @@ static inline void this_cpu_inc_rm(unsigned int __percpu *addr)
  */
 static void kvmppc_rm_handle_irq_desc(struct irq_desc *desc)
 {
-	this_cpu_inc_rm(&desc->kstat_irqs->cnt);
+	this_cpu_inc_rm(desc->kstat_irqs);
 	__this_cpu_inc(kstat.irqs_sum);
 }
 

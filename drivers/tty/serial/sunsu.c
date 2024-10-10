@@ -396,8 +396,7 @@ receive_chars(struct uart_sunsu_port *up, unsigned char *status)
 
 static void transmit_chars(struct uart_sunsu_port *up)
 {
-	struct tty_port *tport = &up->port.state->port;
-	unsigned char ch;
+	struct circ_buf *xmit = &up->port.state->xmit;
 	int count;
 
 	if (up->port.x_char) {
@@ -410,23 +409,23 @@ static void transmit_chars(struct uart_sunsu_port *up)
 		sunsu_stop_tx(&up->port);
 		return;
 	}
-	if (kfifo_is_empty(&tport->xmit_fifo)) {
+	if (uart_circ_empty(xmit)) {
 		__stop_tx(up);
 		return;
 	}
 
 	count = up->port.fifosize;
 	do {
-		if (!uart_fifo_get(&up->port, &ch))
+		serial_out(up, UART_TX, xmit->buf[xmit->tail]);
+		uart_xmit_advance(&up->port, 1);
+		if (uart_circ_empty(xmit))
 			break;
-
-		serial_out(up, UART_TX, ch);
 	} while (--count > 0);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&up->port);
 
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		__stop_tx(up);
 }
 
@@ -1382,29 +1381,44 @@ static inline struct console *SUNSU_CONSOLE(void)
 
 static enum su_type su_get_type(struct device_node *dp)
 {
-	struct device_node *ap __free(device_node) =
-			    of_find_node_by_path("/aliases");
+	struct device_node *ap = of_find_node_by_path("/aliases");
+	enum su_type rc = SU_PORT_PORT;
 
 	if (ap) {
 		const char *keyb = of_get_property(ap, "keyboard", NULL);
 		const char *ms = of_get_property(ap, "mouse", NULL);
+		struct device_node *match;
 
 		if (keyb) {
-			struct device_node *match __free(device_node) =
-					    of_find_node_by_path(keyb);
+			match = of_find_node_by_path(keyb);
 
-			if (dp == match)
-				return SU_PORT_KBD;
+			/*
+			 * The pointer is used as an identifier not
+			 * as a pointer, we can drop the refcount on
+			 * the of__node immediately after getting it.
+			 */
+			of_node_put(match);
+
+			if (dp == match) {
+				rc = SU_PORT_KBD;
+				goto out;
+			}
 		}
 		if (ms) {
-			struct device_node *match __free(device_node) =
-					    of_find_node_by_path(ms);
+			match = of_find_node_by_path(ms);
 
-			if (dp == match)
-				return SU_PORT_MS;
+			of_node_put(match);
+
+			if (dp == match) {
+				rc = SU_PORT_MS;
+				goto out;
+			}
 		}
 	}
-	return SU_PORT_PORT;
+
+out:
+	of_node_put(ap);
+	return rc;
 }
 
 static int su_probe(struct platform_device *op)

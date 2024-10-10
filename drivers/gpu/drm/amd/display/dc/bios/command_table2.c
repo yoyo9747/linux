@@ -225,10 +225,9 @@ static enum bp_result transmitter_control_fallback(
 static void init_transmitter_control(struct bios_parser *bp)
 {
 	uint8_t frev;
-	uint8_t crev = 0;
+	uint8_t crev;
 
-	if (!BIOS_CMD_TABLE_REVISION(dig1transmittercontrol, frev, crev) && (bp->base.ctx->dc->ctx->dce_version <= DCN_VERSION_2_0))
-		BREAK_TO_DEBUGGER();
+	BIOS_CMD_TABLE_REVISION(dig1transmittercontrol, frev, crev);
 
 	switch (crev) {
 	case 6:

@@ -22,6 +22,7 @@
 
 #define CMDQ_OP_CODE_MASK		(0xff << CMDQ_OP_CODE_SHIFT)
 #define CMDQ_NUM_CMD(t)			(t->cmd_buf_size / CMDQ_INST_SIZE)
+#define CMDQ_GCE_NUM_MAX		(2)
 
 #define CMDQ_CURR_IRQ_STATUS		0x10
 #define CMDQ_SYNC_TOKEN_UPDATE		0x68
@@ -80,7 +81,7 @@ struct cmdq {
 	u32			irq_mask;
 	const struct gce_plat	*pdata;
 	struct cmdq_thread	*thread;
-	struct clk_bulk_data	*clocks;
+	struct clk_bulk_data	clocks[CMDQ_GCE_NUM_MAX];
 	bool			suspended;
 };
 
@@ -464,7 +465,7 @@ static void cmdq_mbox_shutdown(struct mbox_chan *chan)
 	struct cmdq_task *task, *tmp;
 	unsigned long flags;
 
-	WARN_ON(pm_runtime_get_sync(cmdq->mbox.dev) < 0);
+	WARN_ON(pm_runtime_get_sync(cmdq->mbox.dev));
 
 	spin_lock_irqsave(&thread->chan->lock, flags);
 	if (list_empty(&thread->task_busy_list))
@@ -577,64 +578,16 @@ static struct mbox_chan *cmdq_xlate(struct mbox_controller *mbox,
 	return &mbox->chans[ind];
 }
 
-static int cmdq_get_clocks(struct device *dev, struct cmdq *cmdq)
-{
-	static const char * const gce_name = "gce";
-	struct device_node *node, *parent = dev->of_node->parent;
-	struct clk_bulk_data *clks;
-
-	cmdq->clocks = devm_kcalloc(dev, cmdq->pdata->gce_num,
-				    sizeof(cmdq->clocks), GFP_KERNEL);
-	if (!cmdq->clocks)
-		return -ENOMEM;
-
-	if (cmdq->pdata->gce_num == 1) {
-		clks = &cmdq->clocks[0];
-
-		clks->id = gce_name;
-		clks->clk = devm_clk_get(dev, NULL);
-		if (IS_ERR(clks->clk))
-			return dev_err_probe(dev, PTR_ERR(clks->clk),
-					     "failed to get gce clock\n");
-
-		return 0;
-	}
-
-	/*
-	 * If there is more than one GCE, get the clocks for the others too,
-	 * as the clock of the main GCE must be enabled for additional IPs
-	 * to be reachable.
-	 */
-	for_each_child_of_node(parent, node) {
-		int alias_id = of_alias_get_id(node, gce_name);
-
-		if (alias_id < 0 || alias_id >= cmdq->pdata->gce_num)
-			continue;
-
-		clks = &cmdq->clocks[alias_id];
-
-		clks->id = devm_kasprintf(dev, GFP_KERNEL, "gce%d", alias_id);
-		if (!clks->id) {
-			of_node_put(node);
-			return -ENOMEM;
-		}
-
-		clks->clk = of_clk_get(node, 0);
-		if (IS_ERR(clks->clk)) {
-			of_node_put(node);
-			return dev_err_probe(dev, PTR_ERR(clks->clk),
-					     "failed to get gce%d clock\n", alias_id);
-		}
-	}
-
-	return 0;
-}
-
 static int cmdq_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct cmdq *cmdq;
 	int err, i;
+	struct device_node *phandle = dev->of_node;
+	struct device_node *node;
+	int alias_id = 0;
+	static const char * const clk_name = "gce";
+	static const char * const clk_names[] = { "gce0", "gce1" };
 
 	cmdq = devm_kzalloc(dev, sizeof(*cmdq), GFP_KERNEL);
 	if (!cmdq)
@@ -659,9 +612,29 @@ static int cmdq_probe(struct platform_device *pdev)
 	dev_dbg(dev, "cmdq device: addr:0x%p, va:0x%p, irq:%d\n",
 		dev, cmdq->base, cmdq->irq);
 
-	err = cmdq_get_clocks(dev, cmdq);
-	if (err)
-		return err;
+	if (cmdq->pdata->gce_num > 1) {
+		for_each_child_of_node(phandle->parent, node) {
+			alias_id = of_alias_get_id(node, clk_name);
+			if (alias_id >= 0 && alias_id < cmdq->pdata->gce_num) {
+				cmdq->clocks[alias_id].id = clk_names[alias_id];
+				cmdq->clocks[alias_id].clk = of_clk_get(node, 0);
+				if (IS_ERR(cmdq->clocks[alias_id].clk)) {
+					of_node_put(node);
+					return dev_err_probe(dev,
+							     PTR_ERR(cmdq->clocks[alias_id].clk),
+							     "failed to get gce clk: %d\n",
+							     alias_id);
+				}
+			}
+		}
+	} else {
+		cmdq->clocks[alias_id].id = clk_name;
+		cmdq->clocks[alias_id].clk = devm_clk_get(&pdev->dev, clk_name);
+		if (IS_ERR(cmdq->clocks[alias_id].clk)) {
+			return dev_err_probe(dev, PTR_ERR(cmdq->clocks[alias_id].clk),
+					     "failed to get gce clk\n");
+		}
+	}
 
 	cmdq->mbox.dev = dev;
 	cmdq->mbox.chans = devm_kcalloc(dev, cmdq->pdata->thread_nr,
@@ -687,6 +660,12 @@ static int cmdq_probe(struct platform_device *pdev)
 				CMDQ_THR_SIZE * i;
 		INIT_LIST_HEAD(&cmdq->thread[i].task_busy_list);
 		cmdq->mbox.chans[i].con_priv = (void *)&cmdq->thread[i];
+	}
+
+	err = devm_mbox_controller_register(dev, &cmdq->mbox);
+	if (err < 0) {
+		dev_err(dev, "failed to register mailbox: %d\n", err);
+		return err;
 	}
 
 	platform_set_drvdata(pdev, cmdq);
@@ -715,12 +694,6 @@ static int cmdq_probe(struct platform_device *pdev)
 
 	pm_runtime_set_autosuspend_delay(dev, CMDQ_MBOX_AUTOSUSPEND_DELAY_MS);
 	pm_runtime_use_autosuspend(dev);
-
-	err = devm_mbox_controller_register(dev, &cmdq->mbox);
-	if (err < 0) {
-		dev_err(dev, "failed to register mailbox: %d\n", err);
-		return err;
-	}
 
 	return 0;
 }
@@ -792,7 +765,6 @@ static const struct of_device_id cmdq_of_ids[] = {
 	{.compatible = "mediatek,mt8195-gce", .data = (void *)&gce_plat_mt8195},
 	{}
 };
-MODULE_DEVICE_TABLE(of, cmdq_of_ids);
 
 static struct platform_driver cmdq_drv = {
 	.probe = cmdq_probe,
@@ -817,5 +789,4 @@ static void __exit cmdq_drv_exit(void)
 subsys_initcall(cmdq_drv_init);
 module_exit(cmdq_drv_exit);
 
-MODULE_DESCRIPTION("Mediatek Command Queue(CMDQ) Mailbox driver");
 MODULE_LICENSE("GPL v2");

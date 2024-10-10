@@ -81,12 +81,14 @@ properties:
 
   dmas:
     minItems: 1
-    maxItems: 2
+    items:
+      - description: DMA controller phandle and request line for RX
+      - description: DMA controller phandle and request line for TX
 
   dma-names:
     minItems: 1
     items:
-      - enum: [ rx, tx ]
+      - const: rx
       - const: tx
 
   interrupts:

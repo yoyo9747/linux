@@ -8,7 +8,6 @@
 
 #include <linux/acpi.h>
 #include <linux/module.h>
-#include <linux/platform_data/x86/intel_scu_ipc.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/usb/pd.h>
@@ -18,6 +17,8 @@
 #include <linux/usb/typec_tbt.h>
 #include <linux/debugfs.h>
 #include <linux/usb.h>
+
+#include <asm/intel_scu_ipc.h>
 
 #define PMC_USBC_CMD		0xa7
 

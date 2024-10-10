@@ -159,15 +159,14 @@ struct hfi_cpu_info {
 static DEFINE_PER_CPU(struct hfi_cpu_info, hfi_cpu_info) = { .index = -1 };
 
 static int max_hfi_instances;
-static int hfi_clients_nr;
 static struct hfi_instance *hfi_instances;
 
 static struct hfi_features hfi_features;
 static DEFINE_MUTEX(hfi_instance_lock);
 
 static struct workqueue_struct *hfi_updates_wq;
-#define HFI_UPDATE_DELAY_MS		100
-#define HFI_THERMNL_CAPS_PER_EVENT	64
+#define HFI_UPDATE_INTERVAL		HZ
+#define HFI_MAX_THERM_NOTIFY_COUNT	16
 
 static void get_hfi_caps(struct hfi_instance *hfi_instance,
 			 struct thermal_genl_cpu_caps *cpu_caps)
@@ -218,14 +217,14 @@ static void update_capabilities(struct hfi_instance *hfi_instance)
 
 	get_hfi_caps(hfi_instance, cpu_caps);
 
-	if (cpu_count < HFI_THERMNL_CAPS_PER_EVENT)
+	if (cpu_count < HFI_MAX_THERM_NOTIFY_COUNT)
 		goto last_cmd;
 
-	/* Process complete chunks of HFI_THERMNL_CAPS_PER_EVENT capabilities. */
+	/* Process complete chunks of HFI_MAX_THERM_NOTIFY_COUNT capabilities. */
 	for (i = 0;
-	     (i + HFI_THERMNL_CAPS_PER_EVENT) <= cpu_count;
-	     i += HFI_THERMNL_CAPS_PER_EVENT)
-		thermal_genl_cpu_capability_event(HFI_THERMNL_CAPS_PER_EVENT,
+	     (i + HFI_MAX_THERM_NOTIFY_COUNT) <= cpu_count;
+	     i += HFI_MAX_THERM_NOTIFY_COUNT)
+		thermal_genl_cpu_capability_event(HFI_MAX_THERM_NOTIFY_COUNT,
 						  &cpu_caps[i]);
 
 	cpu_count = cpu_count - i;
@@ -322,7 +321,7 @@ void intel_hfi_process_event(__u64 pkg_therm_status_msr_val)
 	raw_spin_unlock(&hfi_instance->event_lock);
 
 	queue_delayed_work(hfi_updates_wq, &hfi_instance->update_work,
-			   msecs_to_jiffies(HFI_UPDATE_DELAY_MS));
+			   HFI_UPDATE_INTERVAL);
 }
 
 static void init_hfi_cpu_index(struct hfi_cpu_info *info)
@@ -401,10 +400,10 @@ static void hfi_disable(void)
  * intel_hfi_online() - Enable HFI on @cpu
  * @cpu:	CPU in which the HFI will be enabled
  *
- * Enable the HFI to be used in @cpu. The HFI is enabled at the package
- * level. The first CPU in the package to come online does the full HFI
+ * Enable the HFI to be used in @cpu. The HFI is enabled at the die/package
+ * level. The first CPU in the die/package to come online does the full HFI
  * initialization. Subsequent CPUs will just link themselves to the HFI
- * instance of their package.
+ * instance of their die/package.
  *
  * This function is called before enabling the thermal vector in the local APIC
  * in order to ensure that @cpu has an associated HFI instance when it receives
@@ -414,31 +413,31 @@ void intel_hfi_online(unsigned int cpu)
 {
 	struct hfi_instance *hfi_instance;
 	struct hfi_cpu_info *info;
-	u16 pkg_id;
+	u16 die_id;
 
 	/* Nothing to do if hfi_instances are missing. */
 	if (!hfi_instances)
 		return;
 
 	/*
-	 * Link @cpu to the HFI instance of its package. It does not
+	 * Link @cpu to the HFI instance of its package/die. It does not
 	 * matter whether the instance has been initialized.
 	 */
 	info = &per_cpu(hfi_cpu_info, cpu);
-	pkg_id = topology_logical_package_id(cpu);
+	die_id = topology_logical_die_id(cpu);
 	hfi_instance = info->hfi_instance;
 	if (!hfi_instance) {
-		if (pkg_id >= max_hfi_instances)
+		if (die_id >= max_hfi_instances)
 			return;
 
-		hfi_instance = &hfi_instances[pkg_id];
+		hfi_instance = &hfi_instances[die_id];
 		info->hfi_instance = hfi_instance;
 	}
 
 	init_hfi_cpu_index(info);
 
 	/*
-	 * Now check if the HFI instance of the package of @cpu has been
+	 * Now check if the HFI instance of the package/die of @cpu has been
 	 * initialized (by checking its header). In such case, all we have to
 	 * do is to add @cpu to this instance's cpumask and enable the instance
 	 * if needed.
@@ -478,11 +477,8 @@ void intel_hfi_online(unsigned int cpu)
 enable:
 	cpumask_set_cpu(cpu, hfi_instance->cpus);
 
-	/*
-	 * Enable this HFI instance if this is its first online CPU and
-	 * there are user-space clients of thermal events.
-	 */
-	if (cpumask_weight(hfi_instance->cpus) == 1 && hfi_clients_nr > 0) {
+	/* Enable this HFI instance if this is its first online CPU. */
+	if (cpumask_weight(hfi_instance->cpus) == 1) {
 		hfi_set_hw_table(hfi_instance);
 		hfi_enable();
 	}
@@ -504,7 +500,7 @@ free_hw_table:
  *
  * On some processors, hardware remembers previous programming settings even
  * after being reprogrammed. Thus, keep HFI enabled even if all CPUs in the
- * package of @cpu are offline. See note in intel_hfi_online().
+ * die/package of @cpu are offline. See note in intel_hfi_online().
  */
 void intel_hfi_offline(unsigned int cpu)
 {
@@ -577,33 +573,18 @@ static __init int hfi_parse_features(void)
 	return 0;
 }
 
-/*
- * If concurrency is not prevented by other means, the HFI enable/disable
- * routines must be called under hfi_instance_lock."
- */
-static void hfi_enable_instance(void *ptr)
-{
-	hfi_set_hw_table(ptr);
-	hfi_enable();
-}
-
-static void hfi_disable_instance(void *ptr)
-{
-	hfi_disable();
-}
-
-static void hfi_syscore_resume(void)
+static void hfi_do_enable(void)
 {
 	/* This code runs only on the boot CPU. */
 	struct hfi_cpu_info *info = &per_cpu(hfi_cpu_info, 0);
 	struct hfi_instance *hfi_instance = info->hfi_instance;
 
 	/* No locking needed. There is no concurrency with CPU online. */
-	if (hfi_clients_nr > 0)
-		hfi_enable_instance(hfi_instance);
+	hfi_set_hw_table(hfi_instance);
+	hfi_enable();
 }
 
-static int hfi_syscore_suspend(void)
+static int hfi_do_disable(void)
 {
 	/* No locking needed. There is no concurrency with CPU offline. */
 	hfi_disable();
@@ -612,58 +593,8 @@ static int hfi_syscore_suspend(void)
 }
 
 static struct syscore_ops hfi_pm_ops = {
-	.resume = hfi_syscore_resume,
-	.suspend = hfi_syscore_suspend,
-};
-
-static int hfi_thermal_notify(struct notifier_block *nb, unsigned long state,
-			      void *_notify)
-{
-	struct thermal_genl_notify *notify = _notify;
-	struct hfi_instance *hfi_instance;
-	smp_call_func_t func = NULL;
-	unsigned int cpu;
-	int i;
-
-	if (notify->mcgrp != THERMAL_GENL_EVENT_GROUP)
-		return NOTIFY_DONE;
-
-	if (state != THERMAL_NOTIFY_BIND && state != THERMAL_NOTIFY_UNBIND)
-		return NOTIFY_DONE;
-
-	mutex_lock(&hfi_instance_lock);
-
-	switch (state) {
-	case THERMAL_NOTIFY_BIND:
-		if (++hfi_clients_nr == 1)
-			func = hfi_enable_instance;
-		break;
-	case THERMAL_NOTIFY_UNBIND:
-		if (--hfi_clients_nr == 0)
-			func = hfi_disable_instance;
-		break;
-	}
-
-	if (!func)
-		goto out;
-
-	for (i = 0; i < max_hfi_instances; i++) {
-		hfi_instance = &hfi_instances[i];
-		if (cpumask_empty(hfi_instance->cpus))
-			continue;
-
-		cpu = cpumask_any(hfi_instance->cpus);
-		smp_call_function_single(cpu, func, hfi_instance, true);
-	}
-
-out:
-	mutex_unlock(&hfi_instance_lock);
-
-	return NOTIFY_OK;
-}
-
-static struct notifier_block hfi_thermal_nb = {
-	.notifier_call = hfi_thermal_notify,
+	.resume = hfi_do_enable,
+	.suspend = hfi_do_disable,
 };
 
 void __init intel_hfi_init(void)
@@ -674,13 +605,9 @@ void __init intel_hfi_init(void)
 	if (hfi_parse_features())
 		return;
 
-	/*
-	 * Note: HFI resources are managed at the physical package scope.
-	 * There could be platforms that enumerate packages as Linux dies.
-	 * Special handling would be needed if this happens on an HFI-capable
-	 * platform.
-	 */
-	max_hfi_instances = topology_max_packages();
+	/* There is one HFI instance per die/package. */
+	max_hfi_instances = topology_max_packages() *
+			    topology_max_dies_per_package();
 
 	/*
 	 * This allocation may fail. CPU hotplug callbacks must check
@@ -701,21 +628,9 @@ void __init intel_hfi_init(void)
 	if (!hfi_updates_wq)
 		goto err_nomem;
 
-	/*
-	 * Both thermal core and Intel HFI can not be build as modules.
-	 * As kernel build-in drivers they are initialized before user-space
-	 * starts, hence we can not miss BIND/UNBIND events when applications
-	 * add/remove thermal multicast group to/from a netlink socket.
-	 */
-	if (thermal_genl_register_notifier(&hfi_thermal_nb))
-		goto err_nl_notif;
-
 	register_syscore_ops(&hfi_pm_ops);
 
 	return;
-
-err_nl_notif:
-	destroy_workqueue(hfi_updates_wq);
 
 err_nomem:
 	for (j = 0; j < i; ++j) {

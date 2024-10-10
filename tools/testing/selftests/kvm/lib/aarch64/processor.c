@@ -11,8 +11,6 @@
 #include "guest_modes.h"
 #include "kvm_util.h"
 #include "processor.h"
-#include "ucall_common.h"
-
 #include <linux/bitfield.h>
 #include <linux/sizes.h>
 
@@ -638,10 +636,4 @@ void vm_vaddr_populate_bitmap(struct kvm_vm *vm)
 	 */
 	sparsebit_set_num(vm->vpages_valid, 0,
 			  (1ULL << vm->va_bits) >> vm->page_shift);
-}
-
-/* Helper to call wfi instruction. */
-void wfi(void)
-{
-	asm volatile("wfi");
 }

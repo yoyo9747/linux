@@ -623,22 +623,23 @@ static int inet6_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 	struct rt6_rtnl_dump_arg arg = {
 		.filter.dump_exceptions = true,
 		.filter.dump_routes = true,
-		.filter.rtnl_held = false,
+		.filter.rtnl_held = true,
 	};
 	const struct nlmsghdr *nlh = cb->nlh;
 	struct net *net = sock_net(skb->sk);
+	unsigned int h, s_h;
 	unsigned int e = 0, s_e;
-	struct hlist_head *head;
 	struct fib6_walker *w;
 	struct fib6_table *tb;
-	unsigned int h, s_h;
-	int err = 0;
+	struct hlist_head *head;
+	int res = 0;
 
-	rcu_read_lock();
 	if (cb->strict_check) {
+		int err;
+
 		err = ip_valid_fib_dump_req(net, nlh, &arg.filter, cb);
 		if (err < 0)
-			goto unlock;
+			return err;
 	} else if (nlmsg_len(nlh) >= sizeof(struct rtmsg)) {
 		struct rtmsg *rtm = nlmsg_data(nlh);
 
@@ -653,10 +654,8 @@ static int inet6_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 		 * 1. allocate and initialize walker.
 		 */
 		w = kzalloc(sizeof(*w), GFP_ATOMIC);
-		if (!w) {
-			err = -ENOMEM;
-			goto unlock;
-		}
+		if (!w)
+			return -ENOMEM;
 		w->func = fib6_dump_node;
 		cb->args[2] = (long)w;
 
@@ -676,46 +675,46 @@ static int inet6_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 		tb = fib6_get_table(net, arg.filter.table_id);
 		if (!tb) {
 			if (rtnl_msg_family(cb->nlh) != PF_INET6)
-				goto unlock;
+				goto out;
 
 			NL_SET_ERR_MSG_MOD(cb->extack, "FIB table does not exist");
-			err = -ENOENT;
-			goto unlock;
+			return -ENOENT;
 		}
 
 		if (!cb->args[0]) {
-			err = fib6_dump_table(tb, skb, cb);
-			if (!err)
+			res = fib6_dump_table(tb, skb, cb);
+			if (!res)
 				cb->args[0] = 1;
 		}
-		goto unlock;
+		goto out;
 	}
 
 	s_h = cb->args[0];
 	s_e = cb->args[1];
 
+	rcu_read_lock();
 	for (h = s_h; h < FIB6_TABLE_HASHSZ; h++, s_e = 0) {
 		e = 0;
 		head = &net->ipv6.fib_table_hash[h];
 		hlist_for_each_entry_rcu(tb, head, tb6_hlist) {
 			if (e < s_e)
 				goto next;
-			err = fib6_dump_table(tb, skb, cb);
-			if (err != 0)
-				goto out;
+			res = fib6_dump_table(tb, skb, cb);
+			if (res != 0)
+				goto out_unlock;
 next:
 			e++;
 		}
 	}
-out:
+out_unlock:
+	rcu_read_unlock();
 	cb->args[1] = e;
 	cb->args[0] = h;
-
-unlock:
-	rcu_read_unlock();
-	if (err <= 0)
+out:
+	res = res < 0 ? res : skb->len;
+	if (res <= 0)
 		fib6_dump_end(cb);
-	return err;
+	return res;
 }
 
 void fib6_metric_set(struct fib6_info *f6i, int metric, u32 val)
@@ -966,7 +965,6 @@ static void __fib6_drop_pcpu_from(struct fib6_nh *fib6_nh,
 	if (!fib6_nh->rt6i_pcpu)
 		return;
 
-	rcu_read_lock();
 	/* release the reference to this fib entry from
 	 * all of its cached pcpu routes
 	 */
@@ -975,9 +973,7 @@ static void __fib6_drop_pcpu_from(struct fib6_nh *fib6_nh,
 		struct rt6_info *pcpu_rt;
 
 		ppcpu_rt = per_cpu_ptr(fib6_nh->rt6i_pcpu, cpu);
-
-		/* Paired with xchg() in rt6_get_pcpu_route() */
-		pcpu_rt = READ_ONCE(*ppcpu_rt);
+		pcpu_rt = *ppcpu_rt;
 
 		/* only dropping the 'from' reference if the cached route
 		 * is using 'match'. The cached pcpu_rt->from only changes
@@ -987,11 +983,10 @@ static void __fib6_drop_pcpu_from(struct fib6_nh *fib6_nh,
 		if (pcpu_rt && rcu_access_pointer(pcpu_rt->from) == match) {
 			struct fib6_info *from;
 
-			from = unrcu_pointer(xchg(&pcpu_rt->from, NULL));
+			from = xchg((__force struct fib6_info **)&pcpu_rt->from, NULL);
 			fib6_info_release(from);
 		}
 	}
-	rcu_read_unlock();
 }
 
 struct fib6_nh_pcpu_arg {
@@ -2514,8 +2509,7 @@ int __init fib6_init(void)
 		goto out_kmem_cache_create;
 
 	ret = rtnl_register_module(THIS_MODULE, PF_INET6, RTM_GETROUTE, NULL,
-				   inet6_dump_fib, RTNL_FLAG_DUMP_UNLOCKED |
-				   RTNL_FLAG_DUMP_SPLIT_NLM_DONE);
+				   inet6_dump_fib, 0);
 	if (ret)
 		goto out_unregister_subsys;
 

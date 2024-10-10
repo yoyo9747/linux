@@ -14,12 +14,7 @@ include/
 arch/$SRCARCH/include/
 "
 
-if ! command -v cpio >/dev/null; then
-	echo >&2 "***"
-	echo >&2 "*** 'cpio' could not be found."
-	echo >&2 "***"
-	exit 1
-fi
+type cpio > /dev/null
 
 # Support incremental builds by skipping archive generation
 # if timestamps of files being archived are not changed.
@@ -89,7 +84,7 @@ find $cpio_dir -type f -print0 |
 
 # Create archive and try to normalize metadata for reproducibility.
 tar "${KBUILD_BUILD_TIMESTAMP:+--mtime=$KBUILD_BUILD_TIMESTAMP}" \
-    --owner=0 --group=0 --sort=name --numeric-owner --mode=u=rw,go=r,a+X \
+    --owner=0 --group=0 --sort=name --numeric-owner \
     -I $XZ -cf $tarfile -C $cpio_dir/ . > /dev/null
 
 echo $headers_md5 > kernel/kheaders.md5

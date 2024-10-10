@@ -19,7 +19,7 @@
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define ZOPT2201_DRV_NAME "zopt2201"
 
@@ -545,7 +545,7 @@ static int zopt2201_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id zopt2201_id[] = {
-	{ "zopt2201" },
+	{ "zopt2201", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, zopt2201_id);

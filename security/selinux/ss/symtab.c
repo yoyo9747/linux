@@ -12,17 +12,17 @@
 
 static unsigned int symhash(const void *key)
 {
-	/*
-	 * djb2a
-	 * Public domain from cdb v0.75
-	 */
-	unsigned int hash = 5381;
-	unsigned char c;
+	const char *p, *keyp;
+	unsigned int size;
+	unsigned int val;
 
-	while ((c = *(const unsigned char *)key++))
-		hash = ((hash << 5) + hash) ^ c;
-
-	return hash;
+	val = 0;
+	keyp = key;
+	size = strlen(keyp);
+	for (p = keyp; (p - keyp) < size; p++)
+		val = (val << 4 | (val >> (8 * sizeof(unsigned int) - 4))) ^
+		      (*p);
+	return val;
 }
 
 static int symcmp(const void *key1, const void *key2)

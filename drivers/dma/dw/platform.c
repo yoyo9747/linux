@@ -29,7 +29,7 @@ static int dw_probe(struct platform_device *pdev)
 	struct dw_dma_chip_pdata *data;
 	struct dw_dma_chip *chip;
 	struct device *dev = &pdev->dev;
-	int ret;
+	int err;
 
 	match = device_get_match_data(dev);
 	if (!match)
@@ -51,9 +51,9 @@ static int dw_probe(struct platform_device *pdev)
 	if (IS_ERR(chip->regs))
 		return PTR_ERR(chip->regs);
 
-	ret = dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
-	if (ret)
-		return ret;
+	err = dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+	if (err)
+		return err;
 
 	if (!data->pdata)
 		data->pdata = dev_get_platdata(dev);
@@ -69,14 +69,14 @@ static int dw_probe(struct platform_device *pdev)
 	chip->clk = devm_clk_get_optional(chip->dev, "hclk");
 	if (IS_ERR(chip->clk))
 		return PTR_ERR(chip->clk);
-	ret = clk_prepare_enable(chip->clk);
-	if (ret)
-		return ret;
+	err = clk_prepare_enable(chip->clk);
+	if (err)
+		return err;
 
 	pm_runtime_enable(&pdev->dev);
 
-	ret = data->probe(chip);
-	if (ret)
+	err = data->probe(chip);
+	if (err)
 		goto err_dw_dma_probe;
 
 	platform_set_drvdata(pdev, data);
@@ -90,7 +90,7 @@ static int dw_probe(struct platform_device *pdev)
 err_dw_dma_probe:
 	pm_runtime_disable(&pdev->dev);
 	clk_disable_unprepare(chip->clk);
-	return ret;
+	return err;
 }
 
 static void dw_remove(struct platform_device *pdev)

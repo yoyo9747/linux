@@ -1,10 +1,8 @@
 .. SPDX-License-Identifier: GPL-2.0
 
-The mgb4 driver
-===============
-
-sysfs interface
----------------
+====================
+mgb4 sysfs interface
+====================
 
 The mgb4 driver provides a sysfs interface, that is used to configure video
 stream related parameters (some of them must be set properly before the v4l2
@@ -14,8 +12,9 @@ There are two types of parameters - global / PCI card related, found under
 ``/sys/class/video4linux/videoX/device`` and module specific found under
 ``/sys/class/video4linux/videoX``.
 
+
 Global (PCI card) parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+============================
 
 **module_type** (R):
     Module type.
@@ -43,8 +42,9 @@ Global (PCI card) parameters
 
     where each component is a 8b number.
 
+
 Common FPDL3/GMSL input parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+==================================
 
 **input_id** (R):
     Input number ID, zero based.
@@ -190,8 +190,9 @@ Common FPDL3/GMSL input parameters
     *Note: This parameter can not be changed while the input v4l2 device is
     open.*
 
+
 Common FPDL3/GMSL output parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+===================================
 
 **output_id** (R):
     Output number ID, zero based.
@@ -227,13 +228,8 @@ Common FPDL3/GMSL output parameters
     open.*
 
 **frame_rate** (RW):
-    Output video signal frame rate limit in frames per second. Due to
-    the limited output pixel clock steps, the card can not always generate
-    a frame rate perfectly matching the value required by the connected display.
-    Using this parameter one can limit the frame rate by "crippling" the signal
-    so that the lines are not equal (the porches of the last line differ) but
-    the signal appears like having the exact frame rate to the connected display.
-    The default frame rate limit is 60Hz.
+    Output video frame rate in frames per second. The default frame rate is
+    60Hz.
 
 **hsync_polarity** (RW):
     HSYNC signal polarity.
@@ -258,36 +254,37 @@ Common FPDL3/GMSL output parameters
     and there is a non-linear stepping between two consecutive allowed
     frequencies. The driver finds the nearest allowed frequency to the given
     value and sets it. When reading this property, you get the exact
-    frequency set by the driver. The default frequency is 61150kHz.
+    frequency set by the driver. The default frequency is 70000kHz.
 
     *Note: This parameter can not be changed while the output v4l2 device is
     open.*
 
 **hsync_width** (RW):
-    Width of the HSYNC signal in pixels. The default value is 40.
+    Width of the HSYNC signal in pixels. The default value is 16.
 
 **vsync_width** (RW):
-    Width of the VSYNC signal in video lines. The default value is 20.
+    Width of the VSYNC signal in video lines. The default value is 2.
 
 **hback_porch** (RW):
     Number of PCLK pulses between deassertion of the HSYNC signal and the first
-    valid pixel in the video line (marked by DE=1). The default value is 50.
+    valid pixel in the video line (marked by DE=1). The default value is 32.
 
 **hfront_porch** (RW):
     Number of PCLK pulses between the end of the last valid pixel in the video
     line (marked by DE=1) and assertion of the HSYNC signal. The default value
-    is 50.
+    is 32.
 
 **vback_porch** (RW):
     Number of video lines between deassertion of the VSYNC signal and the video
-    line with the first valid pixel (marked by DE=1). The default value is 31.
+    line with the first valid pixel (marked by DE=1). The default value is 2.
 
 **vfront_porch** (RW):
     Number of video lines between the end of the last valid pixel line (marked
-    by DE=1) and assertion of the VSYNC signal. The default value is 30.
+    by DE=1) and assertion of the VSYNC signal. The default value is 2.
+
 
 FPDL3 specific input parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+===============================
 
 **fpdl3_input_width** (RW):
     Number of deserializer input lines.
@@ -297,7 +294,7 @@ FPDL3 specific input parameters
     | 2 - dual
 
 FPDL3 specific output parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+================================
 
 **fpdl3_output_width** (RW):
     Number of serializer output lines.
@@ -307,7 +304,7 @@ FPDL3 specific output parameters
     | 2 - dual
 
 GMSL specific input parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+==============================
 
 **gmsl_mode** (RW):
     GMSL speed mode.
@@ -331,8 +328,10 @@ GMSL specific input parameters
     | 0 - disabled
     | 1 - enabled (default)
 
-MTD partitions
---------------
+
+====================
+mgb4 mtd partitions
+====================
 
 The mgb4 driver creates a MTD device with two partitions:
  - mgb4-fw.X - FPGA firmware.
@@ -345,8 +344,9 @@ also have a third partition named *mgb4-flash* available in the system. This
 partition represents the whole, unpartitioned, card's FLASH memory and one should
 not fiddle with it...
 
-IIO (triggers)
---------------
+====================
+mgb4 iio (triggers)
+====================
 
 The mgb4 driver creates an Industrial I/O (IIO) device that provides trigger and
 signal level status capability. The following scan elements are available:

@@ -355,8 +355,7 @@ static void ip22zilog_status_handle(struct uart_ip22zilog_port *up,
 static void ip22zilog_transmit_chars(struct uart_ip22zilog_port *up,
 				    struct zilog_channel *channel)
 {
-	struct tty_port *tport;
-	unsigned char c;
+	struct circ_buf *xmit;
 
 	if (ZS_IS_CONS(up)) {
 		unsigned char status = readb(&channel->control);
@@ -399,18 +398,20 @@ static void ip22zilog_transmit_chars(struct uart_ip22zilog_port *up,
 
 	if (up->port.state == NULL)
 		goto ack_tx_int;
-	tport = &up->port.state->port;
-	if (uart_tx_stopped(&up->port))
+	xmit = &up->port.state->xmit;
+	if (uart_circ_empty(xmit))
 		goto ack_tx_int;
-	if (!uart_fifo_get(&up->port, &c))
+	if (uart_tx_stopped(&up->port))
 		goto ack_tx_int;
 
 	up->flags |= IP22ZILOG_FLAG_TX_ACTIVE;
-	writeb(c, &channel->data);
+	writeb(xmit->buf[xmit->tail], &channel->data);
 	ZSDELAY();
 	ZS_WSYNC(channel);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	uart_xmit_advance(&up->port, 1);
+
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&up->port);
 
 	return;
@@ -599,16 +600,17 @@ static void ip22zilog_start_tx(struct uart_port *port)
 		port->icount.tx++;
 		port->x_char = 0;
 	} else {
-		struct tty_port *tport = &port->state->port;
-		unsigned char c;
+		struct circ_buf *xmit = &port->state->xmit;
 
-		if (!uart_fifo_get(port, &c))
+		if (uart_circ_empty(xmit))
 			return;
-		writeb(c, &channel->data);
+		writeb(xmit->buf[xmit->tail], &channel->data);
 		ZSDELAY();
 		ZS_WSYNC(channel);
 
-		if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+		uart_xmit_advance(port, 1);
+
+		if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 			uart_write_wakeup(&up->port);
 	}
 }

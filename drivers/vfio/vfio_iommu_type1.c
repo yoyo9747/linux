@@ -513,10 +513,12 @@ static int follow_fault_pfn(struct vm_area_struct *vma, struct mm_struct *mm,
 			    unsigned long vaddr, unsigned long *pfn,
 			    bool write_fault)
 {
-	struct follow_pfnmap_args args = { .vma = vma, .address = vaddr };
+	pte_t *ptep;
+	pte_t pte;
+	spinlock_t *ptl;
 	int ret;
 
-	ret = follow_pfnmap_start(&args);
+	ret = follow_pte(vma->vm_mm, vaddr, &ptep, &ptl);
 	if (ret) {
 		bool unlocked = false;
 
@@ -530,17 +532,19 @@ static int follow_fault_pfn(struct vm_area_struct *vma, struct mm_struct *mm,
 		if (ret)
 			return ret;
 
-		ret = follow_pfnmap_start(&args);
+		ret = follow_pte(vma->vm_mm, vaddr, &ptep, &ptl);
 		if (ret)
 			return ret;
 	}
 
-	if (write_fault && !args.writable)
+	pte = ptep_get(ptep);
+
+	if (write_fault && !pte_write(pte))
 		ret = -EFAULT;
 	else
-		*pfn = args.pfn;
+		*pfn = pte_pfn(pte);
 
-	follow_pfnmap_end(&args);
+	pte_unmap_unlock(ptep, ptl);
 	return ret;
 }
 
@@ -2131,7 +2135,7 @@ static int vfio_iommu_domain_alloc(struct device *dev, void *data)
 {
 	struct iommu_domain **domain = data;
 
-	*domain = iommu_paging_domain_alloc(dev);
+	*domain = iommu_domain_alloc(dev->bus);
 	return 1; /* Don't iterate */
 }
 
@@ -2188,12 +2192,11 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 	 * us a representative device for the IOMMU API call. We don't actually
 	 * want to iterate beyond the first device (if any).
 	 */
+	ret = -EIO;
 	iommu_group_for_each_dev(iommu_group, &domain->domain,
 				 vfio_iommu_domain_alloc);
-	if (IS_ERR(domain->domain)) {
-		ret = PTR_ERR(domain->domain);
+	if (!domain->domain)
 		goto out_free_domain;
-	}
 
 	if (iommu->nesting) {
 		ret = iommu_enable_nesting(domain->domain);

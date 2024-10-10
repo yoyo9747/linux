@@ -9,7 +9,6 @@
 #include "bpf_kfuncs.h"
 #include "test_siphash.h"
 #include "test_tcp_custom_syncookie.h"
-#include "bpf_misc.h"
 
 #define MAX_PACKET_OFF 0xffff
 
@@ -486,10 +485,17 @@ static int tcp_validate_cookie(struct tcp_syncookie *ctx)
 		goto err;
 
 	mssind = (cookie & (3 << 6)) >> 6;
-	if (ctx->ipv4)
+	if (ctx->ipv4) {
+		if (mssind > ARRAY_SIZE(msstab4))
+			goto err;
+
 		ctx->attrs.mss = msstab4[mssind];
-	else
+	} else {
+		if (mssind > ARRAY_SIZE(msstab6))
+			goto err;
+
 		ctx->attrs.mss = msstab6[mssind];
+	}
 
 	ctx->attrs.snd_wscale = cookie & BPF_SYNCOOKIE_WSCALE_MASK;
 	ctx->attrs.rcv_wscale = ctx->attrs.snd_wscale;

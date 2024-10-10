@@ -50,7 +50,7 @@ struct list_lru_node {
 
 struct list_lru {
 	struct list_lru_node	*node;
-#ifdef CONFIG_MEMCG
+#ifdef CONFIG_MEMCG_KMEM
 	struct list_head	list;
 	int			shrinker_id;
 	bool			memcg_aware;

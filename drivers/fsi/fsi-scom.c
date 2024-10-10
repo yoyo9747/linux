@@ -625,5 +625,4 @@ static void scom_exit(void)
 
 module_init(scom_init);
 module_exit(scom_exit);
-MODULE_DESCRIPTION("SCOM FSI Client device driver");
 MODULE_LICENSE("GPL");

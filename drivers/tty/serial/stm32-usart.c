@@ -696,23 +696,18 @@ static void stm32_usart_transmit_chars_pio(struct uart_port *port)
 {
 	struct stm32_port *stm32_port = to_stm32_port(port);
 	const struct stm32_usart_offsets *ofs = &stm32_port->info->ofs;
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 
-	while (1) {
-		unsigned char ch;
-
+	while (!uart_circ_empty(xmit)) {
 		/* Check that TDR is empty before filling FIFO */
 		if (!(readl_relaxed(port->membase + ofs->isr) & USART_SR_TXE))
 			break;
-
-		if (!uart_fifo_get(port, &ch))
-			break;
-
-		writel_relaxed(ch, port->membase + ofs->tdr);
+		writel_relaxed(xmit->buf[xmit->tail], port->membase + ofs->tdr);
+		uart_xmit_advance(port, 1);
 	}
 
 	/* rely on TXE irq (mask or unmask) for sending remaining data */
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		stm32_usart_tx_interrupt_disable(port);
 	else
 		stm32_usart_tx_interrupt_enable(port);
@@ -721,7 +716,7 @@ static void stm32_usart_transmit_chars_pio(struct uart_port *port)
 static void stm32_usart_transmit_chars_dma(struct uart_port *port)
 {
 	struct stm32_port *stm32port = to_stm32_port(port);
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	struct dma_async_tx_descriptor *desc = NULL;
 	unsigned int count;
 	int ret;
@@ -733,8 +728,25 @@ static void stm32_usart_transmit_chars_dma(struct uart_port *port)
 		return;
 	}
 
-	count =	kfifo_out_peek(&tport->xmit_fifo, &stm32port->tx_buf[0],
-			TX_BUF_L);
+	count = uart_circ_chars_pending(xmit);
+
+	if (count > TX_BUF_L)
+		count = TX_BUF_L;
+
+	if (xmit->tail < xmit->head) {
+		memcpy(&stm32port->tx_buf[0], &xmit->buf[xmit->tail], count);
+	} else {
+		size_t one = UART_XMIT_SIZE - xmit->tail;
+		size_t two;
+
+		if (one > count)
+			one = count;
+		two = count - one;
+
+		memcpy(&stm32port->tx_buf[0], &xmit->buf[xmit->tail], one);
+		if (two)
+			memcpy(&stm32port->tx_buf[one], &xmit->buf[0], two);
+	}
 
 	desc = dmaengine_prep_slave_single(stm32port->tx_ch,
 					   stm32port->tx_dma_buf,
@@ -780,14 +792,14 @@ static void stm32_usart_transmit_chars(struct uart_port *port)
 {
 	struct stm32_port *stm32_port = to_stm32_port(port);
 	const struct stm32_usart_offsets *ofs = &stm32_port->info->ofs;
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	u32 isr;
 	int ret;
 
 	if (!stm32_port->hw_flow_control &&
 	    port->rs485.flags & SER_RS485_ENABLED &&
 	    (port->x_char ||
-	     !(kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port)))) {
+	     !(uart_circ_empty(xmit) || uart_tx_stopped(port)))) {
 		stm32_usart_tc_interrupt_disable(port);
 		stm32_usart_rs485_rts_enable(port);
 	}
@@ -814,7 +826,7 @@ static void stm32_usart_transmit_chars(struct uart_port *port)
 		return;
 	}
 
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
 		stm32_usart_tx_interrupt_disable(port);
 		return;
 	}
@@ -829,10 +841,10 @@ static void stm32_usart_transmit_chars(struct uart_port *port)
 	else
 		stm32_usart_transmit_chars_pio(port);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 
-	if (kfifo_is_empty(&tport->xmit_fifo)) {
+	if (uart_circ_empty(xmit)) {
 		stm32_usart_tx_interrupt_disable(port);
 		if (!stm32_port->hw_flow_control &&
 		    port->rs485.flags & SER_RS485_ENABLED) {
@@ -963,9 +975,9 @@ static void stm32_usart_stop_tx(struct uart_port *port)
 /* There are probably characters waiting to be transmitted. */
 static void stm32_usart_start_tx(struct uart_port *port)
 {
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 
-	if (kfifo_is_empty(&tport->xmit_fifo) && !port->x_char) {
+	if (uart_circ_empty(xmit) && !port->x_char) {
 		stm32_usart_rs485_rts_disable(port);
 		return;
 	}

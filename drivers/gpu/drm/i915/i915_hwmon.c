@@ -5,7 +5,6 @@
 
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
-#include <linux/jiffies.h>
 #include <linux/types.h>
 
 #include "i915_drv.h"
@@ -37,7 +36,6 @@ struct hwm_reg {
 	i915_reg_t pkg_rapl_limit;
 	i915_reg_t energy_status_all;
 	i915_reg_t energy_status_tile;
-	i915_reg_t fan_speed;
 };
 
 struct hwm_energy_info {
@@ -45,17 +43,11 @@ struct hwm_energy_info {
 	long accum_energy;			/* Accumulated energy for energy1_input */
 };
 
-struct hwm_fan_info {
-	u32 reg_val_prev;
-	u64 time_prev;
-};
-
 struct hwm_drvdata {
 	struct i915_hwmon *hwmon;
 	struct intel_uncore *uncore;
 	struct device *hwmon_dev;
 	struct hwm_energy_info ei;		/*  Energy info for energy1_input */
-	struct hwm_fan_info fi;			/*  Fan info for fan1_input */
 	char name[12];
 	int gt_n;
 	bool reset_in_progress;
@@ -284,7 +276,6 @@ static const struct hwmon_channel_info * const hwm_info[] = {
 	HWMON_CHANNEL_INFO(power, HWMON_P_MAX | HWMON_P_RATED_MAX | HWMON_P_CRIT),
 	HWMON_CHANNEL_INFO(energy, HWMON_E_INPUT),
 	HWMON_CHANNEL_INFO(curr, HWMON_C_CRIT),
-	HWMON_CHANNEL_INFO(fan, HWMON_F_INPUT),
 	NULL
 };
 
@@ -623,69 +614,6 @@ hwm_curr_write(struct hwm_drvdata *ddat, u32 attr, long val)
 }
 
 static umode_t
-hwm_fan_is_visible(const struct hwm_drvdata *ddat, u32 attr)
-{
-	struct i915_hwmon *hwmon = ddat->hwmon;
-
-	if (attr == hwmon_fan_input && i915_mmio_reg_valid(hwmon->rg.fan_speed))
-		return 0444;
-
-	return 0;
-}
-
-static int
-hwm_fan_input_read(struct hwm_drvdata *ddat, long *val)
-{
-	struct i915_hwmon *hwmon = ddat->hwmon;
-	struct hwm_fan_info *fi = &ddat->fi;
-	u64 rotations, time_now, time;
-	intel_wakeref_t wakeref;
-	u32 reg_val;
-	int ret = 0;
-
-	wakeref = intel_runtime_pm_get(ddat->uncore->rpm);
-	mutex_lock(&hwmon->hwmon_lock);
-
-	reg_val = intel_uncore_read(ddat->uncore, hwmon->rg.fan_speed);
-	time_now = get_jiffies_64();
-
-	/*
-	 * HW register value is accumulated count of pulses from
-	 * PWM fan with the scale of 2 pulses per rotation.
-	 */
-	rotations = (reg_val - fi->reg_val_prev) / 2;
-
-	time = jiffies_delta_to_msecs(time_now - fi->time_prev);
-	if (unlikely(!time)) {
-		ret = -EAGAIN;
-		goto exit;
-	}
-
-	/*
-	 * Calculate fan speed in RPM by time averaging two subsequent
-	 * readings in minutes.
-	 * RPM = number of rotations * msecs per minute / time in msecs
-	 */
-	*val = DIV_ROUND_UP_ULL(rotations * (MSEC_PER_SEC * 60), time);
-
-	fi->reg_val_prev = reg_val;
-	fi->time_prev = time_now;
-exit:
-	mutex_unlock(&hwmon->hwmon_lock);
-	intel_runtime_pm_put(ddat->uncore->rpm, wakeref);
-	return ret;
-}
-
-static int
-hwm_fan_read(struct hwm_drvdata *ddat, u32 attr, long *val)
-{
-	if (attr == hwmon_fan_input)
-		return hwm_fan_input_read(ddat, val);
-
-	return -EOPNOTSUPP;
-}
-
-static umode_t
 hwm_is_visible(const void *drvdata, enum hwmon_sensor_types type,
 	       u32 attr, int channel)
 {
@@ -700,8 +628,6 @@ hwm_is_visible(const void *drvdata, enum hwmon_sensor_types type,
 		return hwm_energy_is_visible(ddat, attr);
 	case hwmon_curr:
 		return hwm_curr_is_visible(ddat, attr);
-	case hwmon_fan:
-		return hwm_fan_is_visible(ddat, attr);
 	default:
 		return 0;
 	}
@@ -722,8 +648,6 @@ hwm_read(struct device *dev, enum hwmon_sensor_types type, u32 attr,
 		return hwm_energy_read(ddat, attr, val);
 	case hwmon_curr:
 		return hwm_curr_read(ddat, attr, val);
-	case hwmon_fan:
-		return hwm_fan_read(ddat, attr, val);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -815,14 +739,18 @@ hwm_get_preregistration_info(struct drm_i915_private *i915)
 		hwmon->rg.pkg_rapl_limit = PCU_PACKAGE_RAPL_LIMIT;
 		hwmon->rg.energy_status_all = PCU_PACKAGE_ENERGY_STATUS;
 		hwmon->rg.energy_status_tile = INVALID_MMIO_REG;
-		hwmon->rg.fan_speed = PCU_PWM_FAN_SPEED;
+	} else if (IS_XEHPSDV(i915)) {
+		hwmon->rg.pkg_power_sku_unit = GT0_PACKAGE_POWER_SKU_UNIT;
+		hwmon->rg.pkg_power_sku = INVALID_MMIO_REG;
+		hwmon->rg.pkg_rapl_limit = GT0_PACKAGE_RAPL_LIMIT;
+		hwmon->rg.energy_status_all = GT0_PLATFORM_ENERGY_STATUS;
+		hwmon->rg.energy_status_tile = GT0_PACKAGE_ENERGY_STATUS;
 	} else {
 		hwmon->rg.pkg_power_sku_unit = INVALID_MMIO_REG;
 		hwmon->rg.pkg_power_sku = INVALID_MMIO_REG;
 		hwmon->rg.pkg_rapl_limit = INVALID_MMIO_REG;
 		hwmon->rg.energy_status_all = INVALID_MMIO_REG;
 		hwmon->rg.energy_status_tile = INVALID_MMIO_REG;
-		hwmon->rg.fan_speed = INVALID_MMIO_REG;
 	}
 
 	with_intel_runtime_pm(uncore->rpm, wakeref) {
@@ -833,16 +761,6 @@ hwm_get_preregistration_info(struct drm_i915_private *i915)
 		if (i915_mmio_reg_valid(hwmon->rg.pkg_power_sku_unit))
 			val_sku_unit = intel_uncore_read(uncore,
 							 hwmon->rg.pkg_power_sku_unit);
-
-		/*
-		 * Store the initial fan register value, so that we can use it for
-		 * initial fan speed calculation.
-		 */
-		if (i915_mmio_reg_valid(hwmon->rg.fan_speed)) {
-			ddat->fi.reg_val_prev = intel_uncore_read(uncore,
-								  hwmon->rg.fan_speed);
-			ddat->fi.time_prev = get_jiffies_64();
-		}
 	}
 
 	hwmon->scl_shift_power = REG_FIELD_GET(PKG_PWR_UNIT, val_sku_unit);
@@ -875,7 +793,7 @@ void i915_hwmon_register(struct drm_i915_private *i915)
 	if (!IS_DGFX(i915))
 		return;
 
-	hwmon = kzalloc(sizeof(*hwmon), GFP_KERNEL);
+	hwmon = devm_kzalloc(dev, sizeof(*hwmon), GFP_KERNEL);
 	if (!hwmon)
 		return;
 
@@ -901,12 +819,14 @@ void i915_hwmon_register(struct drm_i915_private *i915)
 	hwm_get_preregistration_info(i915);
 
 	/*  hwmon_dev points to device hwmon<i> */
-	hwmon_dev = hwmon_device_register_with_info(dev, ddat->name,
-						    ddat,
-						    &hwm_chip_info,
-						    hwm_groups);
-	if (IS_ERR(hwmon_dev))
-		goto err;
+	hwmon_dev = devm_hwmon_device_register_with_info(dev, ddat->name,
+							 ddat,
+							 &hwm_chip_info,
+							 hwm_groups);
+	if (IS_ERR(hwmon_dev)) {
+		i915->hwmon = NULL;
+		return;
+	}
 
 	ddat->hwmon_dev = hwmon_dev;
 
@@ -919,36 +839,16 @@ void i915_hwmon_register(struct drm_i915_private *i915)
 		if (!hwm_gt_is_visible(ddat_gt, hwmon_energy, hwmon_energy_input, 0))
 			continue;
 
-		hwmon_dev = hwmon_device_register_with_info(dev, ddat_gt->name,
-							    ddat_gt,
-							    &hwm_gt_chip_info,
-							    NULL);
+		hwmon_dev = devm_hwmon_device_register_with_info(dev, ddat_gt->name,
+								 ddat_gt,
+								 &hwm_gt_chip_info,
+								 NULL);
 		if (!IS_ERR(hwmon_dev))
 			ddat_gt->hwmon_dev = hwmon_dev;
 	}
-	return;
-err:
-	i915_hwmon_unregister(i915);
 }
 
 void i915_hwmon_unregister(struct drm_i915_private *i915)
 {
-	struct i915_hwmon *hwmon = i915->hwmon;
-	struct intel_gt *gt;
-	int i;
-
-	if (!hwmon)
-		return;
-
-	for_each_gt(gt, i915, i)
-		if (hwmon->ddat_gt[i].hwmon_dev)
-			hwmon_device_unregister(hwmon->ddat_gt[i].hwmon_dev);
-
-	if (hwmon->ddat.hwmon_dev)
-		hwmon_device_unregister(hwmon->ddat.hwmon_dev);
-
-	mutex_destroy(&hwmon->hwmon_lock);
-
-	kfree(i915->hwmon);
-	i915->hwmon = NULL;
+	fetch_and_zero(&i915->hwmon);
 }

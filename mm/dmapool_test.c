@@ -144,5 +144,4 @@ static void dmapool_exit(void)
 
 module_init(dmapool_checks);
 module_exit(dmapool_exit);
-MODULE_DESCRIPTION("dma_pool timing test");
 MODULE_LICENSE("GPL");

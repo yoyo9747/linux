@@ -118,28 +118,26 @@ long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm, int tablefd,
 	struct fd f;
 
 	f = fdget(tablefd);
-	if (!fd_file(f))
+	if (!f.file)
 		return -EBADF;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(stt, &kvm->arch.spapr_tce_tables, list) {
-		if (stt == fd_file(f)->private_data) {
+		if (stt == f.file->private_data) {
 			found = true;
 			break;
 		}
 	}
 	rcu_read_unlock();
 
-	if (!found) {
-		fdput(f);
+	fdput(f);
+
+	if (!found)
 		return -EINVAL;
-	}
 
 	table_group = iommu_group_get_iommudata(grp);
-	if (WARN_ON(!table_group)) {
-		fdput(f);
+	if (WARN_ON(!table_group))
 		return -EFAULT;
-	}
 
 	for (i = 0; i < IOMMU_TABLE_GROUP_MAX_TABLES; ++i) {
 		struct iommu_table *tbltmp = table_group->tables[i];
@@ -160,10 +158,8 @@ long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm, int tablefd,
 			break;
 		}
 	}
-	if (!tbl) {
-		fdput(f);
+	if (!tbl)
 		return -EINVAL;
-	}
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(stit, &stt->iommu_tables, next) {
@@ -174,7 +170,6 @@ long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm, int tablefd,
 			/* stit is being destroyed */
 			iommu_tce_table_put(tbl);
 			rcu_read_unlock();
-			fdput(f);
 			return -ENOTTY;
 		}
 		/*
@@ -182,7 +177,6 @@ long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm, int tablefd,
 		 * its KVM reference counter and can return.
 		 */
 		rcu_read_unlock();
-		fdput(f);
 		return 0;
 	}
 	rcu_read_unlock();
@@ -190,7 +184,6 @@ long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm, int tablefd,
 	stit = kzalloc(sizeof(*stit), GFP_KERNEL);
 	if (!stit) {
 		iommu_tce_table_put(tbl);
-		fdput(f);
 		return -ENOMEM;
 	}
 
@@ -199,7 +192,6 @@ long kvm_spapr_tce_attach_iommu_group(struct kvm *kvm, int tablefd,
 
 	list_add_rcu(&stit->next, &stt->iommu_tables);
 
-	fdput(f);
 	return 0;
 }
 

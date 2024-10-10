@@ -26,9 +26,6 @@
 
 #include <linux/list.h>
 
-struct ras_err_data;
-struct ras_query_context;
-
 #define ACA_MAX_REGS_COUNT	(16)
 
 #define ACA_REG_FIELD(x, h, l)			(((x) & GENMASK_ULL(h, l)) >> l)
@@ -102,14 +99,7 @@ enum aca_error_type {
 	ACA_ERROR_TYPE_COUNT
 };
 
-enum aca_smu_type {
-	ACA_SMU_TYPE_UE = 0,
-	ACA_SMU_TYPE_CE,
-	ACA_SMU_TYPE_COUNT,
-};
-
 struct aca_bank {
-	enum aca_smu_type type;
 	u64 regs[ACA_MAX_REGS_COUNT];
 };
 
@@ -125,10 +115,15 @@ struct aca_bank_info {
 	int mcatype;
 };
 
+struct aca_bank_report {
+	struct aca_bank_info info;
+	u64 count[ACA_ERROR_TYPE_COUNT];
+};
+
 struct aca_bank_error {
 	struct list_head node;
 	struct aca_bank_info info;
-	u64 count;
+	u64 count[ACA_ERROR_TYPE_COUNT];
 };
 
 struct aca_error {
@@ -162,8 +157,9 @@ struct aca_handle {
 };
 
 struct aca_bank_ops {
-	int (*aca_bank_parser)(struct aca_handle *handle, struct aca_bank *bank, enum aca_smu_type type, void *data);
-	bool (*aca_bank_is_valid)(struct aca_handle *handle, struct aca_bank *bank, enum aca_smu_type type,
+	int (*aca_bank_generate_report)(struct aca_handle *handle, struct aca_bank *bank, enum aca_error_type type,
+					struct aca_bank_report *report, void *data);
+	bool (*aca_bank_is_valid)(struct aca_handle *handle, struct aca_bank *bank, enum aca_error_type type,
 				  void *data);
 };
 
@@ -171,15 +167,13 @@ struct aca_smu_funcs {
 	int max_ue_bank_count;
 	int max_ce_bank_count;
 	int (*set_debug_mode)(struct amdgpu_device *adev, bool enable);
-	int (*get_valid_aca_count)(struct amdgpu_device *adev, enum aca_smu_type type, u32 *count);
-	int (*get_valid_aca_bank)(struct amdgpu_device *adev, enum aca_smu_type type, int idx, struct aca_bank *bank);
-	int (*parse_error_code)(struct amdgpu_device *adev, struct aca_bank *bank);
+	int (*get_valid_aca_count)(struct amdgpu_device *adev, enum aca_error_type type, u32 *count);
+	int (*get_valid_aca_bank)(struct amdgpu_device *adev, enum aca_error_type type, int idx, struct aca_bank *bank);
 };
 
 struct amdgpu_aca {
 	struct aca_handle_manager mgr;
 	const struct aca_smu_funcs *smu_funcs;
-	atomic_t ue_update_flag;
 	bool is_enabled;
 };
 
@@ -202,10 +196,7 @@ int amdgpu_aca_add_handle(struct amdgpu_device *adev, struct aca_handle *handle,
 			  const char *name, const struct aca_info *aca_info, void *data);
 void amdgpu_aca_remove_handle(struct aca_handle *handle);
 int amdgpu_aca_get_error_data(struct amdgpu_device *adev, struct aca_handle *handle,
-			      enum aca_error_type type, struct ras_err_data *err_data,
-			      struct ras_query_context *qctx);
+				     enum aca_error_type type, void *data);
 int amdgpu_aca_smu_set_debug_mode(struct amdgpu_device *adev, bool en);
 void amdgpu_aca_smu_debugfs_init(struct amdgpu_device *adev, struct dentry *root);
-int aca_error_cache_log_bank_error(struct aca_handle *handle, struct aca_bank_info *info,
-				   enum aca_error_type type, u64 count);
 #endif

@@ -5,7 +5,8 @@
  * This software may be used and distributed according to the terms
  * of the GNU General Public License, incorporated herein by reference.
  *
- * Usage: kallsyms [--all-symbols] [--absolute-percpu]  in.map > out.S
+ * Usage: kallsyms [--all-symbols] [--absolute-percpu]
+ *                         [--base-relative] [--lto-clang] in.map > out.S
  *
  *      Table compression uses all the unused char codes on the symbols and
  *  maps these to the most used substrings (tokens). For instance, it might
@@ -27,8 +28,6 @@
 #include <ctype.h>
 #include <limits.h>
 
-#include <xalloc.h>
-
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 
 #define KSYM_NAME_LEN		512
@@ -37,7 +36,8 @@ struct sym_entry {
 	unsigned long long addr;
 	unsigned int len;
 	unsigned int seq;
-	bool percpu_absolute;
+	unsigned int start_pos;
+	unsigned int percpu_absolute;
 	unsigned char sym[];
 };
 
@@ -63,6 +63,8 @@ static struct sym_entry **table;
 static unsigned int table_size, table_cnt;
 static int all_symbols;
 static int absolute_percpu;
+static int base_relative;
+static int lto_clang;
 
 static int token_profit[0x10000];
 
@@ -73,7 +75,8 @@ static unsigned char best_table_len[256];
 
 static void usage(void)
 {
-	fprintf(stderr, "Usage: kallsyms [--all-symbols] [--absolute-percpu] in.map > out.S\n");
+	fprintf(stderr, "Usage: kallsyms [--all-symbols] [--absolute-percpu] "
+			"[--base-relative] [--lto-clang] in.map > out.S\n");
 	exit(1);
 }
 
@@ -170,12 +173,17 @@ static struct sym_entry *read_symbol(FILE *in, char **buf, size_t *buf_len)
 	 * compressed together */
 	len++;
 
-	sym = xmalloc(sizeof(*sym) + len + 1);
+	sym = malloc(sizeof(*sym) + len + 1);
+	if (!sym) {
+		fprintf(stderr, "kallsyms failure: "
+			"unable to allocate required amount of memory\n");
+		exit(EXIT_FAILURE);
+	}
 	sym->addr = addr;
 	sym->len = len;
 	sym->sym[0] = type;
 	strcpy(sym_name(sym), name);
-	sym->percpu_absolute = false;
+	sym->percpu_absolute = 0;
 
 	return sym;
 }
@@ -196,11 +204,6 @@ static int symbol_in_range(const struct sym_entry *s,
 	return 0;
 }
 
-static bool string_starts_with(const char *s, const char *prefix)
-{
-	return strncmp(s, prefix, strlen(prefix)) == 0;
-}
-
 static int symbol_valid(const struct sym_entry *s)
 {
 	const char *name = sym_name(s);
@@ -208,14 +211,6 @@ static int symbol_valid(const struct sym_entry *s)
 	/* if --all-symbols is not specified, then symbols outside the text
 	 * and inittext sections are discarded */
 	if (!all_symbols) {
-		/*
-		 * Symbols starting with __start and __stop are used to denote
-		 * section boundaries, and should always be included:
-		 */
-		if (string_starts_with(name, "__start_") ||
-		    string_starts_with(name, "__stop_"))
-			return 1;
-
 		if (symbol_in_range(s, text_ranges,
 				    ARRAY_SIZE(text_ranges)) == 0)
 			return 0;
@@ -251,6 +246,12 @@ static void shrink_table(void)
 		}
 	}
 	table_cnt = pos;
+
+	/* When valid symbol is not registered, exit to error */
+	if (!table_cnt) {
+		fprintf(stderr, "No valid symbol.\n");
+		exit(1);
+	}
 }
 
 static void read_map(const char *in)
@@ -271,11 +272,16 @@ static void read_map(const char *in)
 		if (!sym)
 			continue;
 
-		sym->seq = table_cnt;
+		sym->start_pos = table_cnt;
 
 		if (table_cnt >= table_size) {
 			table_size += 10000;
-			table = xrealloc(table, sizeof(*table) * table_size);
+			table = realloc(table, sizeof(*table) * table_size);
+			if (!table) {
+				fprintf(stderr, "out of memory\n");
+				fclose(fp);
+				exit (1);
+			}
 		}
 
 		table[table_cnt++] = sym;
@@ -290,6 +296,15 @@ static void output_label(const char *label)
 	printf(".globl %s\n", label);
 	printf("\tALGN\n");
 	printf("%s:\n", label);
+}
+
+/* Provide proper symbols relocatability by their '_text' relativeness. */
+static void output_address(unsigned long long addr)
+{
+	if (_text <= addr)
+		printf("\tPTR\t_text + %#llx\n", addr - _text);
+	else
+		printf("\tPTR\t_text - %#llx\n", _text - addr);
 }
 
 /* uncompress a compressed symbol. When this function is called, the best table
@@ -319,9 +334,28 @@ static int expand_symbol(const unsigned char *data, int len, char *result)
 	return total;
 }
 
-static bool symbol_absolute(const struct sym_entry *s)
+static int symbol_absolute(const struct sym_entry *s)
 {
 	return s->percpu_absolute;
+}
+
+static void cleanup_symbol_name(char *s)
+{
+	char *p;
+
+	/*
+	 * ASCII[.]   = 2e
+	 * ASCII[0-9] = 30,39
+	 * ASCII[A-Z] = 41,5a
+	 * ASCII[_]   = 5f
+	 * ASCII[a-z] = 61,7a
+	 *
+	 * As above, replacing the first '.' in ".llvm." with '\0' does not
+	 * affect the main sorting, but it helps us with subsorting.
+	 */
+	p = strstr(s, ".llvm.");
+	if (p)
+		*p = '\0';
 }
 
 static int compare_names(const void *a, const void *b)
@@ -353,7 +387,7 @@ static void write_src(void)
 {
 	unsigned int i, k, off;
 	unsigned int best_idx[256];
-	unsigned int *markers, markers_cnt;
+	unsigned int *markers;
 	char buf[KSYM_NAME_LEN];
 
 	printf("#include <asm/bitsperlong.h>\n");
@@ -373,8 +407,12 @@ static void write_src(void)
 
 	/* table of offset markers, that give the offset in the compressed stream
 	 * every 256 symbols */
-	markers_cnt = (table_cnt + 255) / 256;
-	markers = xmalloc(sizeof(*markers) * markers_cnt);
+	markers = malloc(sizeof(unsigned int) * ((table_cnt + 255) / 256));
+	if (!markers) {
+		fprintf(stderr, "kallsyms failure: "
+			"unable to allocate required memory\n");
+		exit(EXIT_FAILURE);
+	}
 
 	output_label("kallsyms_names");
 	off = 0;
@@ -411,19 +449,21 @@ static void write_src(void)
 		}
 		for (k = 0; k < table[i]->len; k++)
 			printf(", 0x%02x", table[i]->sym[k]);
-
-		/*
-		 * Now that we wrote out the compressed symbol name, restore the
-		 * original name and print it in the comment.
-		 */
-		expand_symbol(table[i]->sym, table[i]->len, buf);
-		strcpy((char *)table[i]->sym, buf);
-		printf("\t/* %s */\n", table[i]->sym);
+		printf("\n");
 	}
 	printf("\n");
 
+	/*
+	 * Now that we wrote out the compressed symbol names, restore the
+	 * original names, which are needed in some of the later steps.
+	 */
+	for (i = 0; i < table_cnt; i++) {
+		expand_symbol(table[i]->sym, table[i]->len, buf);
+		strcpy((char *)table[i]->sym, buf);
+	}
+
 	output_label("kallsyms_markers");
-	for (i = 0; i < markers_cnt; i++)
+	for (i = 0; i < ((table_cnt + 255) >> 8); i++)
 		printf("\t.long\t%u\n", markers[i]);
 	printf("\n");
 
@@ -444,56 +484,66 @@ static void write_src(void)
 		printf("\t.short\t%d\n", best_idx[i]);
 	printf("\n");
 
-	output_label("kallsyms_offsets");
+	if (!base_relative)
+		output_label("kallsyms_addresses");
+	else
+		output_label("kallsyms_offsets");
 
 	for (i = 0; i < table_cnt; i++) {
-		/*
-		 * Use the offset relative to the lowest value
-		 * encountered of all relative symbols, and emit
-		 * non-relocatable fixed offsets that will be fixed
-		 * up at runtime.
-		 */
+		if (base_relative) {
+			/*
+			 * Use the offset relative to the lowest value
+			 * encountered of all relative symbols, and emit
+			 * non-relocatable fixed offsets that will be fixed
+			 * up at runtime.
+			 */
 
-		long long offset;
-		bool overflow;
+			long long offset;
+			int overflow;
 
-		if (!absolute_percpu) {
-			offset = table[i]->addr - relative_base;
-			overflow = offset < 0 || offset > UINT_MAX;
-		} else if (symbol_absolute(table[i])) {
-			offset = table[i]->addr;
-			overflow = offset < 0 || offset > INT_MAX;
+			if (!absolute_percpu) {
+				offset = table[i]->addr - relative_base;
+				overflow = (offset < 0 || offset > UINT_MAX);
+			} else if (symbol_absolute(table[i])) {
+				offset = table[i]->addr;
+				overflow = (offset < 0 || offset > INT_MAX);
+			} else {
+				offset = relative_base - table[i]->addr - 1;
+				overflow = (offset < INT_MIN || offset >= 0);
+			}
+			if (overflow) {
+				fprintf(stderr, "kallsyms failure: "
+					"%s symbol value %#llx out of range in relative mode\n",
+					symbol_absolute(table[i]) ? "absolute" : "relative",
+					table[i]->addr);
+				exit(EXIT_FAILURE);
+			}
+			printf("\t.long\t%#x	/* %s */\n", (int)offset, table[i]->sym);
+		} else if (!symbol_absolute(table[i])) {
+			output_address(table[i]->addr);
 		} else {
-			offset = relative_base - table[i]->addr - 1;
-			overflow = offset < INT_MIN || offset >= 0;
+			printf("\tPTR\t%#llx\n", table[i]->addr);
 		}
-		if (overflow) {
-			fprintf(stderr, "kallsyms failure: "
-				"%s symbol value %#llx out of range in relative mode\n",
-				symbol_absolute(table[i]) ? "absolute" : "relative",
-				table[i]->addr);
-			exit(EXIT_FAILURE);
-		}
-		printf("\t.long\t%#x\t/* %s */\n", (int)offset, table[i]->sym);
 	}
 	printf("\n");
 
-	output_label("kallsyms_relative_base");
-	/* Provide proper symbols relocatability by their '_text' relativeness. */
-	if (_text <= relative_base)
-		printf("\tPTR\t_text + %#llx\n", relative_base - _text);
-	else
-		printf("\tPTR\t_text - %#llx\n", _text - relative_base);
-	printf("\n");
+	if (base_relative) {
+		output_label("kallsyms_relative_base");
+		output_address(relative_base);
+		printf("\n");
+	}
+
+	if (lto_clang)
+		for (i = 0; i < table_cnt; i++)
+			cleanup_symbol_name((char *)table[i]->sym);
 
 	sort_symbols_by_name();
 	output_label("kallsyms_seqs_of_names");
 	for (i = 0; i < table_cnt; i++)
-		printf("\t.byte 0x%02x, 0x%02x, 0x%02x\t/* %s */\n",
+		printf("\t.byte 0x%02x, 0x%02x, 0x%02x\n",
 			(unsigned char)(table[i]->seq >> 16),
 			(unsigned char)(table[i]->seq >> 8),
-			(unsigned char)(table[i]->seq >> 0),
-		       table[i]->sym);
+			(unsigned char)(table[i]->seq >> 0));
 	printf("\n");
 }
 
@@ -717,7 +767,7 @@ static int compare_symbols(const void *a, const void *b)
 		return wa - wb;
 
 	/* sort by initial order, so that other symbols are left undisturbed */
-	return sa->seq - sb->seq;
+	return sa->start_pos - sb->start_pos;
 }
 
 static void sort_symbols(void)
@@ -737,7 +787,7 @@ static void make_percpus_absolute(void)
 			 * versions of this tool.
 			 */
 			table[i]->sym[0] = 'A';
-			table[i]->percpu_absolute = true;
+			table[i]->percpu_absolute = 1;
 		}
 }
 
@@ -763,6 +813,8 @@ int main(int argc, char **argv)
 		static const struct option long_options[] = {
 			{"all-symbols",     no_argument, &all_symbols,     1},
 			{"absolute-percpu", no_argument, &absolute_percpu, 1},
+			{"base-relative",   no_argument, &base_relative,   1},
+			{"lto-clang",       no_argument, &lto_clang,       1},
 			{},
 		};
 
@@ -782,7 +834,8 @@ int main(int argc, char **argv)
 	if (absolute_percpu)
 		make_percpus_absolute();
 	sort_symbols();
-	record_relative_base();
+	if (base_relative)
+		record_relative_base();
 	optimize_token_table();
 	write_src();
 

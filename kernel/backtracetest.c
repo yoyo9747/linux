@@ -74,6 +74,5 @@ static void exitf(void)
 
 module_init(backtrace_regression_test);
 module_exit(exitf);
-MODULE_DESCRIPTION("Simple stack backtrace regression test module");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Arjan van de Ven <arjan@linux.intel.com>");

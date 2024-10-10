@@ -51,7 +51,6 @@
 #include <net/dsfield.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
-#include <net/inet_dscp.h>
 
 /*
    This version of net/ipv6/sit.c is cloned of net/ipv4/ip_gre.c
@@ -133,8 +132,8 @@ static struct ip_tunnel *ipip6_tunnel_lookup(struct net *net,
 	return NULL;
 }
 
-static struct ip_tunnel __rcu **
-__ipip6_bucket(struct sit_net *sitn, struct ip_tunnel_parm_kern *parms)
+static struct ip_tunnel __rcu **__ipip6_bucket(struct sit_net *sitn,
+		struct ip_tunnel_parm *parms)
 {
 	__be32 remote = parms->iph.daddr;
 	__be32 local = parms->iph.saddr;
@@ -208,7 +207,7 @@ static int ipip6_tunnel_create(struct net_device *dev)
 	__dev_addr_set(dev, &t->parms.iph.saddr, 4);
 	memcpy(dev->broadcast, &t->parms.iph.daddr, 4);
 
-	if (test_bit(IP_TUNNEL_SIT_ISATAP_BIT, t->parms.i_flags))
+	if ((__force u16)t->parms.i_flags & SIT_ISATAP)
 		dev->priv_flags |= IFF_ISATAP;
 
 	dev->rtnl_link_ops = &sit_link_ops;
@@ -227,8 +226,7 @@ out:
 }
 
 static struct ip_tunnel *ipip6_tunnel_locate(struct net *net,
-					     struct ip_tunnel_parm_kern *parms,
-					     int create)
+		struct ip_tunnel_parm *parms, int create)
 {
 	__be32 remote = parms->iph.daddr;
 	__be32 local = parms->iph.saddr;
@@ -936,8 +934,8 @@ static netdev_tx_t ipip6_tunnel_xmit(struct sk_buff *skb,
 	}
 
 	flowi4_init_output(&fl4, tunnel->parms.link, tunnel->fwmark,
-			   tos & INET_DSCP_MASK, RT_SCOPE_UNIVERSE,
-			   IPPROTO_IPV6, 0, dst, tiph->saddr, 0, 0,
+			   RT_TOS(tos), RT_SCOPE_UNIVERSE, IPPROTO_IPV6,
+			   0, dst, tiph->saddr, 0, 0,
 			   sock_net_uid(tunnel->net, NULL));
 
 	rt = dst_cache_get_ip4(&tunnel->dst_cache, &fl4.saddr);
@@ -1112,7 +1110,7 @@ static void ipip6_tunnel_bind_dev(struct net_device *dev)
 							  iph->daddr, iph->saddr,
 							  0, 0,
 							  IPPROTO_IPV6,
-							  iph->tos & INET_DSCP_MASK,
+							  RT_TOS(iph->tos),
 							  tunnel->parms.link);
 
 		if (!IS_ERR(rt)) {
@@ -1137,8 +1135,7 @@ static void ipip6_tunnel_bind_dev(struct net_device *dev)
 	dev->needed_headroom = t_hlen + hlen;
 }
 
-static void ipip6_tunnel_update(struct ip_tunnel *t,
-				struct ip_tunnel_parm_kern *p,
+static void ipip6_tunnel_update(struct ip_tunnel *t, struct ip_tunnel_parm *p,
 				__u32 fwmark)
 {
 	struct net *net = t->net;
@@ -1199,11 +1196,11 @@ static int
 ipip6_tunnel_get6rd(struct net_device *dev, struct ip_tunnel_parm __user *data)
 {
 	struct ip_tunnel *t = netdev_priv(dev);
-	struct ip_tunnel_parm_kern p;
 	struct ip_tunnel_6rd ip6rd;
+	struct ip_tunnel_parm p;
 
 	if (dev == dev_to_sit_net(dev)->fb_tunnel_dev) {
-		if (!ip_tunnel_parm_from_user(&p, data))
+		if (copy_from_user(&p, data, sizeof(p)))
 			return -EFAULT;
 		t = ipip6_tunnel_locate(t->net, &p, 0);
 	}
@@ -1254,7 +1251,7 @@ static bool ipip6_valid_ip_proto(u8 ipproto)
 }
 
 static int
-__ipip6_tunnel_ioctl_validate(struct net *net, struct ip_tunnel_parm_kern *p)
+__ipip6_tunnel_ioctl_validate(struct net *net, struct ip_tunnel_parm *p)
 {
 	if (!ns_capable(net->user_ns, CAP_NET_ADMIN))
 		return -EPERM;
@@ -1271,7 +1268,7 @@ __ipip6_tunnel_ioctl_validate(struct net *net, struct ip_tunnel_parm_kern *p)
 }
 
 static int
-ipip6_tunnel_get(struct net_device *dev, struct ip_tunnel_parm_kern *p)
+ipip6_tunnel_get(struct net_device *dev, struct ip_tunnel_parm *p)
 {
 	struct ip_tunnel *t = netdev_priv(dev);
 
@@ -1284,7 +1281,7 @@ ipip6_tunnel_get(struct net_device *dev, struct ip_tunnel_parm_kern *p)
 }
 
 static int
-ipip6_tunnel_add(struct net_device *dev, struct ip_tunnel_parm_kern *p)
+ipip6_tunnel_add(struct net_device *dev, struct ip_tunnel_parm *p)
 {
 	struct ip_tunnel *t = netdev_priv(dev);
 	int err;
@@ -1300,7 +1297,7 @@ ipip6_tunnel_add(struct net_device *dev, struct ip_tunnel_parm_kern *p)
 }
 
 static int
-ipip6_tunnel_change(struct net_device *dev, struct ip_tunnel_parm_kern *p)
+ipip6_tunnel_change(struct net_device *dev, struct ip_tunnel_parm *p)
 {
 	struct ip_tunnel *t = netdev_priv(dev);
 	int err;
@@ -1331,7 +1328,7 @@ ipip6_tunnel_change(struct net_device *dev, struct ip_tunnel_parm_kern *p)
 }
 
 static int
-ipip6_tunnel_del(struct net_device *dev, struct ip_tunnel_parm_kern *p)
+ipip6_tunnel_del(struct net_device *dev, struct ip_tunnel_parm *p)
 {
 	struct ip_tunnel *t = netdev_priv(dev);
 
@@ -1351,8 +1348,7 @@ ipip6_tunnel_del(struct net_device *dev, struct ip_tunnel_parm_kern *p)
 }
 
 static int
-ipip6_tunnel_ctl(struct net_device *dev, struct ip_tunnel_parm_kern *p,
-		 int cmd)
+ipip6_tunnel_ctl(struct net_device *dev, struct ip_tunnel_parm *p, int cmd)
 {
 	switch (cmd) {
 	case SIOCGETTUNNEL:
@@ -1436,7 +1432,7 @@ static void ipip6_tunnel_setup(struct net_device *dev)
 	dev->flags		= IFF_NOARP;
 	netif_keep_dst(dev);
 	dev->addr_len		= 4;
-	dev->lltx		= true;
+	dev->features		|= NETIF_F_LLTX;
 	dev->features		|= SIT_FEATURES;
 	dev->hw_features	|= SIT_FEATURES;
 	dev->pcpu_stat_type	= NETDEV_PCPU_STAT_TSTATS;
@@ -1494,7 +1490,7 @@ static int ipip6_validate(struct nlattr *tb[], struct nlattr *data[],
 }
 
 static void ipip6_netlink_parms(struct nlattr *data[],
-				struct ip_tunnel_parm_kern *parms,
+				struct ip_tunnel_parm *parms,
 				__u32 *fwmark)
 {
 	memset(parms, 0, sizeof(*parms));
@@ -1603,8 +1599,8 @@ static int ipip6_changelink(struct net_device *dev, struct nlattr *tb[],
 			    struct netlink_ext_ack *extack)
 {
 	struct ip_tunnel *t = netdev_priv(dev);
+	struct ip_tunnel_parm p;
 	struct ip_tunnel_encap ipencap;
-	struct ip_tunnel_parm_kern p;
 	struct net *net = t->net;
 	struct sit_net *sitn = net_generic(net, sit_net_id);
 #ifdef CONFIG_IPV6_SIT_6RD
@@ -1691,7 +1687,7 @@ static size_t ipip6_get_size(const struct net_device *dev)
 static int ipip6_fill_info(struct sk_buff *skb, const struct net_device *dev)
 {
 	struct ip_tunnel *tunnel = netdev_priv(dev);
-	struct ip_tunnel_parm_kern *parm = &tunnel->parms;
+	struct ip_tunnel_parm *parm = &tunnel->parms;
 
 	if (nla_put_u32(skb, IFLA_IPTUN_LINK, parm->link) ||
 	    nla_put_in_addr(skb, IFLA_IPTUN_LOCAL, parm->iph.saddr) ||
@@ -1701,8 +1697,7 @@ static int ipip6_fill_info(struct sk_buff *skb, const struct net_device *dev)
 	    nla_put_u8(skb, IFLA_IPTUN_PMTUDISC,
 		       !!(parm->iph.frag_off & htons(IP_DF))) ||
 	    nla_put_u8(skb, IFLA_IPTUN_PROTO, parm->iph.protocol) ||
-	    nla_put_be16(skb, IFLA_IPTUN_FLAGS,
-			 ip_tunnel_flags_to_be16(parm->i_flags)) ||
+	    nla_put_be16(skb, IFLA_IPTUN_FLAGS, parm->i_flags) ||
 	    nla_put_u32(skb, IFLA_IPTUN_FWMARK, tunnel->fwmark))
 		goto nla_put_failure;
 
@@ -1856,7 +1851,7 @@ static int __net_init sit_init_net(struct net *net)
 	/* FB netdevice is special: we have one, and only one per netns.
 	 * Allowing to move it to another netns is clearly unsafe.
 	 */
-	sitn->fb_tunnel_dev->netns_local = true;
+	sitn->fb_tunnel_dev->features |= NETIF_F_NETNS_LOCAL;
 
 	err = register_netdev(sitn->fb_tunnel_dev);
 	if (err)

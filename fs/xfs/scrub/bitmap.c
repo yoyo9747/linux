@@ -40,23 +40,22 @@ struct xbitmap64_node {
  * These functions are defined by the INTERVAL_TREE_DEFINE macro, but we'll
  * forward-declare them anyway for clarity.
  */
-static inline __maybe_unused void
+static inline void
 xbitmap64_tree_insert(struct xbitmap64_node *node, struct rb_root_cached *root);
 
-static inline __maybe_unused void
+static inline void
 xbitmap64_tree_remove(struct xbitmap64_node *node, struct rb_root_cached *root);
 
-static inline __maybe_unused struct xbitmap64_node *
+static inline struct xbitmap64_node *
 xbitmap64_tree_iter_first(struct rb_root_cached *root, uint64_t start,
 			uint64_t last);
 
-static inline __maybe_unused struct xbitmap64_node *
+static inline struct xbitmap64_node *
 xbitmap64_tree_iter_next(struct xbitmap64_node *node, uint64_t start,
 		       uint64_t last);
 
 INTERVAL_TREE_DEFINE(struct xbitmap64_node, bn_rbnode, uint64_t,
-		__bn_subtree_last, START, LAST, static inline __maybe_unused,
-		xbitmap64_tree)
+		__bn_subtree_last, START, LAST, static inline, xbitmap64_tree)
 
 /* Iterate each interval of a bitmap.  Do not change the bitmap. */
 #define for_each_xbitmap64_extent(bn, bitmap) \
@@ -315,23 +314,22 @@ struct xbitmap32_node {
  * These functions are defined by the INTERVAL_TREE_DEFINE macro, but we'll
  * forward-declare them anyway for clarity.
  */
-static inline __maybe_unused void
+static inline void
 xbitmap32_tree_insert(struct xbitmap32_node *node, struct rb_root_cached *root);
 
-static inline __maybe_unused void
+static inline void
 xbitmap32_tree_remove(struct xbitmap32_node *node, struct rb_root_cached *root);
 
-static inline __maybe_unused struct xbitmap32_node *
+static inline struct xbitmap32_node *
 xbitmap32_tree_iter_first(struct rb_root_cached *root, uint32_t start,
 			  uint32_t last);
 
-static inline __maybe_unused struct xbitmap32_node *
+static inline struct xbitmap32_node *
 xbitmap32_tree_iter_next(struct xbitmap32_node *node, uint32_t start,
 			 uint32_t last);
 
 INTERVAL_TREE_DEFINE(struct xbitmap32_node, bn_rbnode, uint32_t,
-		__bn_subtree_last, START, LAST, static inline __maybe_unused,
-		xbitmap32_tree)
+		__bn_subtree_last, START, LAST, static inline, xbitmap32_tree)
 
 /* Iterate each interval of a bitmap.  Do not change the bitmap. */
 #define for_each_xbitmap32_extent(bn, bitmap) \

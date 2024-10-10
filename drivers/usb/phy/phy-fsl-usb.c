@@ -27,7 +27,7 @@
 #include <linux/platform_device.h>
 #include <linux/uaccess.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "phy-fsl-usb.h"
 
@@ -1005,6 +1005,7 @@ struct platform_driver fsl_otg_driver = {
 	.remove_new = fsl_otg_remove,
 	.driver = {
 		.name = driver_name,
+		.owner = THIS_MODULE,
 	},
 };
 

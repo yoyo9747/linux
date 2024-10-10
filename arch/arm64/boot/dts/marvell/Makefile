@@ -28,7 +28,3 @@ dtb-$(CONFIG_ARCH_MVEBU) += cn9130-crb-A.dtb
 dtb-$(CONFIG_ARCH_MVEBU) += cn9130-crb-B.dtb
 dtb-$(CONFIG_ARCH_MVEBU) += ac5x-rd-carrier-cn9131.dtb
 dtb-$(CONFIG_ARCH_MVEBU) += ac5-98dx35xx-rd.dtb
-dtb-$(CONFIG_ARCH_MVEBU) += cn9130-cf-base.dtb
-dtb-$(CONFIG_ARCH_MVEBU) += cn9130-cf-pro.dtb
-dtb-$(CONFIG_ARCH_MVEBU) += cn9131-cf-solidwan.dtb
-dtb-$(CONFIG_ARCH_MVEBU) += cn9132-clearfog.dtb

@@ -16,7 +16,6 @@
 #include <linux/static_key.h>
 #include <linux/string.h>
 #include <linux/types.h>
-#include <linux/vmalloc.h>
 
 #include "kasan.h"
 

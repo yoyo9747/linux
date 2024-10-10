@@ -162,7 +162,7 @@
  * 2) The deepest stack frame should be set to zero
  *
  */
-void __attribute__((weak, noreturn)) __nolibc_entrypoint __no_stack_protector _start(void)
+void __attribute__((weak, noreturn, optimize("Os", "omit-frame-pointer"))) __no_stack_protector _start(void)
 {
 	__asm__ volatile (
 		"xor  %ebp, %ebp\n"       /* zero the stack frame                                */
@@ -174,7 +174,7 @@ void __attribute__((weak, noreturn)) __nolibc_entrypoint __no_stack_protector _s
 		"call _start_c\n"         /* transfer to c runtime                               */
 		"hlt\n"                   /* ensure it does not return                           */
 	);
-	__nolibc_entrypoint_epilogue();
+	__builtin_unreachable();
 }
 
 #endif /* _NOLIBC_ARCH_I386_H */

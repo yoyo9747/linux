@@ -821,13 +821,14 @@ nfp_net_prepare_vector(struct nfp_net *nn, struct nfp_net_r_vector *r_vec,
 
 	snprintf(r_vec->name, sizeof(r_vec->name),
 		 "%s-rxtx-%d", nfp_net_name(nn), idx);
-	err = request_irq(r_vec->irq_vector, r_vec->handler, IRQF_NO_AUTOEN,
-			  r_vec->name, r_vec);
+	err = request_irq(r_vec->irq_vector, r_vec->handler, 0, r_vec->name,
+			  r_vec);
 	if (err) {
 		nfp_net_napi_del(&nn->dp, r_vec);
 		nn_err(nn, "Error requesting IRQ %d\n", r_vec->irq_vector);
 		return err;
 	}
+	disable_irq(r_vec->irq_vector);
 
 	irq_set_affinity_hint(r_vec->irq_vector, &r_vec->affinity_mask);
 
@@ -1525,7 +1526,7 @@ static void nfp_net_dp_swap(struct nfp_net *nn, struct nfp_net_dp *dp)
 	*dp = nn->dp;
 	nn->dp = new_dp;
 
-	WRITE_ONCE(nn->dp.netdev->mtu, new_dp.mtu);
+	nn->dp.netdev->mtu = new_dp.mtu;
 
 	if (!netif_is_rxfh_configured(nn->dp.netdev))
 		nfp_net_rss_init_itbl(nn);
@@ -2288,7 +2289,10 @@ static int nfp_net_bridge_setlink(struct net_device *dev, struct nlmsghdr *nlh,
 	if (!br_spec)
 		return -EINVAL;
 
-	nla_for_each_nested_type(attr, IFLA_BRIDGE_MODE, br_spec, rem) {
+	nla_for_each_nested(attr, br_spec, rem) {
+		if (nla_type(attr) != IFLA_BRIDGE_MODE)
+			continue;
+
 		new_ctrl = nn->dp.ctrl;
 		mode = nla_get_u16(attr);
 		if (mode == BRIDGE_MODE_VEPA)

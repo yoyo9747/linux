@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
- * Copyright (C) 2018-2024 Linaro Ltd.
+ * Copyright (C) 2018-2022 Linaro Ltd.
  */
 
 /* DOC: IPA Interrupts
@@ -19,31 +19,29 @@
  * time only these three are supported.
  */
 
-#include <linux/interrupt.h>
 #include <linux/platform_device.h>
+#include <linux/types.h>
+#include <linux/interrupt.h>
 #include <linux/pm_runtime.h>
 #include <linux/pm_wakeirq.h>
-#include <linux/types.h>
 
 #include "ipa.h"
-#include "ipa_endpoint.h"
-#include "ipa_interrupt.h"
-#include "ipa_power.h"
 #include "ipa_reg.h"
+#include "ipa_endpoint.h"
+#include "ipa_power.h"
 #include "ipa_uc.h"
+#include "ipa_interrupt.h"
 
 /**
  * struct ipa_interrupt - IPA interrupt information
  * @ipa:		IPA pointer
  * @irq:		Linux IRQ number used for IPA interrupts
  * @enabled:		Mask indicating which interrupts are enabled
- * @suspend_enabled:	Bitmap of endpoints with the SUSPEND interrupt enabled
  */
 struct ipa_interrupt {
 	struct ipa *ipa;
 	u32 irq;
 	u32 enabled;
-	unsigned long *suspend_enabled;
 };
 
 /* Clear the suspend interrupt for all endpoints that signaled it */
@@ -196,7 +194,6 @@ static void ipa_interrupt_suspend_control(struct ipa_interrupt *interrupt,
 	u32 mask = BIT(endpoint_id % 32);
 	u32 unit = endpoint_id / 32;
 	const struct reg *reg;
-	unsigned long weight;
 	u32 offset;
 	u32 val;
 
@@ -206,10 +203,6 @@ static void ipa_interrupt_suspend_control(struct ipa_interrupt *interrupt,
 	if (ipa->version == IPA_VERSION_3_0)
 		return;
 
-	weight = bitmap_weight(interrupt->suspend_enabled, ipa->endpoint_count);
-	if (weight == 1 && !enable)
-		ipa_interrupt_disable(ipa, IPA_IRQ_TX_SUSPEND);
-
 	reg = ipa_reg(ipa, IRQ_SUSPEND_EN);
 	offset = reg_n_offset(reg, unit);
 	val = ioread32(ipa->reg_virt + offset);
@@ -218,12 +211,8 @@ static void ipa_interrupt_suspend_control(struct ipa_interrupt *interrupt,
 		val |= mask;
 	else
 		val &= ~mask;
-	__change_bit(endpoint_id, interrupt->suspend_enabled);
 
 	iowrite32(val, ipa->reg_virt + offset);
-
-	if (!weight && enable)
-		ipa_interrupt_enable(ipa, IPA_IRQ_TX_SUSPEND);
 }
 
 /* Enable TX_SUSPEND for an endpoint */
@@ -257,16 +246,7 @@ int ipa_interrupt_config(struct ipa *ipa)
 
 	interrupt->ipa = ipa;
 
-	/* Initially all IPA interrupt types are disabled */
-	interrupt->enabled = 0;
-	interrupt->suspend_enabled = bitmap_zalloc(ipa->endpoint_count,
-						   GFP_KERNEL);
-	if (!interrupt->suspend_enabled) {
-		ret = -ENOMEM;
-		goto err_kfree;
-	}
-
-	/* Disable IPA interrupt types */
+	/* Disable all IPA interrupt types */
 	reg = ipa_reg(ipa, IPA_IRQ_EN);
 	iowrite32(0, ipa->reg_virt + reg_offset(reg));
 
@@ -274,32 +254,22 @@ int ipa_interrupt_config(struct ipa *ipa)
 				   "ipa", interrupt);
 	if (ret) {
 		dev_err(dev, "error %d requesting \"ipa\" IRQ\n", ret);
-		goto err_free_bitmap;
-	}
-
-	ret = device_init_wakeup(dev, true);
-	if (ret) {
-		dev_err(dev, "error %d enabling wakeup\n", ret);
-		goto err_free_irq;
+		goto err_kfree;
 	}
 
 	ret = dev_pm_set_wake_irq(dev, irq);
 	if (ret) {
 		dev_err(dev, "error %d registering \"ipa\" IRQ as wakeirq\n",
 			ret);
-		goto err_disable_wakeup;
+		goto err_free_irq;
 	}
 
 	ipa->interrupt = interrupt;
 
 	return 0;
 
-err_disable_wakeup:
-	(void)device_init_wakeup(dev, false);
 err_free_irq:
 	free_irq(interrupt->irq, interrupt);
-err_free_bitmap:
-	bitmap_free(interrupt->suspend_enabled);
 err_kfree:
 	kfree(interrupt);
 
@@ -315,20 +285,22 @@ void ipa_interrupt_deconfig(struct ipa *ipa)
 	ipa->interrupt = NULL;
 
 	dev_pm_clear_wake_irq(dev);
-	(void)device_init_wakeup(dev, false);
 	free_irq(interrupt->irq, interrupt);
-	bitmap_free(interrupt->suspend_enabled);
 }
 
 /* Initialize the IPA interrupt structure */
 struct ipa_interrupt *ipa_interrupt_init(struct platform_device *pdev)
 {
+	struct device *dev = &pdev->dev;
 	struct ipa_interrupt *interrupt;
 	int irq;
 
 	irq = platform_get_irq_byname(pdev, "ipa");
-	if (irq <= 0)
+	if (irq <= 0) {
+		dev_err(dev, "DT error %d getting \"ipa\" IRQ property\n", irq);
+
 		return ERR_PTR(irq ? : -EINVAL);
+	}
 
 	interrupt = kzalloc(sizeof(*interrupt), GFP_KERNEL);
 	if (!interrupt)

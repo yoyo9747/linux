@@ -965,7 +965,7 @@ static void __vector_cleanup(struct vector_cleanup *cl, bool check_irr)
 	lockdep_assert_held(&vector_lock);
 
 	hlist_for_each_entry_safe(apicd, tmp, &cl->head, clist) {
-		unsigned int vector = apicd->prev_vector;
+		unsigned int irr, vector = apicd->prev_vector;
 
 		/*
 		 * Paranoia: Check if the vector that needs to be cleaned
@@ -979,7 +979,8 @@ static void __vector_cleanup(struct vector_cleanup *cl, bool check_irr)
 		 * fixup_irqs() was just called to scan IRR for set bits and
 		 * forward them to new destination CPUs via IPIs.
 		 */
-		if (check_irr && is_vector_pending(vector)) {
+		irr = check_irr ? apic_read(APIC_IRR + (vector / 32 * 0x10)) : 0;
+		if (irr & (1U << (vector % 32))) {
 			pr_warn_once("Moved interrupt pending in old target APIC %u\n", apicd->irq);
 			rearm = true;
 			continue;
@@ -1035,8 +1036,7 @@ static void __vector_schedule_cleanup(struct apic_chip_data *apicd)
 			add_timer_on(&cl->timer, cpu);
 		}
 	} else {
-		pr_warn("IRQ %u schedule cleanup for offline CPU %u\n", apicd->irq, cpu);
-		free_moved_vector(apicd);
+		apicd->prev_vector = 0;
 	}
 	raw_spin_unlock(&vector_lock);
 }
@@ -1073,7 +1073,6 @@ void irq_complete_move(struct irq_cfg *cfg)
  */
 void irq_force_complete_move(struct irq_desc *desc)
 {
-	unsigned int cpu = smp_processor_id();
 	struct apic_chip_data *apicd;
 	struct irq_data *irqd;
 	unsigned int vector;
@@ -1098,11 +1097,10 @@ void irq_force_complete_move(struct irq_desc *desc)
 		goto unlock;
 
 	/*
-	 * If prev_vector is empty or the descriptor is neither currently
-	 * nor previously on the outgoing CPU no action required.
+	 * If prev_vector is empty, no action required.
 	 */
 	vector = apicd->prev_vector;
-	if (!vector || (apicd->cpu != cpu && apicd->prev_cpu != cpu))
+	if (!vector)
 		goto unlock;
 
 	/*

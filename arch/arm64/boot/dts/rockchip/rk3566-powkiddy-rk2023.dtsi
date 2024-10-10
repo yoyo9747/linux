@@ -10,8 +10,6 @@
 #include "rk3566.dtsi"
 
 / {
-	chassis-type = "handset";
-
 	aliases {
 		mmc1 = &sdmmc0;
 		mmc2 = &sdmmc1;

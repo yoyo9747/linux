@@ -841,16 +841,19 @@ static int virtscsi_init(struct virtio_device *vdev,
 	int err;
 	u32 i;
 	u32 num_vqs, num_poll_vqs, num_req_vqs;
-	struct virtqueue_info *vqs_info;
+	vq_callback_t **callbacks;
+	const char **names;
 	struct virtqueue **vqs;
 	struct irq_affinity desc = { .pre_vectors = 2 };
 
 	num_req_vqs = vscsi->num_queues;
 	num_vqs = num_req_vqs + VIRTIO_SCSI_VQ_BASE;
 	vqs = kmalloc_array(num_vqs, sizeof(struct virtqueue *), GFP_KERNEL);
-	vqs_info = kcalloc(num_vqs, sizeof(*vqs_info), GFP_KERNEL);
+	callbacks = kmalloc_array(num_vqs, sizeof(vq_callback_t *),
+				  GFP_KERNEL);
+	names = kmalloc_array(num_vqs, sizeof(char *), GFP_KERNEL);
 
-	if (!vqs || !vqs_info) {
+	if (!callbacks || !vqs || !names) {
 		err = -ENOMEM;
 		goto out;
 	}
@@ -866,20 +869,22 @@ static int virtscsi_init(struct virtio_device *vdev,
 		 vscsi->io_queues[HCTX_TYPE_READ],
 		 vscsi->io_queues[HCTX_TYPE_POLL]);
 
-	vqs_info[0].callback = virtscsi_ctrl_done;
-	vqs_info[0].name = "control";
-	vqs_info[1].callback = virtscsi_event_done;
-	vqs_info[1].name = "event";
+	callbacks[0] = virtscsi_ctrl_done;
+	callbacks[1] = virtscsi_event_done;
+	names[0] = "control";
+	names[1] = "event";
 	for (i = VIRTIO_SCSI_VQ_BASE; i < num_vqs - num_poll_vqs; i++) {
-		vqs_info[i].callback = virtscsi_req_done;
-		vqs_info[i].name = "request";
+		callbacks[i] = virtscsi_req_done;
+		names[i] = "request";
 	}
 
-	for (; i < num_vqs; i++)
-		vqs_info[i].name = "request_poll";
+	for (; i < num_vqs; i++) {
+		callbacks[i] = NULL;
+		names[i] = "request_poll";
+	}
 
 	/* Discover virtqueues and write information to configuration.  */
-	err = virtio_find_vqs(vdev, num_vqs, vqs, vqs_info, &desc);
+	err = virtio_find_vqs(vdev, num_vqs, vqs, callbacks, names, &desc);
 	if (err)
 		goto out;
 
@@ -895,7 +900,8 @@ static int virtscsi_init(struct virtio_device *vdev,
 	err = 0;
 
 out:
-	kfree(vqs_info);
+	kfree(names);
+	kfree(callbacks);
 	kfree(vqs);
 	if (err)
 		virtscsi_remove_vqs(vdev);
@@ -1046,6 +1052,7 @@ static struct virtio_driver virtio_scsi_driver = {
 	.feature_table = features,
 	.feature_table_size = ARRAY_SIZE(features),
 	.driver.name = KBUILD_MODNAME,
+	.driver.owner = THIS_MODULE,
 	.id_table = id_table,
 	.probe = virtscsi_probe,
 #ifdef CONFIG_PM_SLEEP

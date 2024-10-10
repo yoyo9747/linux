@@ -95,5 +95,4 @@ module_exit(ac97_bus_exit);
 
 EXPORT_SYMBOL(ac97_bus_type);
 
-MODULE_DESCRIPTION("Legacy AC97 bus interface");
 MODULE_LICENSE("GPL");

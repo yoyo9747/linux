@@ -6,7 +6,6 @@ hugepage-shm
 hugepage-vmemmap
 hugetlb-madvise
 hugetlb-read-hwpoison
-hugetlb-soft-offline
 khugepaged
 map_hugetlb
 map_populate
@@ -48,6 +47,3 @@ mkdirty
 va_high_addr_switch
 hugetlb_fault_after_madv
 hugetlb_madv_vs_map
-mseal_test
-seal_elf
-droppable

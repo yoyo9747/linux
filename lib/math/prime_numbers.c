@@ -6,6 +6,8 @@
 #include <linux/prime_numbers.h>
 #include <linux/slab.h>
 
+#define bitmap_size(nbits) (BITS_TO_LONGS(nbits) * sizeof(unsigned long))
+
 struct primes {
 	struct rcu_head rcu;
 	unsigned long last, sz;
@@ -311,5 +313,4 @@ module_exit(primes_exit);
 module_param_named(selftest, selftest_max, ulong, 0400);
 
 MODULE_AUTHOR("Intel Corporation");
-MODULE_DESCRIPTION("Prime number library");
 MODULE_LICENSE("GPL");

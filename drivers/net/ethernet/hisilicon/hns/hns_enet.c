@@ -1777,7 +1777,7 @@ static int hns_nic_change_mtu(struct net_device *ndev, int new_mtu)
 	}
 
 	/* finally, set new mtu to netdevice */
-	WRITE_ONCE(ndev->mtu, new_mtu);
+	ndev->mtu = new_mtu;
 
 out:
 	if (if_running) {

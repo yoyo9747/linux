@@ -47,7 +47,6 @@ properties:
               - sifive,u74
               - sifive,u74-mc
               - thead,c906
-              - thead,c908
               - thead,c910
               - thead,c920
           - const: riscv
@@ -103,7 +102,26 @@ properties:
 
   interrupt-controller:
     type: object
-    $ref: /schemas/interrupt-controller/riscv,cpu-intc.yaml#
+    additionalProperties: false
+    description: Describes the CPU's local interrupt controller
+
+    properties:
+      '#interrupt-cells':
+        const: 1
+
+      compatible:
+        oneOf:
+          - items:
+              - const: andestech,cpu-intc
+              - const: riscv,cpu-intc
+          - const: riscv,cpu-intc
+
+      interrupt-controller: true
+
+    required:
+      - '#interrupt-cells'
+      - compatible
+      - interrupt-controller
 
   cpu-idle-states:
     $ref: /schemas/types.yaml#/definitions/phandle-array

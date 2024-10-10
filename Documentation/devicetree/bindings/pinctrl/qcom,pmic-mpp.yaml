@@ -35,7 +35,6 @@ properties:
               - qcom,pm8038-mpp
               - qcom,pm8058-mpp
               - qcom,pm8821-mpp
-              - qcom,pm8901-mpp
               - qcom,pm8917-mpp
               - qcom,pm8921-mpp
           - const: qcom,ssbi-mpp

@@ -2,8 +2,6 @@
 #ifndef __M68K_PGTABLE_H
 #define __M68K_PGTABLE_H
 
-#include <asm/page.h>
-
 #ifdef __uClinux__
 #include <asm/pgtable_no.h>
 #else

@@ -441,13 +441,18 @@ static int fc_host_setup(struct transport_container *tc, struct device *dev,
 	fc_host->next_vport_number = 0;
 	fc_host->npiv_vports_inuse = 0;
 
-	fc_host->work_q = alloc_workqueue("fc_wq_%d", 0, 0, shost->host_no);
+	snprintf(fc_host->work_q_name, sizeof(fc_host->work_q_name),
+		 "fc_wq_%d", shost->host_no);
+	fc_host->work_q = alloc_workqueue("%s", 0, 0, fc_host->work_q_name);
 	if (!fc_host->work_q)
 		return -ENOMEM;
 
 	fc_host->dev_loss_tmo = fc_dev_loss_tmo;
-	fc_host->devloss_work_q = alloc_workqueue("fc_dl_%d", 0, 0,
-					shost->host_no);
+	snprintf(fc_host->devloss_work_q_name,
+		 sizeof(fc_host->devloss_work_q_name),
+		 "fc_dl_%d", shost->host_no);
+	fc_host->devloss_work_q = alloc_workqueue("%s", 0, 0,
+					fc_host->devloss_work_q_name);
 	if (!fc_host->devloss_work_q) {
 		destroy_workqueue(fc_host->work_q);
 		fc_host->work_q = NULL;
@@ -4271,7 +4276,6 @@ fc_bsg_hostadd(struct Scsi_Host *shost, struct fc_host_attrs *fc_host)
 {
 	struct device *dev = &shost->shost_gendev;
 	struct fc_internal *i = to_fc_internal(shost->transportt);
-	struct queue_limits lim;
 	struct request_queue *q;
 	char bsg_name[20];
 
@@ -4282,16 +4286,16 @@ fc_bsg_hostadd(struct Scsi_Host *shost, struct fc_host_attrs *fc_host)
 
 	snprintf(bsg_name, sizeof(bsg_name),
 		 "fc_host%d", shost->host_no);
-	scsi_init_limits(shost, &lim);
-	lim.max_segments = min_not_zero(lim.max_segments, i->f->max_bsg_segments);
-	q = bsg_setup_queue(dev, bsg_name, &lim, fc_bsg_dispatch,
-			fc_bsg_job_timeout, i->f->dd_bsg_size);
+
+	q = bsg_setup_queue(dev, bsg_name, fc_bsg_dispatch, fc_bsg_job_timeout,
+				i->f->dd_bsg_size);
 	if (IS_ERR(q)) {
 		dev_err(dev,
 			"fc_host%d: bsg interface failed to initialize - setup queue\n",
 			shost->host_no);
 		return PTR_ERR(q);
 	}
+	__scsi_init_queue(shost, q);
 	blk_queue_rq_timeout(q, FC_DEFAULT_BSG_TIMEOUT);
 	fc_host->rqst_q = q;
 	return 0;
@@ -4307,7 +4311,6 @@ fc_bsg_rportadd(struct Scsi_Host *shost, struct fc_rport *rport)
 {
 	struct device *dev = &rport->dev;
 	struct fc_internal *i = to_fc_internal(shost->transportt);
-	struct queue_limits lim;
 	struct request_queue *q;
 
 	rport->rqst_q = NULL;
@@ -4315,14 +4318,13 @@ fc_bsg_rportadd(struct Scsi_Host *shost, struct fc_rport *rport)
 	if (!i->f->bsg_request)
 		return -ENOTSUPP;
 
-	scsi_init_limits(shost, &lim);
-	lim.max_segments = min_not_zero(lim.max_segments, i->f->max_bsg_segments);
-	q = bsg_setup_queue(dev, dev_name(dev), &lim, fc_bsg_dispatch_prep,
+	q = bsg_setup_queue(dev, dev_name(dev), fc_bsg_dispatch_prep,
 				fc_bsg_job_timeout, i->f->dd_bsg_size);
 	if (IS_ERR(q)) {
 		dev_err(dev, "failed to setup bsg queue\n");
 		return PTR_ERR(q);
 	}
+	__scsi_init_queue(shost, q);
 	blk_queue_rq_timeout(q, BLK_DEFAULT_SG_TIMEOUT);
 	rport->rqst_q = q;
 	return 0;

@@ -72,7 +72,7 @@ static void mlb_usio_stop_tx(struct uart_port *port)
 
 static void mlb_usio_tx_chars(struct uart_port *port)
 {
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	int count;
 
 	writew(readw(port->membase + MLB_USIO_REG_FCR) & ~MLB_USIO_FCR_FTIE,
@@ -87,7 +87,7 @@ static void mlb_usio_tx_chars(struct uart_port *port)
 		port->x_char = 0;
 		return;
 	}
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
 		mlb_usio_stop_tx(port);
 		return;
 	}
@@ -96,13 +96,12 @@ static void mlb_usio_tx_chars(struct uart_port *port)
 		(readw(port->membase + MLB_USIO_REG_FBYTE) & 0xff);
 
 	do {
-		unsigned char ch;
+		writew(xmit->buf[xmit->tail], port->membase + MLB_USIO_REG_DR);
 
-		if (!uart_fifo_get(port, &ch))
+		uart_xmit_advance(port, 1);
+		if (uart_circ_empty(xmit))
 			break;
 
-		writew(ch, port->membase + MLB_USIO_REG_DR);
-		port->icount.tx++;
 	} while (--count > 0);
 
 	writew(readw(port->membase + MLB_USIO_REG_FCR) & ~MLB_USIO_FCR_FDRQ,
@@ -111,10 +110,10 @@ static void mlb_usio_tx_chars(struct uart_port *port)
 	writeb(readb(port->membase + MLB_USIO_REG_SCR) | MLB_USIO_SCR_TBIE,
 	       port->membase + MLB_USIO_REG_SCR);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		mlb_usio_stop_tx(port);
 }
 

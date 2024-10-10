@@ -151,20 +151,20 @@ out_dir:
 static int sysv_unlink(struct inode * dir, struct dentry * dentry)
 {
 	struct inode * inode = d_inode(dentry);
-	struct folio *folio;
+	struct page * page;
 	struct sysv_dir_entry * de;
 	int err;
 
-	de = sysv_find_entry(dentry, &folio);
+	de = sysv_find_entry(dentry, &page);
 	if (!de)
 		return -ENOENT;
 
-	err = sysv_delete_entry(de, folio);
+	err = sysv_delete_entry(de, page);
 	if (!err) {
 		inode_set_ctime_to_ts(inode, inode_get_ctime(dir));
 		inode_dec_link_count(inode);
 	}
-	folio_release_kmap(folio, de);
+	unmap_and_put_page(page, de);
 	return err;
 }
 
@@ -194,28 +194,28 @@ static int sysv_rename(struct mnt_idmap *idmap, struct inode *old_dir,
 {
 	struct inode * old_inode = d_inode(old_dentry);
 	struct inode * new_inode = d_inode(new_dentry);
-	struct folio *dir_folio;
+	struct page * dir_page = NULL;
 	struct sysv_dir_entry * dir_de = NULL;
-	struct folio *old_folio;
+	struct page * old_page;
 	struct sysv_dir_entry * old_de;
 	int err = -ENOENT;
 
 	if (flags & ~RENAME_NOREPLACE)
 		return -EINVAL;
 
-	old_de = sysv_find_entry(old_dentry, &old_folio);
+	old_de = sysv_find_entry(old_dentry, &old_page);
 	if (!old_de)
 		goto out;
 
 	if (S_ISDIR(old_inode->i_mode)) {
 		err = -EIO;
-		dir_de = sysv_dotdot(old_inode, &dir_folio);
+		dir_de = sysv_dotdot(old_inode, &dir_page);
 		if (!dir_de)
 			goto out_old;
 	}
 
 	if (new_inode) {
-		struct folio *new_folio;
+		struct page * new_page;
 		struct sysv_dir_entry * new_de;
 
 		err = -ENOTEMPTY;
@@ -223,11 +223,11 @@ static int sysv_rename(struct mnt_idmap *idmap, struct inode *old_dir,
 			goto out_dir;
 
 		err = -ENOENT;
-		new_de = sysv_find_entry(new_dentry, &new_folio);
+		new_de = sysv_find_entry(new_dentry, &new_page);
 		if (!new_de)
 			goto out_dir;
-		err = sysv_set_link(new_de, new_folio, old_inode);
-		folio_release_kmap(new_folio, new_de);
+		err = sysv_set_link(new_de, new_page, old_inode);
+		unmap_and_put_page(new_page, new_de);
 		if (err)
 			goto out_dir;
 		inode_set_ctime_current(new_inode);
@@ -242,23 +242,23 @@ static int sysv_rename(struct mnt_idmap *idmap, struct inode *old_dir,
 			inode_inc_link_count(new_dir);
 	}
 
-	err = sysv_delete_entry(old_de, old_folio);
+	err = sysv_delete_entry(old_de, old_page);
 	if (err)
 		goto out_dir;
 
 	mark_inode_dirty(old_inode);
 
 	if (dir_de) {
-		err = sysv_set_link(dir_de, dir_folio, new_dir);
+		err = sysv_set_link(dir_de, dir_page, new_dir);
 		if (!err)
 			inode_dec_link_count(old_dir);
 	}
 
 out_dir:
 	if (dir_de)
-		folio_release_kmap(dir_folio, dir_de);
+		unmap_and_put_page(dir_page, dir_de);
 out_old:
-	folio_release_kmap(old_folio, old_de);
+	unmap_and_put_page(old_page, old_de);
 out:
 	return err;
 }

@@ -2495,9 +2495,6 @@ static int smu_v13_0_0_set_power_profile_mode(struct smu_context *smu,
 	}
 
 	if (smu->power_profile_mode == PP_SMC_POWER_PROFILE_CUSTOM) {
-		if (size != 9)
-			return -EINVAL;
-
 		ret = smu_cmn_update_table(smu,
 					   SMU_TABLE_ACTIVITY_MONITOR_COEFF,
 					   WORKLOAD_PPLIB_CUSTOM_BIT,
@@ -2529,8 +2526,6 @@ static int smu_v13_0_0_set_power_profile_mode(struct smu_context *smu,
 			activity_monitor->Fclk_PD_Data_error_coeff = input[7];
 			activity_monitor->Fclk_PD_Data_error_rate_coeff = input[8];
 			break;
-		default:
-			return -EINVAL;
 		}
 
 		ret = smu_cmn_update_table(smu,
@@ -2562,21 +2557,17 @@ static int smu_v13_0_0_set_power_profile_mode(struct smu_context *smu,
 			(amdgpu_ip_version(smu->adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 10) &&
 			 smu->adev->pm.fw_version >= 0x00504500)) {
 			workload_type = smu_cmn_to_asic_specific_index(smu,
-								CMN2ASIC_MAPPING_WORKLOAD,
-								PP_SMC_POWER_PROFILE_POWERSAVING);
+														   CMN2ASIC_MAPPING_WORKLOAD,
+														   PP_SMC_POWER_PROFILE_POWERSAVING);
 			if (workload_type >= 0)
 				workload_mask |= 1 << workload_type;
 		}
 	}
 
-	ret = smu_cmn_send_smc_msg_with_param(smu,
+	return smu_cmn_send_smc_msg_with_param(smu,
 					       SMU_MSG_SetWorkloadMask,
 					       workload_mask,
 					       NULL);
-	if (!ret)
-		smu->workload_mask = workload_mask;
-
-	return ret;
 }
 
 static bool smu_v13_0_0_is_mode1_reset_supported(struct smu_context *smu)
@@ -2790,9 +2781,10 @@ static void smu_v13_0_0_set_mode1_reset_param(struct smu_context *smu,
 						uint32_t *param)
 {
 	struct amdgpu_device *adev = smu->adev;
+	struct amdgpu_ras *ras = amdgpu_ras_get_context(adev);
 
 	if ((smu->smc_fw_version >= supported_version) &&
-	    amdgpu_ras_get_fed_status(adev))
+			ras && atomic_read(&ras->in_recovery))
 		/* Set RAS fatal error reset flag */
 		*param = 1 << 16;
 	else
@@ -3084,7 +3076,7 @@ static const struct pptable_funcs smu_v13_0_0_ppt_funcs = {
 	.set_tool_table_location = smu_v13_0_set_tool_table_location,
 	.deep_sleep_control = smu_v13_0_deep_sleep_control,
 	.gfx_ulv_control = smu_v13_0_gfx_ulv_control,
-	.get_bamaco_support = smu_v13_0_get_bamaco_support,
+	.baco_is_support = smu_v13_0_baco_is_support,
 	.baco_enter = smu_v13_0_baco_enter,
 	.baco_exit = smu_v13_0_baco_exit,
 	.mode1_reset_is_support = smu_v13_0_0_is_mode1_reset_supported,

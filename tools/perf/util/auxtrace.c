@@ -174,7 +174,7 @@ void auxtrace_mmap_params__set_idx(struct auxtrace_mmap_params *mp,
 				   struct evlist *evlist,
 				   struct evsel *evsel, int idx)
 {
-	bool per_cpu = !perf_cpu_map__has_any_cpu(evlist->core.user_requested_cpus);
+	bool per_cpu = !perf_cpu_map__has_any_cpu_or_is_empty(evlist->core.user_requested_cpus);
 
 	mp->mmap_needed = evsel->needs_auxtrace_mmap;
 
@@ -218,18 +218,13 @@ static struct auxtrace_queue *auxtrace_alloc_queue_array(unsigned int nr_queues)
 	return queue_array;
 }
 
-int auxtrace_queues__init_nr(struct auxtrace_queues *queues, int nr_queues)
+int auxtrace_queues__init(struct auxtrace_queues *queues)
 {
-	queues->nr_queues = nr_queues;
+	queues->nr_queues = AUXTRACE_INIT_NR_QUEUES;
 	queues->queue_array = auxtrace_alloc_queue_array(queues->nr_queues);
 	if (!queues->queue_array)
 		return -ENOMEM;
 	return 0;
-}
-
-int auxtrace_queues__init(struct auxtrace_queues *queues)
-{
-	return auxtrace_queues__init_nr(queues, AUXTRACE_INIT_NR_QUEUES);
 }
 
 static int auxtrace_queues__grow(struct auxtrace_queues *queues,
@@ -653,7 +648,7 @@ int auxtrace_parse_snapshot_options(struct auxtrace_record *itr,
 
 static int evlist__enable_event_idx(struct evlist *evlist, struct evsel *evsel, int idx)
 {
-	bool per_cpu_mmaps = !perf_cpu_map__has_any_cpu(evlist->core.user_requested_cpus);
+	bool per_cpu_mmaps = !perf_cpu_map__has_any_cpu_or_is_empty(evlist->core.user_requested_cpus);
 
 	if (per_cpu_mmaps) {
 		struct perf_cpu evlist_cpu = perf_cpu_map__cpu(evlist->core.all_cpus, idx);
@@ -671,11 +666,11 @@ int auxtrace_record__read_finish(struct auxtrace_record *itr, int idx)
 {
 	struct evsel *evsel;
 
-	if (!itr->evlist)
+	if (!itr->evlist || !itr->pmu)
 		return -EINVAL;
 
 	evlist__for_each_entry(itr->evlist, evsel) {
-		if (evsel__is_aux_event(evsel)) {
+		if (evsel->core.attr.type == itr->pmu->type) {
 			if (evsel->disabled)
 				return 0;
 			return evlist__enable_event_idx(itr->evlist, evsel, idx);
@@ -1240,7 +1235,7 @@ void auxtrace_synth_error(struct perf_record_auxtrace_error *auxtrace_error, int
 }
 
 int perf_event__synthesize_auxtrace_info(struct auxtrace_record *itr,
-					 const struct perf_tool *tool,
+					 struct perf_tool *tool,
 					 struct perf_session *session,
 					 perf_event__handler_t process)
 {
@@ -1471,7 +1466,6 @@ int itrace_do_parse_synth_opts(struct itrace_synth_opts *synth_opts,
 	char *endptr;
 	bool period_type_set = false;
 	bool period_set = false;
-	bool iy = false;
 
 	synth_opts->set = true;
 
@@ -1490,7 +1484,6 @@ int itrace_do_parse_synth_opts(struct itrace_synth_opts *synth_opts,
 		switch (*p++) {
 		case 'i':
 		case 'y':
-			iy = true;
 			if (p[-1] == 'y')
 				synth_opts->cycles = true;
 			else
@@ -1656,7 +1649,7 @@ int itrace_do_parse_synth_opts(struct itrace_synth_opts *synth_opts,
 		}
 	}
 out:
-	if (iy) {
+	if (synth_opts->instructions || synth_opts->cycles) {
 		if (!period_type_set)
 			synth_opts->period_type =
 					PERF_ITRACE_DEFAULT_PERIOD_TYPE;
@@ -1831,7 +1824,7 @@ int __weak compat_auxtrace_mmap__write_tail(struct auxtrace_mmap *mm, u64 tail)
 
 static int __auxtrace_mmap__read(struct mmap *map,
 				 struct auxtrace_record *itr,
-				 const struct perf_tool *tool, process_auxtrace_t fn,
+				 struct perf_tool *tool, process_auxtrace_t fn,
 				 bool snapshot, size_t snapshot_size)
 {
 	struct auxtrace_mmap *mm = &map->auxtrace_mmap;
@@ -1942,14 +1935,14 @@ static int __auxtrace_mmap__read(struct mmap *map,
 }
 
 int auxtrace_mmap__read(struct mmap *map, struct auxtrace_record *itr,
-			const struct perf_tool *tool, process_auxtrace_t fn)
+			struct perf_tool *tool, process_auxtrace_t fn)
 {
 	return __auxtrace_mmap__read(map, itr, tool, fn, false, 0);
 }
 
 int auxtrace_mmap__read_snapshot(struct mmap *map,
 				 struct auxtrace_record *itr,
-				 const struct perf_tool *tool, process_auxtrace_t fn,
+				 struct perf_tool *tool, process_auxtrace_t fn,
 				 size_t snapshot_size)
 {
 	return __auxtrace_mmap__read(map, itr, tool, fn, true, snapshot_size);
@@ -2659,7 +2652,7 @@ static int addr_filter__entire_dso(struct addr_filter *filt, struct dso *dso)
 	}
 
 	filt->addr = 0;
-	filt->size = dso__data(dso)->file_size;
+	filt->size = dso->data.file_size;
 
 	return 0;
 }
@@ -2829,7 +2822,7 @@ int auxtrace_parse_filters(struct evlist *evlist)
 }
 
 int auxtrace__process_event(struct perf_session *session, union perf_event *event,
-			    struct perf_sample *sample, const struct perf_tool *tool)
+			    struct perf_sample *sample, struct perf_tool *tool)
 {
 	if (!session->auxtrace)
 		return 0;
@@ -2847,7 +2840,7 @@ void auxtrace__dump_auxtrace_sample(struct perf_session *session,
 	session->auxtrace->dump_auxtrace_sample(session, sample);
 }
 
-int auxtrace__flush_events(struct perf_session *session, const struct perf_tool *tool)
+int auxtrace__flush_events(struct perf_session *session, struct perf_tool *tool)
 {
 	if (!session->auxtrace)
 		return 0;

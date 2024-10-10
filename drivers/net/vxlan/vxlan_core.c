@@ -277,7 +277,8 @@ static void __vxlan_fdb_notify(struct vxlan_dev *vxlan, struct vxlan_fdb *fdb,
 	rtnl_notify(skb, net, 0, RTNLGRP_NEIGH, NULL, GFP_ATOMIC);
 	return;
 errout:
-	rtnl_set_sk_err(net, RTNLGRP_NEIGH, err);
+	if (err < 0)
+		rtnl_set_sk_err(net, RTNLGRP_NEIGH, err);
 }
 
 static void vxlan_fdb_switchdev_notifier_info(const struct vxlan_dev *vxlan,
@@ -1445,10 +1446,6 @@ static bool vxlan_snoop(struct net_device *dev,
 	struct vxlan_fdb *f;
 	u32 ifindex = 0;
 
-	/* Ignore packets from invalid src-address */
-	if (!is_valid_ether_addr(src_mac))
-		return true;
-
 #if IS_ENABLED(CONFIG_IPV6)
 	if (src_ip->sa.sa_family == AF_INET6 &&
 	    (ipv6_addr_type(&src_ip->sin6.sin6_addr) & IPV6_ADDR_LINKLOCAL))
@@ -1587,8 +1584,7 @@ static void vxlan_parse_gbp_hdr(struct vxlanhdr *unparsed,
 
 	tun_dst = (struct metadata_dst *)skb_dst(skb);
 	if (tun_dst) {
-		__set_bit(IP_TUNNEL_VXLAN_OPT_BIT,
-			  tun_dst->u.tun_info.key.tun_flags);
+		tun_dst->u.tun_info.key.tun_flags |= TUNNEL_VXLAN_OPT;
 		tun_dst->u.tun_info.options_len = sizeof(*md);
 	}
 	if (gbp->dont_learn)
@@ -1617,6 +1613,10 @@ static bool vxlan_set_mac(struct vxlan_dev *vxlan,
 
 	/* Ignore packet loops (and multicast echo) */
 	if (ether_addr_equal(eth_hdr(skb)->h_source, vxlan->dev->dev_addr))
+		return false;
+
+	/* Ignore packets from invalid src-address */
+	if (!is_valid_ether_addr(eth_hdr(skb)->h_source))
 		return false;
 
 	/* Get address from the outer IP header */
@@ -1721,11 +1721,9 @@ static int vxlan_rcv(struct sock *sk, struct sk_buff *skb)
 			goto drop;
 
 	if (vxlan_collect_metadata(vs)) {
-		IP_TUNNEL_DECLARE_FLAGS(flags) = { };
 		struct metadata_dst *tun_dst;
 
-		__set_bit(IP_TUNNEL_KEY_BIT, flags);
-		tun_dst = udp_tun_rx_dst(skb, vxlan_get_sk_family(vs), flags,
+		tun_dst = udp_tun_rx_dst(skb, vxlan_get_sk_family(vs), TUNNEL_KEY,
 					 key32_to_tunnel_id(vni), sizeof(*md));
 
 		if (!tun_dst)
@@ -2338,7 +2336,7 @@ void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
 	struct ip_tunnel_key *pkey;
 	struct ip_tunnel_key key;
 	struct vxlan_dev *vxlan = netdev_priv(dev);
-	const struct iphdr *old_iph;
+	const struct iphdr *old_iph = ip_hdr(skb);
 	struct vxlan_metadata _md;
 	struct vxlan_metadata *md = &_md;
 	unsigned int pkt_len = skb->len;
@@ -2352,14 +2350,7 @@ void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
 	bool use_cache;
 	bool udp_sum = false;
 	bool xnet = !net_eq(vxlan->net, dev_net(vxlan->dev));
-	bool no_eth_encap;
 	__be32 vni = 0;
-
-	no_eth_encap = flags & VXLAN_F_GPE && skb->protocol != htons(ETH_P_TEB);
-	if (!skb_vlan_inet_prepare(skb, no_eth_encap))
-		goto drop;
-
-	old_iph = ip_hdr(skb);
 
 	info = skb_tunnel_info(skb);
 	use_cache = ip_tunnel_dst_cache_usable(skb, info);
@@ -2435,14 +2426,14 @@ void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
 		vni = tunnel_id_to_key32(info->key.tun_id);
 		ifindex = 0;
 		dst_cache = &info->dst_cache;
-		if (test_bit(IP_TUNNEL_VXLAN_OPT_BIT, info->key.tun_flags)) {
+		if (info->key.tun_flags & TUNNEL_VXLAN_OPT) {
 			if (info->options_len < sizeof(*md))
 				goto drop;
 			md = ip_tunnel_info_opts(info);
 		}
 		ttl = info->key.ttl;
 		tos = info->key.tos;
-		udp_sum = test_bit(IP_TUNNEL_CSUM_BIT, info->key.tun_flags);
+		udp_sum = !!(info->key.tun_flags & TUNNEL_CSUM);
 	}
 	src_port = udp_flow_src_port(dev_net(dev), skb, vxlan->cfg.port_min,
 				     vxlan->cfg.port_max, true);
@@ -2483,8 +2474,7 @@ void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
 				     old_iph->frag_off & htons(IP_DF)))
 					df = htons(IP_DF);
 			}
-		} else if (test_bit(IP_TUNNEL_DONT_FRAGMENT_BIT,
-				    info->key.tun_flags)) {
+		} else if (info->key.tun_flags & TUNNEL_DONT_FRAGMENT) {
 			df = htons(IP_DF);
 		}
 
@@ -2538,7 +2528,7 @@ void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
 		}
 
 		if (!info) {
-			u32 rt6i_flags = dst_rt6_info(ndst)->rt6i_flags;
+			u32 rt6i_flags = ((struct rt6_info *)ndst)->rt6i_flags;
 
 			err = encap_bypass_if_local(skb, dev, vxlan, AF_INET6,
 						    dst_port, ifindex, vni,
@@ -2689,11 +2679,11 @@ static netdev_tx_t vxlan_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct vxlan_dev *vxlan = netdev_priv(dev);
 	struct vxlan_rdst *rdst, *fdst = NULL;
 	const struct ip_tunnel_info *info;
+	bool did_rsc = false;
 	struct vxlan_fdb *f;
 	struct ethhdr *eth;
 	__be32 vni = 0;
 	u32 nhid = 0;
-	bool did_rsc;
 
 	info = skb_tunnel_info(skb);
 
@@ -3187,7 +3177,7 @@ static int vxlan_change_mtu(struct net_device *dev, int new_mtu)
 			return -EINVAL;
 	}
 
-	WRITE_ONCE(dev->mtu, new_mtu);
+	dev->mtu = new_mtu;
 	return 0;
 }
 
@@ -3321,6 +3311,7 @@ static void vxlan_setup(struct net_device *dev)
 	dev->needs_free_netdev = true;
 	SET_NETDEV_DEVTYPE(dev, &vxlan_type);
 
+	dev->features	|= NETIF_F_LLTX;
 	dev->features	|= NETIF_F_SG | NETIF_F_HW_CSUM | NETIF_F_FRAGLIST;
 	dev->features   |= NETIF_F_RXCSUM;
 	dev->features   |= NETIF_F_GSO_SOFTWARE;
@@ -3330,9 +3321,7 @@ static void vxlan_setup(struct net_device *dev)
 	dev->hw_features |= NETIF_F_RXCSUM;
 	dev->hw_features |= NETIF_F_GSO_SOFTWARE;
 	netif_keep_dst(dev);
-	dev->priv_flags |= IFF_NO_QUEUE;
-	dev->change_proto_down = true;
-	dev->lltx = true;
+	dev->priv_flags |= IFF_NO_QUEUE | IFF_CHANGE_PROTO_DOWN;
 
 	/* MTU range: 68 - 65535 */
 	dev->min_mtu = ETH_MIN_MTU;
@@ -4576,7 +4565,7 @@ static struct net *vxlan_get_link_net(const struct net_device *dev)
 {
 	struct vxlan_dev *vxlan = netdev_priv(dev);
 
-	return READ_ONCE(vxlan->net);
+	return vxlan->net;
 }
 
 static struct rtnl_link_ops vxlan_link_ops __read_mostly = {

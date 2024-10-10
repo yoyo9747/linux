@@ -61,7 +61,6 @@ struct rt_sigframe_user_layout {
 	unsigned long za_offset;
 	unsigned long zt_offset;
 	unsigned long fpmr_offset;
-	unsigned long poe_offset;
 	unsigned long extra_offset;
 	unsigned long end_offset;
 };
@@ -186,8 +185,6 @@ struct user_ctxs {
 	u32 zt_size;
 	struct fpmr_context __user *fpmr;
 	u32 fpmr_size;
-	struct poe_context __user *poe;
-	u32 poe_size;
 };
 
 static int preserve_fpsimd_context(struct fpsimd_context __user *ctx)
@@ -257,32 +254,6 @@ static int restore_fpmr_context(struct user_ctxs *user)
 	__get_user_error(fpmr, &user->fpmr->fpmr, err);
 	if (!err)
 		write_sysreg_s(fpmr, SYS_FPMR);
-
-	return err;
-}
-
-static int preserve_poe_context(struct poe_context __user *ctx)
-{
-	int err = 0;
-
-	__put_user_error(POE_MAGIC, &ctx->head.magic, err);
-	__put_user_error(sizeof(*ctx), &ctx->head.size, err);
-	__put_user_error(read_sysreg_s(SYS_POR_EL0), &ctx->por_el0, err);
-
-	return err;
-}
-
-static int restore_poe_context(struct user_ctxs *user)
-{
-	u64 por_el0;
-	int err = 0;
-
-	if (user->poe_size != sizeof(*user->poe))
-		return -EINVAL;
-
-	__get_user_error(por_el0, &(user->poe->por_el0), err);
-	if (!err)
-		write_sysreg_s(por_el0, SYS_POR_EL0);
 
 	return err;
 }
@@ -650,7 +621,6 @@ static int parse_user_sigframe(struct user_ctxs *user,
 	user->za = NULL;
 	user->zt = NULL;
 	user->fpmr = NULL;
-	user->poe = NULL;
 
 	if (!IS_ALIGNED((unsigned long)base, 16))
 		goto invalid;
@@ -699,17 +669,6 @@ static int parse_user_sigframe(struct user_ctxs *user,
 
 		case ESR_MAGIC:
 			/* ignore */
-			break;
-
-		case POE_MAGIC:
-			if (!system_supports_poe())
-				goto invalid;
-
-			if (user->poe)
-				goto invalid;
-
-			user->poe = (struct poe_context __user *)head;
-			user->poe_size = size;
 			break;
 
 		case SVE_MAGIC:
@@ -898,9 +857,6 @@ static int restore_sigframe(struct pt_regs *regs,
 	if (err == 0 && system_supports_sme2() && user.zt)
 		err = restore_zt_context(&user);
 
-	if (err == 0 && system_supports_poe() && user.poe)
-		err = restore_poe_context(&user);
-
 	return err;
 }
 
@@ -1024,13 +980,6 @@ static int setup_sigframe_layout(struct rt_sigframe_user_layout *user,
 			return err;
 	}
 
-	if (system_supports_poe()) {
-		err = sigframe_alloc(user, &user->poe_offset,
-				     sizeof(struct poe_context));
-		if (err)
-			return err;
-	}
-
 	return sigframe_alloc_end(user);
 }
 
@@ -1092,14 +1041,6 @@ static int setup_sigframe(struct rt_sigframe_user_layout *user,
 			apply_user_offset(user, user->fpmr_offset);
 		err |= preserve_fpmr_context(fpmr_ctx);
 	}
-
-	if (system_supports_poe() && err == 0 && user->poe_offset) {
-		struct poe_context __user *poe_ctx =
-			apply_user_offset(user, user->poe_offset);
-
-		err |= preserve_poe_context(poe_ctx);
-	}
-
 
 	/* ZA state if present */
 	if (system_supports_sme() && err == 0 && user->za_offset) {
@@ -1236,9 +1177,6 @@ static void setup_return(struct pt_regs *regs, struct k_sigaction *ka,
 					  SVCR_SM_MASK);
 		sme_smstop();
 	}
-
-	if (system_supports_poe())
-		write_sysreg_s(POR_EL0_INIT, SYS_POR_EL0);
 
 	if (ka->sa.sa_flags & SA_RESTORER)
 		sigtramp = ka->sa.sa_restorer;

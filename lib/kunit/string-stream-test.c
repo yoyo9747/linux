@@ -22,10 +22,18 @@ struct string_stream_test_priv {
 };
 
 /* Avoids a cast warning if kfree() is passed direct to kunit_add_action(). */
-KUNIT_DEFINE_ACTION_WRAPPER(kfree_wrapper, kfree, const void *);
+static void kfree_wrapper(void *p)
+{
+	kfree(p);
+}
 
 /* Avoids a cast warning if string_stream_destroy() is passed direct to kunit_add_action(). */
-KUNIT_DEFINE_ACTION_WRAPPER(cleanup_raw_stream, string_stream_destroy, struct string_stream *);
+static void cleanup_raw_stream(void *p)
+{
+	struct string_stream *stream = p;
+
+	string_stream_destroy(stream);
+}
 
 static char *get_concatenated_string(struct kunit *test, struct string_stream *stream)
 {

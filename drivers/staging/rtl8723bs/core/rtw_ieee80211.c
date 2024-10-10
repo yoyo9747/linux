@@ -6,8 +6,9 @@
  ******************************************************************************/
 
 #include <drv_types.h>
+#include <rtw_debug.h>
 #include <linux/of.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 u8 RTW_WPA_OUI_TYPE[] = { 0x00, 0x50, 0xf2, 1 };
 u16 RTW_WPA_VERSION = 1;
@@ -54,9 +55,7 @@ static u8 WIFI_OFDMRATES[] = {
 
 int rtw_get_bit_value_from_ieee_value(u8 val)
 {
-	static const unsigned char dot11_rate_table[] = {
-		2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108, 0
-	}; /*  last element must be zero!! */
+	unsigned char dot11_rate_table[] = {2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108, 0}; /*  last element must be zero!! */
 	int i = 0;
 
 	while (dot11_rate_table[i] != 0) {

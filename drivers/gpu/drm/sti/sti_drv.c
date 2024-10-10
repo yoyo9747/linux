@@ -5,7 +5,6 @@
  */
 
 #include <linux/component.h>
-#include <linux/debugfs.h>
 #include <linux/dma-mapping.h>
 #include <linux/kernel.h>
 #include <linux/module.h>

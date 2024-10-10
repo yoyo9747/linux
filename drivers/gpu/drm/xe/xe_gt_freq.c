@@ -13,9 +13,8 @@
 
 #include "xe_device_types.h"
 #include "xe_gt_sysfs.h"
-#include "xe_gt_throttle.h"
+#include "xe_gt_throttle_sysfs.h"
 #include "xe_guc_pc.h"
-#include "xe_pm.h"
 
 /**
  * DOC: Xe GT Frequency Management
@@ -50,23 +49,12 @@ dev_to_pc(struct device *dev)
 	return &kobj_to_gt(dev->kobj.parent)->uc.guc.pc;
 }
 
-static struct xe_device *
-dev_to_xe(struct device *dev)
-{
-	return gt_to_xe(kobj_to_gt(dev->kobj.parent));
-}
-
 static ssize_t act_freq_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
 	struct xe_guc_pc *pc = dev_to_pc(dev);
-	u32 freq;
 
-	xe_pm_runtime_get(dev_to_xe(dev));
-	freq = xe_guc_pc_get_act_freq(pc);
-	xe_pm_runtime_put(dev_to_xe(dev));
-
-	return sysfs_emit(buf, "%d\n", freq);
+	return sysfs_emit(buf, "%d\n", xe_guc_pc_get_act_freq(pc));
 }
 static DEVICE_ATTR_RO(act_freq);
 
@@ -77,9 +65,7 @@ static ssize_t cur_freq_show(struct device *dev,
 	u32 freq;
 	ssize_t ret;
 
-	xe_pm_runtime_get(dev_to_xe(dev));
 	ret = xe_guc_pc_get_cur_freq(pc, &freq);
-	xe_pm_runtime_put(dev_to_xe(dev));
 	if (ret)
 		return ret;
 
@@ -91,13 +77,8 @@ static ssize_t rp0_freq_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
 	struct xe_guc_pc *pc = dev_to_pc(dev);
-	u32 freq;
 
-	xe_pm_runtime_get(dev_to_xe(dev));
-	freq = xe_guc_pc_get_rp0_freq(pc);
-	xe_pm_runtime_put(dev_to_xe(dev));
-
-	return sysfs_emit(buf, "%d\n", freq);
+	return sysfs_emit(buf, "%d\n", xe_guc_pc_get_rp0_freq(pc));
 }
 static DEVICE_ATTR_RO(rp0_freq);
 
@@ -105,13 +86,8 @@ static ssize_t rpe_freq_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
 	struct xe_guc_pc *pc = dev_to_pc(dev);
-	u32 freq;
 
-	xe_pm_runtime_get(dev_to_xe(dev));
-	freq = xe_guc_pc_get_rpe_freq(pc);
-	xe_pm_runtime_put(dev_to_xe(dev));
-
-	return sysfs_emit(buf, "%d\n", freq);
+	return sysfs_emit(buf, "%d\n", xe_guc_pc_get_rpe_freq(pc));
 }
 static DEVICE_ATTR_RO(rpe_freq);
 
@@ -131,9 +107,7 @@ static ssize_t min_freq_show(struct device *dev,
 	u32 freq;
 	ssize_t ret;
 
-	xe_pm_runtime_get(dev_to_xe(dev));
 	ret = xe_guc_pc_get_min_freq(pc, &freq);
-	xe_pm_runtime_put(dev_to_xe(dev));
 	if (ret)
 		return ret;
 
@@ -151,9 +125,7 @@ static ssize_t min_freq_store(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
-	xe_pm_runtime_get(dev_to_xe(dev));
 	ret = xe_guc_pc_set_min_freq(pc, freq);
-	xe_pm_runtime_put(dev_to_xe(dev));
 	if (ret)
 		return ret;
 
@@ -168,9 +140,7 @@ static ssize_t max_freq_show(struct device *dev,
 	u32 freq;
 	ssize_t ret;
 
-	xe_pm_runtime_get(dev_to_xe(dev));
 	ret = xe_guc_pc_get_max_freq(pc, &freq);
-	xe_pm_runtime_put(dev_to_xe(dev));
 	if (ret)
 		return ret;
 
@@ -188,9 +158,7 @@ static ssize_t max_freq_store(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
-	xe_pm_runtime_get(dev_to_xe(dev));
 	ret = xe_guc_pc_set_max_freq(pc, freq);
-	xe_pm_runtime_put(dev_to_xe(dev));
 	if (ret)
 		return ret;
 
@@ -209,7 +177,7 @@ static const struct attribute *freq_attrs[] = {
 	NULL
 };
 
-static void freq_fini(void *arg)
+static void freq_fini(struct drm_device *drm, void *arg)
 {
 	struct kobject *kobj = arg;
 
@@ -222,28 +190,33 @@ static void freq_fini(void *arg)
  * @gt: Xe GT object
  *
  * It needs to be initialized after GT Sysfs and GuC PC components are ready.
- *
- * Returns: Returns error value for failure and 0 for success.
  */
-int xe_gt_freq_init(struct xe_gt *gt)
+void xe_gt_freq_init(struct xe_gt *gt)
 {
 	struct xe_device *xe = gt_to_xe(gt);
 	int err;
 
 	if (xe->info.skip_guc_pc)
-		return 0;
+		return;
 
 	gt->freq = kobject_create_and_add("freq0", gt->sysfs);
-	if (!gt->freq)
-		return -ENOMEM;
+	if (!gt->freq) {
+		drm_warn(&xe->drm, "failed to add freq0 directory to %s\n",
+			 kobject_name(gt->sysfs));
+		return;
+	}
+
+	err = drmm_add_action_or_reset(&xe->drm, freq_fini, gt->freq);
+	if (err) {
+		drm_warn(&xe->drm, "%s: drmm_add_action_or_reset failed, err: %d\n",
+			 __func__, err);
+		return;
+	}
 
 	err = sysfs_create_files(gt->freq, freq_attrs);
 	if (err)
-		return err;
+		drm_warn(&xe->drm,  "failed to add freq attrs to %s, err: %d\n",
+			 kobject_name(gt->freq), err);
 
-	err = devm_add_action_or_reset(xe->drm.dev, freq_fini, gt->freq);
-	if (err)
-		return err;
-
-	return xe_gt_throttle_init(gt);
+	xe_gt_throttle_sysfs_init(gt);
 }

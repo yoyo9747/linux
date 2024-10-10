@@ -845,13 +845,13 @@ static ssize_t imon_clock_show(struct device *d,
 	mutex_lock(&ictx->lock);
 
 	if (!ictx->display_supported) {
-		len = sysfs_emit(buf, "Not supported.");
+		len = snprintf(buf, PAGE_SIZE, "Not supported.");
 	} else {
-		len = sysfs_emit(buf,
-				 "To set the clock on your iMON display:\n"
-				 "# date \"+%%y %%m %%d %%w %%H %%M %%S\" > imon_clock\n"
-				 "%s", ictx->display_isopen ?
-				 "\nNOTE: imon device must be closed\n" : "");
+		len = snprintf(buf, PAGE_SIZE,
+			"To set the clock on your iMON display:\n"
+			"# date \"+%%y %%m %%d %%w %%H %%M %%S\" > imon_clock\n"
+			"%s", ictx->display_isopen ?
+			"\nNOTE: imon device must be closed\n" : "");
 	}
 
 	mutex_unlock(&ictx->lock);
@@ -1148,7 +1148,10 @@ static int imon_ir_change_protocol(struct rc_dev *rc, u64 *rc_proto)
 
 	memcpy(ictx->usb_tx_buf, &ir_proto_packet, sizeof(ir_proto_packet));
 
-	unlock = mutex_trylock(&ictx->lock);
+	if (!mutex_is_locked(&ictx->lock)) {
+		unlock = true;
+		mutex_lock(&ictx->lock);
+	}
 
 	retval = send_packet(ictx);
 	if (retval)

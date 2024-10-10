@@ -166,7 +166,6 @@ struct rethook_node *rethook_try_get(struct rethook *rh)
 	if (unlikely(!handler))
 		return NULL;
 
-#if defined(CONFIG_FTRACE_VALIDATE_RCU_IS_WATCHING) || defined(CONFIG_KPROBE_EVENTS_ON_NOTRACE)
 	/*
 	 * This expects the caller will set up a rethook on a function entry.
 	 * When the function returns, the rethook will eventually be reclaimed
@@ -175,7 +174,6 @@ struct rethook_node *rethook_try_get(struct rethook *rh)
 	 */
 	if (unlikely(!rcu_is_watching()))
 		return NULL;
-#endif
 
 	return (struct rethook_node *)objpool_pop(&rh->pool);
 }
@@ -250,7 +248,7 @@ unsigned long rethook_find_ret_addr(struct task_struct *tsk, unsigned long frame
 	if (WARN_ON_ONCE(!cur))
 		return 0;
 
-	if (tsk != current && task_is_running(tsk))
+	if (WARN_ON_ONCE(tsk != current && task_is_running(tsk)))
 		return 0;
 
 	do {

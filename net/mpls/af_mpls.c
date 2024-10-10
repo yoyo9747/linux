@@ -594,7 +594,7 @@ static struct net_device *inet_fib_lookup_dev(struct net *net,
 	struct in_addr daddr;
 
 	memcpy(&daddr, addr, sizeof(struct in_addr));
-	rt = ip_route_output(net, daddr.s_addr, 0, 0, 0, RT_SCOPE_UNIVERSE);
+	rt = ip_route_output(net, daddr.s_addr, 0, 0, 0);
 	if (IS_ERR(rt))
 		return ERR_CAST(rt);
 
@@ -1154,7 +1154,7 @@ static int mpls_netconf_fill_devconf(struct sk_buff *skb, struct mpls_dev *mdev,
 
 	if ((all || type == NETCONFA_INPUT) &&
 	    nla_put_s32(skb, NETCONFA_INPUT,
-			READ_ONCE(mdev->input_enabled)) < 0)
+			mdev->input_enabled) < 0)
 		goto nla_put_failure;
 
 	nlmsg_end(skb, nlh);
@@ -1201,7 +1201,8 @@ static void mpls_netconf_notify_devconf(struct net *net, int event,
 	rtnl_notify(skb, net, 0, RTNLGRP_MPLS_NETCONF, NULL, GFP_KERNEL);
 	return;
 errout:
-	rtnl_set_sk_err(net, RTNLGRP_MPLS_NETCONF, err);
+	if (err < 0)
+		rtnl_set_sk_err(net, RTNLGRP_MPLS_NETCONF, err);
 }
 
 static const struct nla_policy devconf_mpls_policy[NETCONFA_MAX + 1] = {
@@ -1302,12 +1303,11 @@ static int mpls_netconf_dump_devconf(struct sk_buff *skb,
 {
 	const struct nlmsghdr *nlh = cb->nlh;
 	struct net *net = sock_net(skb->sk);
-	struct {
-		unsigned long ifindex;
-	} *ctx = (void *)cb->ctx;
+	struct hlist_head *head;
 	struct net_device *dev;
 	struct mpls_dev *mdev;
-	int err = 0;
+	int idx, s_idx;
+	int h, s_h;
 
 	if (cb->strict_check) {
 		struct netlink_ext_ack *extack = cb->extack;
@@ -1324,29 +1324,46 @@ static int mpls_netconf_dump_devconf(struct sk_buff *skb,
 		}
 	}
 
-	rcu_read_lock();
-	for_each_netdev_dump(net, dev, ctx->ifindex) {
-		mdev = mpls_dev_get(dev);
-		if (!mdev)
-			continue;
-		err = mpls_netconf_fill_devconf(skb, mdev,
-						NETLINK_CB(cb->skb).portid,
-						nlh->nlmsg_seq,
-						RTM_NEWNETCONF,
-						NLM_F_MULTI,
-						NETCONFA_ALL);
-		if (err < 0)
-			break;
-	}
-	rcu_read_unlock();
+	s_h = cb->args[0];
+	s_idx = idx = cb->args[1];
 
-	return err;
+	for (h = s_h; h < NETDEV_HASHENTRIES; h++, s_idx = 0) {
+		idx = 0;
+		head = &net->dev_index_head[h];
+		rcu_read_lock();
+		cb->seq = net->dev_base_seq;
+		hlist_for_each_entry_rcu(dev, head, index_hlist) {
+			if (idx < s_idx)
+				goto cont;
+			mdev = mpls_dev_get(dev);
+			if (!mdev)
+				goto cont;
+			if (mpls_netconf_fill_devconf(skb, mdev,
+						      NETLINK_CB(cb->skb).portid,
+						      nlh->nlmsg_seq,
+						      RTM_NEWNETCONF,
+						      NLM_F_MULTI,
+						      NETCONFA_ALL) < 0) {
+				rcu_read_unlock();
+				goto done;
+			}
+			nl_dump_check_consistent(cb, nlmsg_hdr(skb));
+cont:
+			idx++;
+		}
+		rcu_read_unlock();
+	}
+done:
+	cb->args[0] = h;
+	cb->args[1] = idx;
+
+	return skb->len;
 }
 
 #define MPLS_PERDEV_SYSCTL_OFFSET(field)	\
 	(&((struct mpls_dev *)0)->field)
 
-static int mpls_conf_proc(const struct ctl_table *ctl, int write,
+static int mpls_conf_proc(struct ctl_table *ctl, int write,
 			  void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int oval = *(int *)ctl->data;
@@ -1376,13 +1393,13 @@ static const struct ctl_table mpls_dev_table[] = {
 		.proc_handler	= mpls_conf_proc,
 		.data		= MPLS_PERDEV_SYSCTL_OFFSET(input_enabled),
 	},
+	{ }
 };
 
 static int mpls_dev_sysctl_register(struct net_device *dev,
 				    struct mpls_dev *mdev)
 {
 	char path[sizeof("net/mpls/conf/") + IFNAMSIZ];
-	size_t table_size = ARRAY_SIZE(mpls_dev_table);
 	struct net *net = dev_net(dev);
 	struct ctl_table *table;
 	int i;
@@ -1394,7 +1411,7 @@ static int mpls_dev_sysctl_register(struct net_device *dev,
 	/* Table data contains only offsets relative to the base of
 	 * the mdev at this point, so make them absolute.
 	 */
-	for (i = 0; i < table_size; i++) {
+	for (i = 0; i < ARRAY_SIZE(mpls_dev_table); i++) {
 		table[i].data = (char *)mdev + (uintptr_t)table[i].data;
 		table[i].extra1 = mdev;
 		table[i].extra2 = net;
@@ -1402,7 +1419,8 @@ static int mpls_dev_sysctl_register(struct net_device *dev,
 
 	snprintf(path, sizeof(path), "net/mpls/conf/%s", dev->name);
 
-	mdev->sysctl = register_net_sysctl_sz(net, path, table, table_size);
+	mdev->sysctl = register_net_sysctl_sz(net, path, table,
+					      ARRAY_SIZE(mpls_dev_table));
 	if (!mdev->sysctl)
 		goto free;
 
@@ -1420,7 +1438,7 @@ static void mpls_dev_sysctl_unregister(struct net_device *dev,
 				       struct mpls_dev *mdev)
 {
 	struct net *net = dev_net(dev);
-	const struct ctl_table *table;
+	struct ctl_table *table;
 
 	if (!mdev->sysctl)
 		return;
@@ -2277,7 +2295,8 @@ static void rtmsg_lfib(int event, u32 label, struct mpls_route *rt,
 
 	return;
 errout:
-	rtnl_set_sk_err(net, RTNLGRP_MPLS_ROUTE, err);
+	if (err < 0)
+		rtnl_set_sk_err(net, RTNLGRP_MPLS_ROUTE, err);
 }
 
 static int mpls_valid_getroute_req(struct sk_buff *skb,
@@ -2598,7 +2617,7 @@ nolabels:
 	return -ENOMEM;
 }
 
-static int mpls_platform_labels(const struct ctl_table *table, int write,
+static int mpls_platform_labels(struct ctl_table *table, int write,
 				void *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct net *net = table->data;
@@ -2650,11 +2669,11 @@ static const struct ctl_table mpls_table[] = {
 		.extra1		= SYSCTL_ONE,
 		.extra2		= &ttl_max,
 	},
+	{ }
 };
 
 static int mpls_net_init(struct net *net)
 {
-	size_t table_size = ARRAY_SIZE(mpls_table);
 	struct ctl_table *table;
 	int i;
 
@@ -2670,11 +2689,11 @@ static int mpls_net_init(struct net *net)
 	/* Table data contains only offsets relative to the base of
 	 * the mdev at this point, so make them absolute.
 	 */
-	for (i = 0; i < table_size; i++)
+	for (i = 0; i < ARRAY_SIZE(mpls_table) - 1; i++)
 		table[i].data = (char *)net + (uintptr_t)table[i].data;
 
 	net->mpls.ctl = register_net_sysctl_sz(net, "net/mpls", table,
-					       table_size);
+					       ARRAY_SIZE(mpls_table));
 	if (net->mpls.ctl == NULL) {
 		kfree(table);
 		return -ENOMEM;
@@ -2687,7 +2706,7 @@ static void mpls_net_exit(struct net *net)
 {
 	struct mpls_route __rcu **platform_label;
 	size_t platform_labels;
-	const struct ctl_table *table;
+	struct ctl_table *table;
 	unsigned int index;
 
 	table = net->mpls.ctl->ctl_table_arg;
@@ -2754,8 +2773,7 @@ static int __init mpls_init(void)
 			     mpls_getroute, mpls_dump_routes, 0);
 	rtnl_register_module(THIS_MODULE, PF_MPLS, RTM_GETNETCONF,
 			     mpls_netconf_get_devconf,
-			     mpls_netconf_dump_devconf,
-			     RTNL_FLAG_DUMP_UNLOCKED);
+			     mpls_netconf_dump_devconf, 0);
 	err = ipgre_tunnel_encap_add_mpls_ops();
 	if (err)
 		pr_err("Can't add mpls over gre tunnel ops\n");

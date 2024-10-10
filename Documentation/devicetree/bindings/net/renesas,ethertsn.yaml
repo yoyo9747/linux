@@ -71,8 +71,16 @@ properties:
     enum: [0, 2000]
     default: 0
 
-  mdio:
-    $ref: /schemas/net/mdio.yaml#
+  '#address-cells':
+    const: 1
+
+  '#size-cells':
+    const: 0
+
+patternProperties:
+  "^ethernet-phy@[0-9a-f]$":
+    type: object
+    $ref: ethernet-phy.yaml#
     unevaluatedProperties: false
 
 required:
@@ -86,7 +94,8 @@ required:
   - resets
   - phy-mode
   - phy-handle
-  - mdio
+  - '#address-cells'
+  - '#size-cells'
 
 additionalProperties: false
 
@@ -113,18 +122,14 @@ examples:
         tx-internal-delay-ps = <2000>;
         phy-handle = <&phy3>;
 
-        mdio {
-            #address-cells = <1>;
-            #size-cells = <0>;
+        #address-cells = <1>;
+        #size-cells = <0>;
 
+        phy3: ethernet-phy@3 {
+            compatible = "ethernet-phy-ieee802.3-c45";
+            reg = <0>;
+            interrupt-parent = <&gpio4>;
+            interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
             reset-gpios = <&gpio1 23 GPIO_ACTIVE_LOW>;
-            reset-post-delay-us = <4000>;
-
-            phy3: ethernet-phy@0 {
-                compatible = "ethernet-phy-ieee802.3-c45";
-                reg = <0>;
-                interrupt-parent = <&gpio4>;
-                interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
-            };
         };
     };

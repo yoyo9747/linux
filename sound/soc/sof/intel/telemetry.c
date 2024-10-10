@@ -3,7 +3,7 @@
 // This file is provided under a dual BSD/GPLv2 license.  When using or
 // redistributing this file, you may do so under either license.
 //
-// Copyright(c) 2023 Intel Corporation
+// Copyright(c) 2023 Intel Corporation. All rights reserved.
 
 /* telemetry data queried from debug window */
 
@@ -93,4 +93,3 @@ free_block:
 free_telemetry_data:
 	kfree(telemetry_data);
 }
-EXPORT_SYMBOL_NS(sof_ipc4_intel_dump_telemetry_state, SND_SOC_SOF_INTEL_HDA_COMMON);

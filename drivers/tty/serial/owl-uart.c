@@ -761,5 +761,4 @@ static void __exit owl_uart_exit(void)
 module_init(owl_uart_init);
 module_exit(owl_uart_exit);
 
-MODULE_DESCRIPTION("Actions Semi Owl family serial console");
 MODULE_LICENSE("GPL");

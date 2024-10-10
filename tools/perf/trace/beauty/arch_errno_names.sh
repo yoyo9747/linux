@@ -60,12 +60,10 @@ create_arch_errno_table_func()
 	printf 'arch_syscalls__strerrno_t *arch_syscalls__strerrno_function(const char *arch)\n'
 	printf '{\n'
 	for arch in $archlist; do
-		arch_str=$(arch_string "$arch")
-		printf '\tif (!strcmp(arch, "%s"))\n' "$arch_str"
-		printf '\t\treturn errno_to_name__%s;\n' "$arch_str"
+		printf '\tif (!strcmp(arch, "%s"))\n' $(arch_string "$arch")
+		printf '\t\treturn errno_to_name__%s;\n' $(arch_string "$arch")
 	done
-	arch_str=$(arch_string "$default")
-	printf '\treturn errno_to_name__%s;\n' "$arch_str"
+	printf '\treturn errno_to_name__%s;\n' $(arch_string "$default")
 	printf '}\n'
 }
 

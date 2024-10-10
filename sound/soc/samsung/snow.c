@@ -245,7 +245,7 @@ static struct platform_driver snow_driver = {
 		.of_match_table = snow_of_match,
 	},
 	.probe = snow_probe,
-	.remove = snow_remove,
+	.remove_new = snow_remove,
 };
 
 module_platform_driver(snow_driver);

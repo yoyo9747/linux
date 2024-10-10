@@ -66,6 +66,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <setjmp.h>
+#include <syscall.h>
+#include <linux/sched.h>
 
 #include "kselftest.h"
 
@@ -79,6 +81,17 @@
 #ifndef TH_LOG_ENABLED
 #  define TH_LOG_ENABLED 1
 #endif
+
+/* Wait for the child process to end but without sharing memory mapping. */
+static inline pid_t clone3_vfork(void)
+{
+	struct clone_args args = {
+		.flags = CLONE_VFORK,
+		.exit_signal = SIGCHLD,
+	};
+
+	return syscall(__NR_clone3, &args, sizeof(args));
+}
 
 /**
  * TH_LOG()
@@ -424,7 +437,7 @@
 		} \
 		if (setjmp(_metadata->env) == 0) { \
 			/* _metadata and potentially self are shared with all forks. */ \
-			child = fork(); \
+			child = clone3_vfork(); \
 			if (child == 0) { \
 				fixture_name##_setup(_metadata, self, variant->data); \
 				/* Let setup failure terminate early. */ \
@@ -488,6 +501,12 @@
  * Use once to append a main() to the test file.
  */
 #define TEST_HARNESS_MAIN \
+	static void __attribute__((constructor)) \
+	__constructor_order_last(void) \
+	{ \
+		if (!__constructor_order) \
+			__constructor_order = _CONSTRUCTOR_ORDER_BACKWARD; \
+	} \
 	int main(int argc, char **argv) { \
 		return test_harness_run(argc, argv); \
 	}
@@ -818,7 +837,7 @@
 		item->prev = item; \
 		return;	\
 	} \
-	if (__constructor_order_forward) { \
+	if (__constructor_order == _CONSTRUCTOR_ORDER_FORWARD) { \
 		item->next = NULL; \
 		item->prev = head->prev; \
 		item->prev->next = item; \
@@ -882,7 +901,10 @@ struct __test_xfail {
 	}
 
 static struct __fixture_metadata *__fixture_list = &_fixture_global;
-static bool __constructor_order_forward;
+static int __constructor_order;
+
+#define _CONSTRUCTOR_ORDER_FORWARD   1
+#define _CONSTRUCTOR_ORDER_BACKWARD -1
 
 static inline void __register_fixture(struct __fixture_metadata *f)
 {
@@ -933,7 +955,7 @@ static inline bool __test_passed(struct __test_metadata *metadata)
  * list so tests are run in source declaration order.
  * https://gcc.gnu.org/onlinedocs/gccint/Initialization.html
  * However, it seems not all toolchains do this correctly, so use
- * __constructor_order_foward to detect which direction is called first
+ * __constructor_order to detect which direction is called first
  * and adjust list building logic to get things running in the right
  * direction.
  */
@@ -994,14 +1016,7 @@ void __wait_for_test(struct __test_metadata *t)
 		.sa_flags = SA_SIGINFO,
 	};
 	struct sigaction saved_action;
-	/*
-	 * Sets status so that WIFEXITED(status) returns true and
-	 * WEXITSTATUS(status) returns KSFT_FAIL.  This safe default value
-	 * should never be evaluated because of the waitpid(2) check and
-	 * SIGALRM handling.
-	 */
-	int status = KSFT_FAIL << 8;
-	int child;
+	int status;
 
 	if (sigaction(SIGALRM, &action, &saved_action)) {
 		t->exit_code = KSFT_FAIL;
@@ -1013,15 +1028,7 @@ void __wait_for_test(struct __test_metadata *t)
 	__active_test = t;
 	t->timed_out = false;
 	alarm(t->timeout);
-	child = waitpid(t->pid, &status, 0);
-	if (child == -1 && errno != EINTR) {
-		t->exit_code = KSFT_FAIL;
-		fprintf(TH_LOG_STREAM,
-			"# %s: Failed to wait for PID %d (errno: %d)\n",
-			t->name, t->pid, errno);
-		return;
-	}
-
+	waitpid(t->pid, &status, 0);
 	alarm(0);
 	if (sigaction(SIGALRM, &saved_action, NULL)) {
 		t->exit_code = KSFT_FAIL;
@@ -1076,7 +1083,6 @@ void __wait_for_test(struct __test_metadata *t)
 				WTERMSIG(status));
 		}
 	} else {
-		t->exit_code = KSFT_FAIL;
 		fprintf(TH_LOG_STREAM,
 			"# %s: Test ended in some other way [%u]\n",
 			t->name,
@@ -1210,9 +1216,8 @@ void __run_test(struct __fixture_metadata *f,
 		struct __test_metadata *t)
 {
 	struct __test_xfail *xfail;
-	char test_name[1024];
+	char *test_name;
 	const char *diagnostic;
-	int child;
 
 	/* reset test struct */
 	t->exit_code = KSFT_PASS;
@@ -1222,8 +1227,12 @@ void __run_test(struct __fixture_metadata *f,
 	memset(t->env, 0, sizeof(t->env));
 	memset(t->results->reason, 0, sizeof(t->results->reason));
 
-	snprintf(test_name, sizeof(test_name), "%s%s%s.%s",
-		 f->name, variant->name[0] ? "." : "", variant->name, t->name);
+	if (asprintf(&test_name, "%s%s%s.%s", f->name,
+		variant->name[0] ? "." : "", variant->name, t->name) == -1) {
+		ksft_print_msg("ERROR ALLOCATING MEMORY\n");
+		t->exit_code = KSFT_FAIL;
+		_exit(t->exit_code);
+	}
 
 	ksft_print_msg(" RUN           %s ...\n", test_name);
 
@@ -1231,16 +1240,15 @@ void __run_test(struct __fixture_metadata *f,
 	fflush(stdout);
 	fflush(stderr);
 
-	child = fork();
-	if (child < 0) {
+	t->pid = clone3_vfork();
+	if (t->pid < 0) {
 		ksft_print_msg("ERROR SPAWNING TEST CHILD\n");
 		t->exit_code = KSFT_FAIL;
-	} else if (child == 0) {
+	} else if (t->pid == 0) {
 		setpgrp();
 		t->fn(t, variant);
 		_exit(t->exit_code);
 	} else {
-		t->pid = child;
 		__wait_for_test(t);
 	}
 	ksft_print_msg("         %4s  %s\n",
@@ -1262,6 +1270,7 @@ void __run_test(struct __fixture_metadata *f,
 
 	ksft_test_result_code(t->exit_code, test_name,
 			      diagnostic ? "%s" : NULL, diagnostic);
+	free(test_name);
 }
 
 static int test_harness_run(int argc, char **argv)
@@ -1328,7 +1337,8 @@ static int test_harness_run(int argc, char **argv)
 
 static void __attribute__((constructor)) __constructor_order_first(void)
 {
-	__constructor_order_forward = true;
+	if (!__constructor_order)
+		__constructor_order = _CONSTRUCTOR_ORDER_FORWARD;
 }
 
 #endif  /* __KSELFTEST_HARNESS_H */

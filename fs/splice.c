@@ -362,7 +362,7 @@ ssize_t copy_splice_read(struct file *in, loff_t *ppos,
 	iov_iter_bvec(&to, ITER_DEST, bv, npages, len);
 	init_sync_kiocb(&kiocb, in);
 	kiocb.ki_pos = *ppos;
-	ret = in->f_op->read_iter(&kiocb, &to);
+	ret = call_read_iter(in, &kiocb, &to);
 
 	if (ret > 0) {
 		keep = DIV_ROUND_UP(ret, PAGE_SIZE);
@@ -740,7 +740,7 @@ iter_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 		iov_iter_bvec(&from, ITER_SOURCE, array, n, sd.total_len - left);
 		init_sync_kiocb(&kiocb, out);
 		kiocb.ki_pos = sd.pos;
-		ret = out->f_op->write_iter(&kiocb, &from);
+		ret = call_write_iter(out, &kiocb, &from);
 		sd.pos = kiocb.ki_pos;
 		if (ret <= 0)
 			break;
@@ -1566,11 +1566,11 @@ static ssize_t vmsplice_to_pipe(struct file *file, struct iov_iter *iter,
 
 static int vmsplice_type(struct fd f, int *type)
 {
-	if (!fd_file(f))
+	if (!f.file)
 		return -EBADF;
-	if (fd_file(f)->f_mode & FMODE_WRITE) {
+	if (f.file->f_mode & FMODE_WRITE) {
 		*type = ITER_SOURCE;
-	} else if (fd_file(f)->f_mode & FMODE_READ) {
+	} else if (f.file->f_mode & FMODE_READ) {
 		*type = ITER_DEST;
 	} else {
 		fdput(f);
@@ -1621,9 +1621,9 @@ SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, uiov,
 	if (!iov_iter_count(&iter))
 		error = 0;
 	else if (type == ITER_SOURCE)
-		error = vmsplice_to_pipe(fd_file(f), &iter, flags);
+		error = vmsplice_to_pipe(f.file, &iter, flags);
 	else
-		error = vmsplice_to_user(fd_file(f), &iter, flags);
+		error = vmsplice_to_user(f.file, &iter, flags);
 
 	kfree(iov);
 out_fdput:
@@ -1646,10 +1646,10 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 
 	error = -EBADF;
 	in = fdget(fd_in);
-	if (fd_file(in)) {
+	if (in.file) {
 		out = fdget(fd_out);
-		if (fd_file(out)) {
-			error = __do_splice(fd_file(in), off_in, fd_file(out), off_out,
+		if (out.file) {
+			error = __do_splice(in.file, off_in, out.file, off_out,
 					    len, flags);
 			fdput(out);
 		}
@@ -2016,10 +2016,10 @@ SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 
 	error = -EBADF;
 	in = fdget(fdin);
-	if (fd_file(in)) {
+	if (in.file) {
 		out = fdget(fdout);
-		if (fd_file(out)) {
-			error = do_tee(fd_file(in), fd_file(out), len, flags);
+		if (out.file) {
+			error = do_tee(in.file, out.file, len, flags);
 			fdput(out);
 		}
  		fdput(in);

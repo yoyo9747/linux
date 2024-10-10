@@ -1039,8 +1039,3 @@ const struct attribute_group *pm8001_host_groups[] = {
 	&pm8001_host_attr_group,
 	NULL
 };
-
-const struct attribute_group *pm8001_sdev_groups[] = {
-	&sas_ata_sdev_attr_group,
-	NULL
-};

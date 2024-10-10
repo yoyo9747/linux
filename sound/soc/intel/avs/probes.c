@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 //
-// Copyright(c) 2021-2022 Intel Corporation
+// Copyright(c) 2021-2022 Intel Corporation. All rights reserved.
 //
 // Authors: Cezary Rojewski <cezary.rojewski@intel.com>
 //          Amadeusz Slawinski <amadeuszx.slawinski@linux.intel.com>
@@ -19,11 +19,8 @@ static int avs_dsp_init_probe(struct avs_dev *adev, union avs_connector_node_id 
 	struct avs_probe_cfg cfg = {{0}};
 	struct avs_module_entry mentry;
 	u8 dummy;
-	int ret;
 
-	ret = avs_get_module_entry(adev, &AVS_PROBE_MOD_UUID, &mentry);
-	if (ret)
-		return ret;
+	avs_get_module_entry(adev, &AVS_PROBE_MOD_UUID, &mentry);
 
 	/*
 	 * Probe module uses no cycles, audio data format and input and output
@@ -42,12 +39,11 @@ static int avs_dsp_init_probe(struct avs_dev *adev, union avs_connector_node_id 
 static void avs_dsp_delete_probe(struct avs_dev *adev)
 {
 	struct avs_module_entry mentry;
-	int ret;
 
-	ret = avs_get_module_entry(adev, &AVS_PROBE_MOD_UUID, &mentry);
-	if (!ret)
-		/* There is only ever one probe module instance. */
-		avs_dsp_delete_module(adev, mentry.module_id, 0, INVALID_PIPELINE_ID, 0);
+	avs_get_module_entry(adev, &AVS_PROBE_MOD_UUID, &mentry);
+
+	/* There is only ever one probe module instance. */
+	avs_dsp_delete_module(adev, mentry.module_id, 0, INVALID_PIPELINE_ID, 0);
 }
 
 static inline struct hdac_ext_stream *avs_compr_get_host_stream(struct snd_compr_stream *cstream)

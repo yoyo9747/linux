@@ -5,17 +5,15 @@
 
 #include "xe_uc.h"
 
-#include "xe_assert.h"
 #include "xe_device.h"
 #include "xe_gsc.h"
 #include "xe_gsc_proxy.h"
 #include "xe_gt.h"
-#include "xe_gt_printk.h"
-#include "xe_gt_sriov_vf.h"
 #include "xe_guc.h"
+#include "xe_guc_db_mgr.h"
 #include "xe_guc_pc.h"
+#include "xe_guc_submit.h"
 #include "xe_huc.h"
-#include "xe_sriov.h"
 #include "xe_uc_fw.h"
 #include "xe_wopcm.h"
 
@@ -34,7 +32,10 @@ uc_to_xe(struct xe_uc *uc)
 /* Should be called once at driver load only */
 int xe_uc_init(struct xe_uc *uc)
 {
+	struct xe_device *xe = uc_to_xe(uc);
 	int ret;
+
+	xe_device_mem_access_get(xe);
 
 	/*
 	 * We call the GuC/HuC/GSC init functions even if GuC submission is off
@@ -53,19 +54,27 @@ int xe_uc_init(struct xe_uc *uc)
 		goto err;
 
 	if (!xe_device_uc_enabled(uc_to_xe(uc)))
-		return 0;
-
-	if (IS_SRIOV_VF(uc_to_xe(uc)))
-		return 0;
+		goto err;
 
 	ret = xe_wopcm_init(&uc->wopcm);
 	if (ret)
 		goto err;
 
+	ret = xe_guc_submit_init(&uc->guc);
+	if (ret)
+		goto err;
+
+	ret = xe_guc_db_mgr_init(&uc->guc.dbm, ~0);
+	if (ret)
+		goto err;
+
+	xe_device_mem_access_put(xe);
+
 	return 0;
 
 err:
-	xe_gt_err(uc_to_gt(uc), "Failed to initialize uC (%pe)\n", ERR_PTR(ret));
+	xe_device_mem_access_put(xe);
+
 	return ret;
 }
 
@@ -146,31 +155,6 @@ int xe_uc_init_hwconfig(struct xe_uc *uc)
 	return 0;
 }
 
-static int vf_uc_init_hw(struct xe_uc *uc)
-{
-	int err;
-
-	err = xe_uc_sanitize_reset(uc);
-	if (err)
-		return err;
-
-	err = xe_guc_enable_communication(&uc->guc);
-	if (err)
-		return err;
-
-	err = xe_gt_sriov_vf_connect(uc_to_gt(uc));
-	if (err)
-		return err;
-
-	uc->guc.submission_state.enabled = true;
-
-	err = xe_gt_record_default_lrcs(uc_to_gt(uc));
-	if (err)
-		return err;
-
-	return 0;
-}
-
 /*
  * Should be called during driver load, after every GT reset, and after every
  * suspend to reload / auth the firmwares.
@@ -182,9 +166,6 @@ int xe_uc_init_hw(struct xe_uc *uc)
 	/* GuC submission not enabled, nothing to do */
 	if (!xe_device_uc_enabled(uc_to_xe(uc)))
 		return 0;
-
-	if (IS_SRIOV_VF(uc_to_xe(uc)))
-		return vf_uc_init_hw(uc);
 
 	ret = xe_huc_upload(&uc->huc);
 	if (ret)
@@ -245,13 +226,13 @@ void xe_uc_stop_prepare(struct xe_uc *uc)
 	xe_guc_stop_prepare(&uc->guc);
 }
 
-void xe_uc_stop(struct xe_uc *uc)
+int xe_uc_stop(struct xe_uc *uc)
 {
 	/* GuC submission not enabled, nothing to do */
 	if (!xe_device_uc_enabled(uc_to_xe(uc)))
-		return;
+		return 0;
 
-	xe_guc_stop(&uc->guc);
+	return xe_guc_stop(&uc->guc);
 }
 
 int xe_uc_start(struct xe_uc *uc)
@@ -277,13 +258,17 @@ again:
 
 int xe_uc_suspend(struct xe_uc *uc)
 {
+	int ret;
+
 	/* GuC submission not enabled, nothing to do */
 	if (!xe_device_uc_enabled(uc_to_xe(uc)))
 		return 0;
 
 	uc_reset_wait(uc);
 
-	xe_uc_stop(uc);
+	ret = xe_uc_stop(uc);
+	if (ret)
+		return ret;
 
 	return xe_guc_suspend(&uc->guc);
 }
@@ -299,18 +284,4 @@ int xe_uc_suspend(struct xe_uc *uc)
 void xe_uc_remove(struct xe_uc *uc)
 {
 	xe_gsc_remove(&uc->gsc);
-}
-
-/**
- * xe_uc_declare_wedged() - Declare UC wedged
- * @uc: the UC object
- *
- * Wedge the UC which stops all submission, saves desired debug state, and
- * cleans up anything which could timeout.
- */
-void xe_uc_declare_wedged(struct xe_uc *uc)
-{
-	xe_gt_assert(uc_to_gt(uc), uc_to_xe(uc)->wedged.mode);
-
-	xe_guc_declare_wedged(&uc->guc);
 }

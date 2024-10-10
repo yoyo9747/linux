@@ -96,8 +96,6 @@ struct ath12k_qmi_event_msg {
 struct target_mem_chunk {
 	u32 size;
 	u32 type;
-	u32 prev_size;
-	u32 prev_type;
 	dma_addr_t paddr;
 	union {
 		void __iomem *ioaddr;
@@ -267,8 +265,6 @@ struct qmi_wlanfw_phy_cap_resp_msg_v01 {
 	u8 num_phy;
 	u8 board_id_valid;
 	u32 board_id;
-	u8 single_chip_mlo_support_valid;
-	u8 single_chip_mlo_support;
 };
 
 #define QMI_WLANFW_IND_REGISTER_REQ_MSG_V01_MAX_LEN		54

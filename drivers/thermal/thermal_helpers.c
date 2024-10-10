@@ -39,37 +39,32 @@ int get_tz_trend(struct thermal_zone_device *tz, const struct thermal_trip *trip
 	return trend;
 }
 
-static bool thermal_instance_present(struct thermal_zone_device *tz,
-				     struct thermal_cooling_device *cdev,
-				     const struct thermal_trip *trip)
+struct thermal_instance *
+get_thermal_instance(struct thermal_zone_device *tz,
+		     struct thermal_cooling_device *cdev, int trip_index)
 {
-	struct thermal_instance *ti;
-
-	list_for_each_entry(ti, &tz->thermal_instances, tz_node) {
-		if (ti->trip == trip && ti->cdev == cdev)
-			return true;
-	}
-
-	return false;
-}
-
-bool thermal_trip_is_bound_to_cdev(struct thermal_zone_device *tz,
-				   const struct thermal_trip *trip,
-				   struct thermal_cooling_device *cdev)
-{
-	bool ret;
+	struct thermal_instance *pos = NULL;
+	struct thermal_instance *target_instance = NULL;
+	const struct thermal_trip *trip;
 
 	mutex_lock(&tz->lock);
 	mutex_lock(&cdev->lock);
 
-	ret = thermal_instance_present(tz, cdev, trip);
+	trip = &tz->trips[trip_index];
+
+	list_for_each_entry(pos, &tz->thermal_instances, tz_node) {
+		if (pos->tz == tz && pos->trip == trip && pos->cdev == cdev) {
+			target_instance = pos;
+			break;
+		}
+	}
 
 	mutex_unlock(&cdev->lock);
 	mutex_unlock(&tz->lock);
 
-	return ret;
+	return target_instance;
 }
-EXPORT_SYMBOL_GPL(thermal_trip_is_bound_to_cdev);
+EXPORT_SYMBOL(get_thermal_instance);
 
 /**
  * __thermal_zone_get_temp() - returns the temperature of a thermal zone
@@ -87,7 +82,7 @@ EXPORT_SYMBOL_GPL(thermal_trip_is_bound_to_cdev);
  */
 int __thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp)
 {
-	const struct thermal_trip_desc *td;
+	const struct thermal_trip *trip;
 	int crit_temp = INT_MAX;
 	int ret = -EINVAL;
 
@@ -96,9 +91,7 @@ int __thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp)
 	ret = tz->ops.get_temp(tz, temp);
 
 	if (IS_ENABLED(CONFIG_THERMAL_EMULATION) && tz->emul_temperature) {
-		for_each_trip_desc(tz, td) {
-			const struct thermal_trip *trip = &td->trip;
-
+		for_each_trip(tz, trip) {
 			if (trip->type == THERMAL_TRIP_CRITICAL) {
 				crit_temp = trip->temperature;
 				break;
@@ -145,8 +138,6 @@ int thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp)
 	}
 
 	ret = __thermal_zone_get_temp(tz, temp);
-	if (!ret && *temp <= THERMAL_TEMP_INVALID)
-		ret = -ENODATA;
 
 unlock:
 	mutex_unlock(&tz->lock);
@@ -181,6 +172,8 @@ void __thermal_cdev_update(struct thermal_cooling_device *cdev)
 
 	/* Make sure cdev enters the deepest cooling state */
 	list_for_each_entry(instance, &cdev->thermal_instances, cdev_node) {
+		dev_dbg(&cdev->device, "zone%d->target=%lu\n",
+			instance->tz->id, instance->target);
 		if (instance->target == THERMAL_NO_TARGET)
 			continue;
 		if (instance->target > target)

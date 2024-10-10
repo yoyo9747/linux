@@ -254,9 +254,13 @@ static void virtbt_rx_done(struct virtqueue *vq)
 
 static int virtbt_probe(struct virtio_device *vdev)
 {
-	struct virtqueue_info vqs_info[VIRTBT_NUM_VQS] = {
-		[VIRTBT_VQ_TX] = { "tx", virtbt_tx_done },
-		[VIRTBT_VQ_RX] = { "rx", virtbt_rx_done },
+	vq_callback_t *callbacks[VIRTBT_NUM_VQS] = {
+		[VIRTBT_VQ_TX] = virtbt_tx_done,
+		[VIRTBT_VQ_RX] = virtbt_rx_done,
+	};
+	const char *names[VIRTBT_NUM_VQS] = {
+		[VIRTBT_VQ_TX] = "tx",
+		[VIRTBT_VQ_RX] = "rx",
 	};
 	struct virtio_bluetooth *vbt;
 	struct hci_dev *hdev;
@@ -270,6 +274,7 @@ static int virtbt_probe(struct virtio_device *vdev)
 
 	switch (type) {
 	case VIRTIO_BT_CONFIG_TYPE_PRIMARY:
+	case VIRTIO_BT_CONFIG_TYPE_AMP:
 		break;
 	default:
 		return -EINVAL;
@@ -284,7 +289,8 @@ static int virtbt_probe(struct virtio_device *vdev)
 
 	INIT_WORK(&vbt->rx, virtbt_rx_work);
 
-	err = virtio_find_vqs(vdev, VIRTBT_NUM_VQS, vbt->vqs, vqs_info, NULL);
+	err = virtio_find_vqs(vdev, VIRTBT_NUM_VQS, vbt->vqs, callbacks,
+			      names, NULL);
 	if (err)
 		return err;
 
@@ -297,6 +303,7 @@ static int virtbt_probe(struct virtio_device *vdev)
 	vbt->hdev = hdev;
 
 	hdev->bus = HCI_VIRTIO;
+	hdev->dev_type = type;
 	hci_set_drvdata(hdev, vbt);
 
 	hdev->open  = virtbt_open;
@@ -410,6 +417,7 @@ static const unsigned int virtbt_features[] = {
 
 static struct virtio_driver virtbt_driver = {
 	.driver.name         = KBUILD_MODNAME,
+	.driver.owner        = THIS_MODULE,
 	.feature_table       = virtbt_features,
 	.feature_table_size  = ARRAY_SIZE(virtbt_features),
 	.id_table            = virtbt_table,

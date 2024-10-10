@@ -35,9 +35,7 @@ Library functionality that is used throughout the kernel.
 
    kobject
    kref
-   cleanup
    assoc_array
-   folio_queue
    xarray
    maple_tree
    idr
@@ -50,8 +48,6 @@ Library functionality that is used throughout the kernel.
    errseq
    wrappers/atomic_t
    wrappers/atomic_bitops
-   floating-point
-   union_find
 
 Low level entry and exit
 ========================
@@ -106,7 +102,6 @@ more memory-management documentation in Documentation/mm/index.rst.
    dma-api-howto
    dma-attributes
    dma-isa-lpc
-   swiotlb
    mm-api
    genalloc
    pin_user_pages

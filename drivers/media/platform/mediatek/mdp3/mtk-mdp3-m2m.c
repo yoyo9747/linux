@@ -104,14 +104,14 @@ static void mdp_m2m_device_run(void *priv)
 	task.cb_data = NULL;
 	task.mdp_ctx = ctx;
 
-	if (refcount_read(&ctx->mdp_dev->job_count)) {
+	if (atomic_read(&ctx->mdp_dev->job_count)) {
 		ret = wait_event_timeout(ctx->mdp_dev->callback_wq,
-					 !refcount_read(&ctx->mdp_dev->job_count),
+					 !atomic_read(&ctx->mdp_dev->job_count),
 					 2 * HZ);
 		if (ret == 0) {
 			dev_err(&ctx->mdp_dev->pdev->dev,
 				"%d jobs not yet done\n",
-				refcount_read(&ctx->mdp_dev->job_count));
+				atomic_read(&ctx->mdp_dev->job_count));
 			goto worker_end;
 		}
 	}

@@ -43,8 +43,6 @@
 #include "xfs_iunlink_item.h"
 #include "xfs_dahash_test.h"
 #include "xfs_rtbitmap.h"
-#include "xfs_exchmaps_item.h"
-#include "xfs_parent.h"
 #include "scrub/stats.h"
 #include "scrub/rcbag_btree.h"
 
@@ -311,9 +309,9 @@ xfs_set_inode_alloc(
 	 * the allocator to accommodate the request.
 	 */
 	if (xfs_has_small_inums(mp) && ino > XFS_MAXINUMBER_32)
-		xfs_set_inode32(mp);
+		set_bit(XFS_OPSTATE_INODE32, &mp->m_opstate);
 	else
-		xfs_clear_inode32(mp);
+		clear_bit(XFS_OPSTATE_INODE32, &mp->m_opstate);
 
 	for (index = 0; index < agcount; index++) {
 		struct xfs_perag	*pag;
@@ -1053,18 +1051,12 @@ xfs_init_percpu_counters(
 	if (error)
 		goto free_fdblocks;
 
-	error = percpu_counter_init(&mp->m_delalloc_rtextents, 0, GFP_KERNEL);
+	error = percpu_counter_init(&mp->m_frextents, 0, GFP_KERNEL);
 	if (error)
 		goto free_delalloc;
 
-	error = percpu_counter_init(&mp->m_frextents, 0, GFP_KERNEL);
-	if (error)
-		goto free_delalloc_rt;
-
 	return 0;
 
-free_delalloc_rt:
-	percpu_counter_destroy(&mp->m_delalloc_rtextents);
 free_delalloc:
 	percpu_counter_destroy(&mp->m_delalloc_blks);
 free_fdblocks:
@@ -1093,9 +1085,6 @@ xfs_destroy_percpu_counters(
 	percpu_counter_destroy(&mp->m_icount);
 	percpu_counter_destroy(&mp->m_ifree);
 	percpu_counter_destroy(&mp->m_fdblocks);
-	ASSERT(xfs_is_shutdown(mp) ||
-	       percpu_counter_sum(&mp->m_delalloc_rtextents) == 0);
-	percpu_counter_destroy(&mp->m_delalloc_rtextents);
 	ASSERT(xfs_is_shutdown(mp) ||
 	       percpu_counter_sum(&mp->m_delalloc_blks) == 0);
 	percpu_counter_destroy(&mp->m_delalloc_blks);
@@ -1511,7 +1500,7 @@ xfs_fs_fill_super(
 	 * the newer fsopen/fsconfig API.
 	 */
 	if (fc->sb_flags & SB_RDONLY)
-		xfs_set_readonly(mp);
+		set_bit(XFS_OPSTATE_READONLY, &mp->m_opstate);
 	if (fc->sb_flags & SB_DIRSYNC)
 		mp->m_features |= XFS_FEAT_DIRSYNC;
 	if (fc->sb_flags & SB_SYNCHRONOUS)
@@ -1590,21 +1579,17 @@ xfs_fs_fill_super(
 	if (error)
 		goto out_free_sb;
 
-	/*
-	 * V4 support is undergoing deprecation.
-	 *
-	 * Note: this has to use an open coded m_features check as xfs_has_crc
-	 * always returns false for !CONFIG_XFS_SUPPORT_V4.
-	 */
-	if (!(mp->m_features & XFS_FEAT_CRC)) {
-		if (!IS_ENABLED(CONFIG_XFS_SUPPORT_V4)) {
-			xfs_warn(mp,
-	"Deprecated V4 format (crc=0) not supported by kernel.");
-			error = -EINVAL;
-			goto out_free_sb;
-		}
+	/* V4 support is undergoing deprecation. */
+	if (!xfs_has_crc(mp)) {
+#ifdef CONFIG_XFS_SUPPORT_V4
 		xfs_warn_once(mp,
 	"Deprecated V4 format (crc=0) will not be supported after September 2030.");
+#else
+		xfs_warn(mp,
+	"Deprecated V4 format (crc=0) not supported by kernel.");
+		error = -EINVAL;
+		goto out_free_sb;
+#endif
 	}
 
 	/* ASCII case insensitivity is undergoing deprecation. */
@@ -1638,28 +1623,16 @@ xfs_fs_fill_super(
 		goto out_free_sb;
 	}
 
+	/*
+	 * Until this is fixed only page-sized or smaller data blocks work.
+	 */
 	if (mp->m_sb.sb_blocksize > PAGE_SIZE) {
-		size_t max_folio_size = mapping_max_folio_size_supported();
-
-		if (!xfs_has_crc(mp)) {
-			xfs_warn(mp,
-"V4 Filesystem with blocksize %d bytes. Only pagesize (%ld) or less is supported.",
-				mp->m_sb.sb_blocksize, PAGE_SIZE);
-			error = -ENOSYS;
-			goto out_free_sb;
-		}
-
-		if (mp->m_sb.sb_blocksize > max_folio_size) {
-			xfs_warn(mp,
-"block size (%u bytes) not supported; Only block size (%zu) or less is supported",
-				mp->m_sb.sb_blocksize, max_folio_size);
-			error = -ENOSYS;
-			goto out_free_sb;
-		}
-
 		xfs_warn(mp,
-"EXPERIMENTAL: V5 Filesystem with Large Block Size (%d bytes) enabled.",
-			mp->m_sb.sb_blocksize);
+		"File system with blocksize %d bytes. "
+		"Only pagesize (%ld) or less will currently work.",
+				mp->m_sb.sb_blocksize, PAGE_SIZE);
+		error = -ENOSYS;
+		goto out_free_sb;
 	}
 
 	/* Ensure this filesystem fits in the page cache limits */
@@ -1754,14 +1727,6 @@ xfs_fs_fill_super(
 		goto out_filestream_unmount;
 	}
 
-	if (xfs_has_exchange_range(mp))
-		xfs_warn(mp,
-	"EXPERIMENTAL exchange-range feature enabled. Use at your own risk!");
-
-	if (xfs_has_parent(mp))
-		xfs_warn(mp,
-	"EXPERIMENTAL parent pointer feature enabled. Use at your own risk!");
-
 	error = xfs_mountfs(mp);
 	if (error)
 		goto out_filestream_unmount;
@@ -1832,7 +1797,7 @@ xfs_remount_rw(
 		return -EINVAL;
 	}
 
-	xfs_clear_readonly(mp);
+	clear_bit(XFS_OPSTATE_READONLY, &mp->m_opstate);
 
 	/*
 	 * If this is the first remount to writeable state we might have some
@@ -1908,7 +1873,11 @@ xfs_remount_ro(
 	xfs_inodegc_stop(mp);
 
 	/* Free the per-AG metadata reservation pool. */
-	xfs_fs_unreserve_ag_blocks(mp);
+	error = xfs_fs_unreserve_ag_blocks(mp);
+	if (error) {
+		xfs_force_shutdown(mp, SHUTDOWN_CORRUPT_INCORE);
+		return error;
+	}
 
 	/*
 	 * Before we sync the metadata, we need to free up the reserve block
@@ -1920,7 +1889,7 @@ xfs_remount_ro(
 	xfs_save_resvblks(mp);
 
 	xfs_log_clean(mp);
-	xfs_set_readonly(mp);
+	set_bit(XFS_OPSTATE_READONLY, &mp->m_opstate);
 
 	return 0;
 }
@@ -2021,7 +1990,8 @@ static int xfs_init_fs_context(
 		return -ENOMEM;
 
 	spin_lock_init(&mp->m_sb_lock);
-	xa_init(&mp->m_perags);
+	INIT_RADIX_TREE(&mp->m_perag_tree, GFP_ATOMIC);
+	spin_lock_init(&mp->m_perag_lock);
 	mutex_init(&mp->m_growlock);
 	INIT_WORK(&mp->m_flush_inodes_work, xfs_flush_inodes_worker);
 	INIT_DELAYED_WORK(&mp->m_reclaim_work, xfs_reclaim_worker);
@@ -2215,32 +2185,8 @@ xfs_init_caches(void)
 	if (!xfs_iunlink_cache)
 		goto out_destroy_attri_cache;
 
-	xfs_xmd_cache = kmem_cache_create("xfs_xmd_item",
-					 sizeof(struct xfs_xmd_log_item),
-					 0, 0, NULL);
-	if (!xfs_xmd_cache)
-		goto out_destroy_iul_cache;
-
-	xfs_xmi_cache = kmem_cache_create("xfs_xmi_item",
-					 sizeof(struct xfs_xmi_log_item),
-					 0, 0, NULL);
-	if (!xfs_xmi_cache)
-		goto out_destroy_xmd_cache;
-
-	xfs_parent_args_cache = kmem_cache_create("xfs_parent_args",
-					     sizeof(struct xfs_parent_args),
-					     0, 0, NULL);
-	if (!xfs_parent_args_cache)
-		goto out_destroy_xmi_cache;
-
 	return 0;
 
- out_destroy_xmi_cache:
-	kmem_cache_destroy(xfs_xmi_cache);
- out_destroy_xmd_cache:
-	kmem_cache_destroy(xfs_xmd_cache);
- out_destroy_iul_cache:
-	kmem_cache_destroy(xfs_iunlink_cache);
  out_destroy_attri_cache:
 	kmem_cache_destroy(xfs_attri_cache);
  out_destroy_attrd_cache:
@@ -2297,9 +2243,6 @@ xfs_destroy_caches(void)
 	 * destroy caches.
 	 */
 	rcu_barrier();
-	kmem_cache_destroy(xfs_parent_args_cache);
-	kmem_cache_destroy(xfs_xmd_cache);
-	kmem_cache_destroy(xfs_xmi_cache);
 	kmem_cache_destroy(xfs_iunlink_cache);
 	kmem_cache_destroy(xfs_attri_cache);
 	kmem_cache_destroy(xfs_attrd_cache);

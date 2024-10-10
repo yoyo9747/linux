@@ -4,11 +4,6 @@
  */
 
 #include "sun50i-h616.dtsi"
-#include "sun50i-h616-cpu-opp.dtsi"
-
-&cpu0 {
-	cpu-supply = <&reg_dcdc2>;
-};
 
 &mmc2 {
 	pinctrl-names = "default";

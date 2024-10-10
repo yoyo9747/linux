@@ -2,7 +2,6 @@
 #include <linux/perf_event.h>
 #include <linux/types.h>
 
-#include <asm/cpu_device_id.h>
 #include <asm/perf_event.h>
 #include <asm/msr.h>
 
@@ -1458,7 +1457,7 @@ void __init intel_pmu_lbr_init_atom(void)
 	 * to have an operational LBR which can freeze
 	 * on PMU interrupt
 	 */
-	if (boot_cpu_data.x86_vfm == INTEL_ATOM_BONNELL
+	if (boot_cpu_data.x86_model == 28
 	    && boot_cpu_data.x86_stepping < 10) {
 		pr_cont("LBR disabled due to erratum");
 		return;

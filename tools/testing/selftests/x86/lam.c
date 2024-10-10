@@ -1183,7 +1183,7 @@ int main(int argc, char **argv)
 
 	if (!cpu_has_lam()) {
 		ksft_print_msg("Unsupported LAM feature!\n");
-		return KSFT_SKIP;
+		return -1;
 	}
 
 	while ((c = getopt(argc, argv, "ht:")) != -1) {
@@ -1237,5 +1237,5 @@ int main(int argc, char **argv)
 
 	ksft_set_plan(tests_cnt);
 
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

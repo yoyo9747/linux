@@ -23,7 +23,7 @@
 #include <linux/io.h>
 #include <linux/security.h>
 #include <asm/byteorder.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <pcmcia/ss.h>
 #include <pcmcia/cisreg.h>

@@ -15,14 +15,22 @@
 #include <linux/pci-epc.h>
 #include <linux/pci-epf.h>
 
-/**
- * dw_pcie_ep_get_func_from_ep - Get the struct dw_pcie_ep_func corresponding to
- *				 the endpoint function
- * @ep: DWC EP device
- * @func_no: Function number of the endpoint device
- *
- * Return: struct dw_pcie_ep_func if success, NULL otherwise.
- */
+void dw_pcie_ep_linkup(struct dw_pcie_ep *ep)
+{
+	struct pci_epc *epc = ep->epc;
+
+	pci_epc_linkup(epc);
+}
+EXPORT_SYMBOL_GPL(dw_pcie_ep_linkup);
+
+void dw_pcie_ep_init_notify(struct dw_pcie_ep *ep)
+{
+	struct pci_epc *epc = ep->epc;
+
+	pci_epc_init_notify(epc);
+}
+EXPORT_SYMBOL_GPL(dw_pcie_ep_init_notify);
+
 struct dw_pcie_ep_func *
 dw_pcie_ep_get_func_from_ep(struct dw_pcie_ep *ep, u8 func_no)
 {
@@ -53,11 +61,6 @@ static void __dw_pcie_ep_reset_bar(struct dw_pcie *pci, u8 func_no,
 	dw_pcie_dbi_ro_wr_dis(pci);
 }
 
-/**
- * dw_pcie_ep_reset_bar - Reset endpoint BAR
- * @pci: DWC PCI device
- * @bar: BAR number of the endpoint
- */
 void dw_pcie_ep_reset_bar(struct dw_pcie *pci, enum pci_barno bar)
 {
 	u8 func_no, funcs;
@@ -137,7 +140,7 @@ static int dw_pcie_ep_inbound_atu(struct dw_pcie_ep *ep, u8 func_no, int type,
 	if (!ep->bar_to_atu[bar])
 		free_win = find_first_zero_bit(ep->ib_window_map, pci->num_ib_windows);
 	else
-		free_win = ep->bar_to_atu[bar] - 1;
+		free_win = ep->bar_to_atu[bar];
 
 	if (free_win >= pci->num_ib_windows) {
 		dev_err(pci->dev, "No free inbound window\n");
@@ -151,18 +154,15 @@ static int dw_pcie_ep_inbound_atu(struct dw_pcie_ep *ep, u8 func_no, int type,
 		return ret;
 	}
 
-	/*
-	 * Always increment free_win before assignment, since value 0 is used to identify
-	 * unallocated mapping.
-	 */
-	ep->bar_to_atu[bar] = free_win + 1;
+	ep->bar_to_atu[bar] = free_win;
 	set_bit(free_win, ep->ib_window_map);
 
 	return 0;
 }
 
-static int dw_pcie_ep_outbound_atu(struct dw_pcie_ep *ep,
-				   struct dw_pcie_ob_atu_cfg *atu)
+static int dw_pcie_ep_outbound_atu(struct dw_pcie_ep *ep, u8 func_no,
+				   phys_addr_t phys_addr,
+				   u64 pci_addr, size_t size)
 {
 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
 	u32 free_win;
@@ -174,13 +174,13 @@ static int dw_pcie_ep_outbound_atu(struct dw_pcie_ep *ep,
 		return -EINVAL;
 	}
 
-	atu->index = free_win;
-	ret = dw_pcie_prog_outbound_atu(pci, atu);
+	ret = dw_pcie_prog_ep_outbound_atu(pci, func_no, free_win, PCIE_ATU_TYPE_MEM,
+					   phys_addr, pci_addr, size);
 	if (ret)
 		return ret;
 
 	set_bit(free_win, ep->ob_window_map);
-	ep->outbound_addr[free_win] = atu->cpu_addr;
+	ep->outbound_addr[free_win] = phys_addr;
 
 	return 0;
 }
@@ -191,10 +191,7 @@ static void dw_pcie_ep_clear_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	struct dw_pcie_ep *ep = epc_get_drvdata(epc);
 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
 	enum pci_barno bar = epf_bar->barno;
-	u32 atu_index = ep->bar_to_atu[bar] - 1;
-
-	if (!ep->bar_to_atu[bar])
-		return;
+	u32 atu_index = ep->bar_to_atu[bar];
 
 	__dw_pcie_ep_reset_bar(pci, func_no, bar, epf_bar->flags);
 
@@ -214,13 +211,6 @@ static int dw_pcie_ep_set_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	int flags = epf_bar->flags;
 	int ret, type;
 	u32 reg;
-
-	/*
-	 * DWC does not allow BAR pairs to overlap, e.g. you cannot combine BARs
-	 * 1 and 2 to form a 64-bit BAR.
-	 */
-	if ((flags & PCI_BASE_ADDRESS_MEM_TYPE_64) && (bar & 1))
-		return -EINVAL;
 
 	reg = PCI_BASE_ADDRESS_0 + (4 * bar);
 
@@ -290,14 +280,8 @@ static int dw_pcie_ep_map_addr(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	int ret;
 	struct dw_pcie_ep *ep = epc_get_drvdata(epc);
 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
-	struct dw_pcie_ob_atu_cfg atu = { 0 };
 
-	atu.func_no = func_no;
-	atu.type = PCIE_ATU_TYPE_MEM;
-	atu.cpu_addr = addr;
-	atu.pci_addr = pci_addr;
-	atu.size = size;
-	ret = dw_pcie_ep_outbound_atu(ep, &atu);
+	ret = dw_pcie_ep_outbound_atu(ep, func_no, addr, pci_addr, size);
 	if (ret) {
 		dev_err(pci->dev, "Failed to enable address\n");
 		return ret;
@@ -456,13 +440,6 @@ static const struct pci_epc_ops epc_ops = {
 	.get_features		= dw_pcie_ep_get_features,
 };
 
-/**
- * dw_pcie_ep_raise_intx_irq - Raise INTx IRQ to the host
- * @ep: DWC EP device
- * @func_no: Function number of the endpoint
- *
- * Return: 0 if success, errono otherwise.
- */
 int dw_pcie_ep_raise_intx_irq(struct dw_pcie_ep *ep, u8 func_no)
 {
 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
@@ -474,14 +451,6 @@ int dw_pcie_ep_raise_intx_irq(struct dw_pcie_ep *ep, u8 func_no)
 }
 EXPORT_SYMBOL_GPL(dw_pcie_ep_raise_intx_irq);
 
-/**
- * dw_pcie_ep_raise_msi_irq - Raise MSI IRQ to the host
- * @ep: DWC EP device
- * @func_no: Function number of the endpoint
- * @interrupt_num: Interrupt number to be raised
- *
- * Return: 0 if success, errono otherwise.
- */
 int dw_pcie_ep_raise_msi_irq(struct dw_pcie_ep *ep, u8 func_no,
 			     u8 interrupt_num)
 {
@@ -531,15 +500,6 @@ int dw_pcie_ep_raise_msi_irq(struct dw_pcie_ep *ep, u8 func_no,
 }
 EXPORT_SYMBOL_GPL(dw_pcie_ep_raise_msi_irq);
 
-/**
- * dw_pcie_ep_raise_msix_irq_doorbell - Raise MSI-X to the host using Doorbell
- *					method
- * @ep: DWC EP device
- * @func_no: Function number of the endpoint device
- * @interrupt_num: Interrupt number to be raised
- *
- * Return: 0 if success, errno otherwise.
- */
 int dw_pcie_ep_raise_msix_irq_doorbell(struct dw_pcie_ep *ep, u8 func_no,
 				       u16 interrupt_num)
 {
@@ -559,14 +519,6 @@ int dw_pcie_ep_raise_msix_irq_doorbell(struct dw_pcie_ep *ep, u8 func_no,
 	return 0;
 }
 
-/**
- * dw_pcie_ep_raise_msix_irq - Raise MSI-X to the host
- * @ep: DWC EP device
- * @func_no: Function number of the endpoint device
- * @interrupt_num: Interrupt number to be raised
- *
- * Return: 0 if success, errno otherwise.
- */
 int dw_pcie_ep_raise_msix_irq(struct dw_pcie_ep *ep, u8 func_no,
 			      u16 interrupt_num)
 {
@@ -614,41 +566,22 @@ int dw_pcie_ep_raise_msix_irq(struct dw_pcie_ep *ep, u8 func_no,
 	return 0;
 }
 
-/**
- * dw_pcie_ep_cleanup - Cleanup DWC EP resources after fundamental reset
- * @ep: DWC EP device
- *
- * Cleans up the DWC EP specific resources like eDMA etc... after fundamental
- * reset like PERST#. Note that this API is only applicable for drivers
- * supporting PERST# or any other methods of fundamental reset.
- */
-void dw_pcie_ep_cleanup(struct dw_pcie_ep *ep)
+void dw_pcie_ep_exit(struct dw_pcie_ep *ep)
 {
 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
-
-	dw_pcie_edma_remove(pci);
-}
-EXPORT_SYMBOL_GPL(dw_pcie_ep_cleanup);
-
-/**
- * dw_pcie_ep_deinit - Deinitialize the endpoint device
- * @ep: DWC EP device
- *
- * Deinitialize the endpoint device. EPC device is not destroyed since that will
- * be taken care by Devres.
- */
-void dw_pcie_ep_deinit(struct dw_pcie_ep *ep)
-{
 	struct pci_epc *epc = ep->epc;
 
-	dw_pcie_ep_cleanup(ep);
+	dw_pcie_edma_remove(pci);
 
 	pci_epc_mem_free_addr(epc, ep->msi_mem_phys, ep->msi_mem,
 			      epc->mem->window.page_size);
 
 	pci_epc_mem_exit(epc);
+
+	if (ep->ops->deinit)
+		ep->ops->deinit(ep);
 }
-EXPORT_SYMBOL_GPL(dw_pcie_ep_deinit);
+EXPORT_SYMBOL_GPL(dw_pcie_ep_exit);
 
 static unsigned int dw_pcie_ep_find_ext_capability(struct dw_pcie *pci, int cap)
 {
@@ -668,13 +601,26 @@ static unsigned int dw_pcie_ep_find_ext_capability(struct dw_pcie *pci, int cap)
 	return 0;
 }
 
-static void dw_pcie_ep_init_non_sticky_registers(struct dw_pcie *pci)
+int dw_pcie_ep_init_complete(struct dw_pcie_ep *ep)
 {
-	unsigned int offset;
+	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
+	unsigned int offset, ptm_cap_base;
 	unsigned int nbars;
-	u32 reg, i;
+	u8 hdr_type;
+	u32 reg;
+	int i;
+
+	hdr_type = dw_pcie_readb_dbi(pci, PCI_HEADER_TYPE) &
+		   PCI_HEADER_TYPE_MASK;
+	if (hdr_type != PCI_HEADER_TYPE_NORMAL) {
+		dev_err(pci->dev,
+			"PCIe controller is not set to EP mode (hdr_type:0x%x)!\n",
+			hdr_type);
+		return -EIO;
+	}
 
 	offset = dw_pcie_ep_find_ext_capability(pci, PCI_EXT_CAP_ID_REBAR);
+	ptm_cap_base = dw_pcie_ep_find_ext_capability(pci, PCI_EXT_CAP_ID_PTM);
 
 	dw_pcie_dbi_ro_wr_en(pci);
 
@@ -689,95 +635,8 @@ static void dw_pcie_ep_init_non_sticky_registers(struct dw_pcie *pci)
 		 * for 1 MB BAR size only.
 		 */
 		for (i = 0; i < nbars; i++, offset += PCI_REBAR_CTRL)
-			dw_pcie_writel_dbi(pci, offset + PCI_REBAR_CAP, 0x0);
+			dw_pcie_writel_dbi(pci, offset + PCI_REBAR_CAP, BIT(4));
 	}
-
-	dw_pcie_setup(pci);
-	dw_pcie_dbi_ro_wr_dis(pci);
-}
-
-/**
- * dw_pcie_ep_init_registers - Initialize DWC EP specific registers
- * @ep: DWC EP device
- *
- * Initialize the registers (CSRs) specific to DWC EP. This API should be called
- * only when the endpoint receives an active refclk (either from host or
- * generated locally).
- */
-int dw_pcie_ep_init_registers(struct dw_pcie_ep *ep)
-{
-	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
-	struct dw_pcie_ep_func *ep_func;
-	struct device *dev = pci->dev;
-	struct pci_epc *epc = ep->epc;
-	u32 ptm_cap_base, reg;
-	u8 hdr_type;
-	u8 func_no;
-	void *addr;
-	int ret;
-
-	hdr_type = dw_pcie_readb_dbi(pci, PCI_HEADER_TYPE) &
-		   PCI_HEADER_TYPE_MASK;
-	if (hdr_type != PCI_HEADER_TYPE_NORMAL) {
-		dev_err(pci->dev,
-			"PCIe controller is not set to EP mode (hdr_type:0x%x)!\n",
-			hdr_type);
-		return -EIO;
-	}
-
-	dw_pcie_version_detect(pci);
-
-	dw_pcie_iatu_detect(pci);
-
-	ret = dw_pcie_edma_detect(pci);
-	if (ret)
-		return ret;
-
-	if (!ep->ib_window_map) {
-		ep->ib_window_map = devm_bitmap_zalloc(dev, pci->num_ib_windows,
-						       GFP_KERNEL);
-		if (!ep->ib_window_map)
-			goto err_remove_edma;
-	}
-
-	if (!ep->ob_window_map) {
-		ep->ob_window_map = devm_bitmap_zalloc(dev, pci->num_ob_windows,
-						       GFP_KERNEL);
-		if (!ep->ob_window_map)
-			goto err_remove_edma;
-	}
-
-	if (!ep->outbound_addr) {
-		addr = devm_kcalloc(dev, pci->num_ob_windows, sizeof(phys_addr_t),
-				    GFP_KERNEL);
-		if (!addr)
-			goto err_remove_edma;
-		ep->outbound_addr = addr;
-	}
-
-	for (func_no = 0; func_no < epc->max_functions; func_no++) {
-
-		ep_func = dw_pcie_ep_get_func_from_ep(ep, func_no);
-		if (ep_func)
-			continue;
-
-		ep_func = devm_kzalloc(dev, sizeof(*ep_func), GFP_KERNEL);
-		if (!ep_func)
-			goto err_remove_edma;
-
-		ep_func->func_no = func_no;
-		ep_func->msi_cap = dw_pcie_ep_find_capability(ep, func_no,
-							      PCI_CAP_ID_MSI);
-		ep_func->msix_cap = dw_pcie_ep_find_capability(ep, func_no,
-							       PCI_CAP_ID_MSIX);
-
-		list_add_tail(&ep_func->list, &ep->func_list);
-	}
-
-	if (ep->ops->init)
-		ep->ops->init(ep);
-
-	ptm_cap_base = dw_pcie_ep_find_ext_capability(pci, PCI_EXT_CAP_ID_PTM);
 
 	/*
 	 * PTM responder capability can be disabled only after disabling
@@ -795,72 +654,26 @@ int dw_pcie_ep_init_registers(struct dw_pcie_ep *ep)
 		dw_pcie_dbi_ro_wr_dis(pci);
 	}
 
-	dw_pcie_ep_init_non_sticky_registers(pci);
+	dw_pcie_setup(pci);
+	dw_pcie_dbi_ro_wr_dis(pci);
 
 	return 0;
-
-err_remove_edma:
-	dw_pcie_edma_remove(pci);
-
-	return ret;
 }
-EXPORT_SYMBOL_GPL(dw_pcie_ep_init_registers);
+EXPORT_SYMBOL_GPL(dw_pcie_ep_init_complete);
 
-/**
- * dw_pcie_ep_linkup - Notify EPF drivers about Link Up event
- * @ep: DWC EP device
- */
-void dw_pcie_ep_linkup(struct dw_pcie_ep *ep)
-{
-	struct pci_epc *epc = ep->epc;
-
-	pci_epc_linkup(epc);
-}
-EXPORT_SYMBOL_GPL(dw_pcie_ep_linkup);
-
-/**
- * dw_pcie_ep_linkdown - Notify EPF drivers about Link Down event
- * @ep: DWC EP device
- *
- * Non-sticky registers are also initialized before sending the notification to
- * the EPF drivers. This is needed since the registers need to be initialized
- * before the link comes back again.
- */
-void dw_pcie_ep_linkdown(struct dw_pcie_ep *ep)
-{
-	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
-	struct pci_epc *epc = ep->epc;
-
-	/*
-	 * Initialize the non-sticky DWC registers as they would've reset post
-	 * Link Down. This is specifically needed for drivers not supporting
-	 * PERST# as they have no way to reinitialize the registers before the
-	 * link comes back again.
-	 */
-	dw_pcie_ep_init_non_sticky_registers(pci);
-
-	pci_epc_linkdown(epc);
-}
-EXPORT_SYMBOL_GPL(dw_pcie_ep_linkdown);
-
-/**
- * dw_pcie_ep_init - Initialize the endpoint device
- * @ep: DWC EP device
- *
- * Initialize the endpoint device. Allocate resources and create the EPC
- * device with the endpoint framework.
- *
- * Return: 0 if success, errno otherwise.
- */
 int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 {
 	int ret;
+	void *addr;
+	u8 func_no;
 	struct resource *res;
 	struct pci_epc *epc;
 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
 	struct device *dev = pci->dev;
 	struct platform_device *pdev = to_platform_device(dev);
 	struct device_node *np = dev->of_node;
+	const struct pci_epc_features *epc_features;
+	struct dw_pcie_ep_func *ep_func;
 
 	INIT_LIST_HEAD(&ep->func_list);
 
@@ -878,6 +691,26 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 	if (ep->ops->pre_init)
 		ep->ops->pre_init(ep);
 
+	dw_pcie_version_detect(pci);
+
+	dw_pcie_iatu_detect(pci);
+
+	ep->ib_window_map = devm_bitmap_zalloc(dev, pci->num_ib_windows,
+					       GFP_KERNEL);
+	if (!ep->ib_window_map)
+		return -ENOMEM;
+
+	ep->ob_window_map = devm_bitmap_zalloc(dev, pci->num_ob_windows,
+					       GFP_KERNEL);
+	if (!ep->ob_window_map)
+		return -ENOMEM;
+
+	addr = devm_kcalloc(dev, pci->num_ob_windows, sizeof(phys_addr_t),
+			    GFP_KERNEL);
+	if (!addr)
+		return -ENOMEM;
+	ep->outbound_addr = addr;
+
 	epc = devm_pci_epc_create(dev, &epc_ops);
 	if (IS_ERR(epc)) {
 		dev_err(dev, "Failed to create epc device\n");
@@ -891,11 +724,28 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 	if (ret < 0)
 		epc->max_functions = 1;
 
+	for (func_no = 0; func_no < epc->max_functions; func_no++) {
+		ep_func = devm_kzalloc(dev, sizeof(*ep_func), GFP_KERNEL);
+		if (!ep_func)
+			return -ENOMEM;
+
+		ep_func->func_no = func_no;
+		ep_func->msi_cap = dw_pcie_ep_find_capability(ep, func_no,
+							      PCI_CAP_ID_MSI);
+		ep_func->msix_cap = dw_pcie_ep_find_capability(ep, func_no,
+							       PCI_CAP_ID_MSIX);
+
+		list_add_tail(&ep_func->list, &ep->func_list);
+	}
+
+	if (ep->ops->init)
+		ep->ops->init(ep);
+
 	ret = pci_epc_mem_init(epc, ep->phys_base, ep->addr_size,
 			       ep->page_size);
 	if (ret < 0) {
 		dev_err(dev, "Failed to initialize address space\n");
-		return ret;
+		goto err_ep_deinit;
 	}
 
 	ep->msi_mem = pci_epc_mem_alloc_addr(epc, &ep->msi_mem_phys,
@@ -906,10 +756,35 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 		goto err_exit_epc_mem;
 	}
 
+	ret = dw_pcie_edma_detect(pci);
+	if (ret)
+		goto err_free_epc_mem;
+
+	if (ep->ops->get_features) {
+		epc_features = ep->ops->get_features(ep);
+		if (epc_features->core_init_notifier)
+			return 0;
+	}
+
+	ret = dw_pcie_ep_init_complete(ep);
+	if (ret)
+		goto err_remove_edma;
+
 	return 0;
+
+err_remove_edma:
+	dw_pcie_edma_remove(pci);
+
+err_free_epc_mem:
+	pci_epc_mem_free_addr(epc, ep->msi_mem_phys, ep->msi_mem,
+			      epc->mem->window.page_size);
 
 err_exit_epc_mem:
 	pci_epc_mem_exit(epc);
+
+err_ep_deinit:
+	if (ep->ops->deinit)
+		ep->ops->deinit(ep);
 
 	return ret;
 }

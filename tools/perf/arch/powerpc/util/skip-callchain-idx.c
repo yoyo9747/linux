@@ -159,9 +159,9 @@ static int check_return_addr(struct dso *dso, u64 map_start, Dwarf_Addr pc)
 	Dwarf_Addr	start = pc;
 	Dwarf_Addr	end = pc;
 	bool		signalp;
-	const char	*exec_file = dso__long_name(dso);
+	const char	*exec_file = dso->long_name;
 
-	dwfl = RC_CHK_ACCESS(dso)->dwfl;
+	dwfl = dso->dwfl;
 
 	if (!dwfl) {
 		dwfl = dwfl_begin(&offline_callbacks);
@@ -183,7 +183,7 @@ static int check_return_addr(struct dso *dso, u64 map_start, Dwarf_Addr pc)
 			dwfl_end(dwfl);
 			goto out;
 		}
-		RC_CHK_ACCESS(dso)->dwfl = dwfl;
+		dso->dwfl = dwfl;
 	}
 
 	mod = dwfl_addrmodule(dwfl, pc);
@@ -267,7 +267,7 @@ int arch_skip_callchain_idx(struct thread *thread, struct ip_callchain *chain)
 	rc = check_return_addr(dso, map__start(al.map), ip);
 
 	pr_debug("[DSO %s, sym %s, ip 0x%" PRIx64 "] rc %d\n",
-		dso__long_name(dso), al.sym->name, ip, rc);
+				dso->long_name, al.sym->name, ip, rc);
 
 	if (rc == 0) {
 		/*

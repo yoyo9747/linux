@@ -10,7 +10,4 @@ qaic-y := \
 	qaic_control.o \
 	qaic_data.o \
 	qaic_drv.o \
-	qaic_timesync.o \
-	sahara.o
-
-qaic-$(CONFIG_DEBUG_FS) += qaic_debugfs.o
+	qaic_timesync.o

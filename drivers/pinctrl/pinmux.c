@@ -442,7 +442,8 @@ int pinmux_enable_setting(const struct pinctrl_setting *setting)
 			gname = pctlops->get_group_name(pctldev,
 						setting->data.mux.group);
 			dev_err_probe(pctldev->dev, ret,
-				"could not request pin %d (%s) from group %s on device %s\n",
+				"could not request pin %d (%s) from group %s "
+				" on device %s\n",
 				pins[i], pname, gname,
 				pinctrl_dev_get_name(pctldev));
 			goto err_pin_request;
@@ -525,7 +526,9 @@ void pinmux_disable_setting(const struct pinctrl_setting *setting)
 			gname = pctlops->get_group_name(pctldev,
 						setting->data.mux.group);
 			dev_warn(pctldev->dev,
-				 "not freeing pin %d (%s) as part of deactivating group %s - it is already used for some other setting",
+				 "not freeing pin %d (%s) as part of "
+				 "deactivating group %s - it is already "
+				 "used for some other setting",
 				 pins[i], desc->name, gname);
 		}
 	}
@@ -575,7 +578,6 @@ static int pinmux_functions_show(struct seq_file *s, void *what)
 
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(pinmux_functions);
 
 static int pinmux_pins_show(struct seq_file *s, void *what)
 {
@@ -648,7 +650,6 @@ static int pinmux_pins_show(struct seq_file *s, void *what)
 
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(pinmux_pins);
 
 void pinmux_show_map(struct seq_file *s, const struct pinctrl_map *map)
 {
@@ -671,12 +672,10 @@ void pinmux_show_setting(struct seq_file *s,
 		   setting->data.mux.func);
 }
 
-static int pinmux_select_show(struct seq_file *s, void *unused)
-{
-	return -EPERM;
-}
+DEFINE_SHOW_ATTRIBUTE(pinmux_functions);
+DEFINE_SHOW_ATTRIBUTE(pinmux_pins);
 
-static ssize_t pinmux_select_write(struct file *file, const char __user *user_buf,
+static ssize_t pinmux_select(struct file *file, const char __user *user_buf,
 				   size_t len, loff_t *ppos)
 {
 	struct seq_file *sfile = file->private_data;
@@ -750,7 +749,19 @@ exit_free_buf:
 
 	return ret;
 }
-DEFINE_SHOW_STORE_ATTRIBUTE(pinmux_select);
+
+static int pinmux_select_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, NULL, inode->i_private);
+}
+
+static const struct file_operations pinmux_select_ops = {
+	.owner = THIS_MODULE,
+	.open = pinmux_select_open,
+	.write = pinmux_select,
+	.llseek = no_llseek,
+	.release = single_release,
+};
 
 void pinmux_init_device_debugfs(struct dentry *devroot,
 			 struct pinctrl_dev *pctldev)
@@ -760,7 +771,7 @@ void pinmux_init_device_debugfs(struct dentry *devroot,
 	debugfs_create_file("pinmux-pins", 0444,
 			    devroot, pctldev, &pinmux_pins_fops);
 	debugfs_create_file("pinmux-select", 0200,
-			    devroot, pctldev, &pinmux_select_fops);
+			    devroot, pctldev, &pinmux_select_ops);
 }
 
 #endif /* CONFIG_DEBUG_FS */
@@ -793,7 +804,7 @@ pinmux_generic_get_function_name(struct pinctrl_dev *pctldev,
 	if (!function)
 		return NULL;
 
-	return function->func.name;
+	return function->name;
 }
 EXPORT_SYMBOL_GPL(pinmux_generic_get_function_name);
 
@@ -802,12 +813,12 @@ EXPORT_SYMBOL_GPL(pinmux_generic_get_function_name);
  * @pctldev: pin controller device
  * @selector: function number
  * @groups: array of pin groups
- * @ngroups: number of pin groups
+ * @num_groups: number of pin groups
  */
 int pinmux_generic_get_function_groups(struct pinctrl_dev *pctldev,
 				       unsigned int selector,
 				       const char * const **groups,
-				       unsigned int * const ngroups)
+				       unsigned int * const num_groups)
 {
 	struct function_desc *function;
 
@@ -818,8 +829,8 @@ int pinmux_generic_get_function_groups(struct pinctrl_dev *pctldev,
 			__func__, selector);
 		return -EINVAL;
 	}
-	*groups = function->func.groups;
-	*ngroups = function->func.ngroups;
+	*groups = function->group_names;
+	*num_groups = function->num_group_names;
 
 	return 0;
 }
@@ -849,13 +860,13 @@ EXPORT_SYMBOL_GPL(pinmux_generic_get_function);
  * @pctldev: pin controller device
  * @name: name of the function
  * @groups: array of pin groups
- * @ngroups: number of pin groups
+ * @num_groups: number of pin groups
  * @data: pin controller driver specific data
  */
 int pinmux_generic_add_function(struct pinctrl_dev *pctldev,
 				const char *name,
 				const char * const *groups,
-				const unsigned int ngroups,
+				const unsigned int num_groups,
 				void *data)
 {
 	struct function_desc *function;
@@ -874,7 +885,10 @@ int pinmux_generic_add_function(struct pinctrl_dev *pctldev,
 	if (!function)
 		return -ENOMEM;
 
-	*function = PINCTRL_FUNCTION_DESC(name, groups, ngroups, data);
+	function->name = name;
+	function->group_names = groups;
+	function->num_group_names = num_groups;
+	function->data = data;
 
 	error = radix_tree_insert(&pctldev->pin_function_tree, selector, function);
 	if (error)

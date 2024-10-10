@@ -5,7 +5,6 @@
 #ifndef __ASSEMBLY__
 
 #include <asm/barrier.h>
-#include <asm/insn-def.h>
 
 static inline void cpu_relax(void)
 {
@@ -15,11 +14,16 @@ static inline void cpu_relax(void)
 	__asm__ __volatile__ ("div %0, %0, zero" : "=r" (dummy));
 #endif
 
+#ifdef CONFIG_TOOLCHAIN_HAS_ZIHINTPAUSE
 	/*
 	 * Reduce instruction retirement.
 	 * This assumes the PC changes.
 	 */
-	__asm__ __volatile__ (RISCV_PAUSE);
+	__asm__ __volatile__ ("pause");
+#else
+	/* Encoding of the pause instruction */
+	__asm__ __volatile__ (".4byte 0x100000F");
+#endif
 	barrier();
 }
 

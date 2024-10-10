@@ -84,11 +84,11 @@ struct slab {
 		};
 		struct rcu_head rcu_head;
 	};
+	unsigned int __unused;
 
-	unsigned int __page_type;
 	atomic_t __page_refcount;
-#ifdef CONFIG_SLAB_OBJ_EXT
-	unsigned long obj_exts;
+#ifdef CONFIG_MEMCG
+	unsigned long memcg_data;
 #endif
 };
 
@@ -98,9 +98,7 @@ SLAB_MATCH(flags, __page_flags);
 SLAB_MATCH(compound_head, slab_cache);	/* Ensure bit 0 is clear */
 SLAB_MATCH(_refcount, __page_refcount);
 #ifdef CONFIG_MEMCG
-SLAB_MATCH(memcg_data, obj_exts);
-#elif defined(CONFIG_SLAB_OBJ_EXT)
-SLAB_MATCH(_unused_slab_obj_exts, obj_exts);
+SLAB_MATCH(memcg_data, memcg_data);
 #endif
 #undef SLAB_MATCH
 static_assert(sizeof(struct slab) <= sizeof(struct page));
@@ -168,7 +166,7 @@ static_assert(IS_ALIGNED(offsetof(struct slab, freelist), sizeof(freelist_aba_t)
  */
 static inline bool slab_test_pfmemalloc(const struct slab *slab)
 {
-	return folio_test_active(slab_folio(slab));
+	return folio_test_active((struct folio *)slab_folio(slab));
 }
 
 static inline void slab_set_pfmemalloc(struct slab *slab)
@@ -213,7 +211,7 @@ static inline struct slab *virt_to_slab(const void *addr)
 
 static inline int slab_order(const struct slab *slab)
 {
-	return folio_order(slab_folio(slab));
+	return folio_order((struct folio *)slab_folio(slab));
 }
 
 static inline size_t slab_size(const struct slab *slab)
@@ -310,7 +308,7 @@ struct kmem_cache {
 };
 
 #if defined(CONFIG_SYSFS) && !defined(CONFIG_SLUB_TINY)
-#define SLAB_SUPPORTS_SYSFS 1
+#define SLAB_SUPPORTS_SYSFS
 void sysfs_slab_unlink(struct kmem_cache *s);
 void sysfs_slab_release(struct kmem_cache *s);
 #else
@@ -405,26 +403,22 @@ static inline unsigned int size_index_elem(unsigned int bytes)
  * KMALLOC_MAX_CACHE_SIZE and the caller must check that.
  */
 static inline struct kmem_cache *
-kmalloc_slab(size_t size, kmem_buckets *b, gfp_t flags, unsigned long caller)
+kmalloc_slab(size_t size, gfp_t flags, unsigned long caller)
 {
 	unsigned int index;
 
-	if (!b)
-		b = &kmalloc_caches[kmalloc_type(flags, caller)];
 	if (size <= 192)
 		index = kmalloc_size_index[size_index_elem(size)];
 	else
 		index = fls(size - 1);
 
-	return (*b)[index];
+	return kmalloc_caches[kmalloc_type(flags, caller)][index];
 }
 
 gfp_t kmalloc_fix_flags(gfp_t flags);
 
 /* Functions provided by the slab allocators */
-int do_kmem_cache_create(struct kmem_cache *s, const char *name,
-			 unsigned int size, struct kmem_cache_args *args,
-			 slab_flags_t flags);
+int __kmem_cache_create(struct kmem_cache *, slab_flags_t flags);
 
 void __init kmem_cache_init(void);
 extern void create_boot_cache(struct kmem_cache *, const char *name,
@@ -443,13 +437,6 @@ slab_flags_t kmem_cache_flags(slab_flags_t flags, const char *name);
 static inline bool is_kmalloc_cache(struct kmem_cache *s)
 {
 	return (s->flags & SLAB_KMALLOC);
-}
-
-static inline bool is_kmalloc_normal(struct kmem_cache *s)
-{
-	if (!is_kmalloc_cache(s))
-		return false;
-	return !(s->flags & (SLAB_CACHE_DMA|SLAB_ACCOUNT|SLAB_RECLAIM_ACCOUNT));
 }
 
 /* Legal flag mask for kmem_cache_create(), for various configurations */
@@ -509,6 +496,9 @@ struct slabinfo {
 };
 
 void get_slabinfo(struct kmem_cache *s, struct slabinfo *sinfo);
+void slabinfo_show_stats(struct seq_file *m, struct kmem_cache *s);
+ssize_t slabinfo_write(struct file *file, const char __user *buffer,
+		       size_t count, loff_t *ppos);
 
 #ifdef CONFIG_SLUB_DEBUG
 #ifdef CONFIG_SLUB_DEBUG_ON
@@ -546,58 +536,42 @@ static inline bool kmem_cache_debug_flags(struct kmem_cache *s, slab_flags_t fla
 	return false;
 }
 
-#if IS_ENABLED(CONFIG_SLUB_DEBUG) && IS_ENABLED(CONFIG_KUNIT)
-bool slab_in_kunit_test(void);
-#else
-static inline bool slab_in_kunit_test(void) { return false; }
-#endif
-
-#ifdef CONFIG_SLAB_OBJ_EXT
-
+#ifdef CONFIG_MEMCG_KMEM
 /*
- * slab_obj_exts - get the pointer to the slab object extension vector
- * associated with a slab.
+ * slab_objcgs - get the object cgroups vector associated with a slab
  * @slab: a pointer to the slab struct
  *
- * Returns a pointer to the object extension vector associated with the slab,
+ * Returns a pointer to the object cgroups vector associated with the slab,
  * or NULL if no such vector has been associated yet.
  */
-static inline struct slabobj_ext *slab_obj_exts(struct slab *slab)
+static inline struct obj_cgroup **slab_objcgs(struct slab *slab)
 {
-	unsigned long obj_exts = READ_ONCE(slab->obj_exts);
+	unsigned long memcg_data = READ_ONCE(slab->memcg_data);
 
-#ifdef CONFIG_MEMCG
-	VM_BUG_ON_PAGE(obj_exts && !(obj_exts & MEMCG_DATA_OBJEXTS),
+	VM_BUG_ON_PAGE(memcg_data && !(memcg_data & MEMCG_DATA_OBJCGS),
 							slab_page(slab));
-	VM_BUG_ON_PAGE(obj_exts & MEMCG_DATA_KMEM, slab_page(slab));
-#endif
-	return (struct slabobj_ext *)(obj_exts & ~OBJEXTS_FLAGS_MASK);
+	VM_BUG_ON_PAGE(memcg_data & MEMCG_DATA_KMEM, slab_page(slab));
+
+	return (struct obj_cgroup **)(memcg_data & ~MEMCG_DATA_FLAGS_MASK);
 }
 
-int alloc_slab_obj_exts(struct slab *slab, struct kmem_cache *s,
-                        gfp_t gfp, bool new_slab);
-
-#else /* CONFIG_SLAB_OBJ_EXT */
-
-static inline struct slabobj_ext *slab_obj_exts(struct slab *slab)
+int memcg_alloc_slab_cgroups(struct slab *slab, struct kmem_cache *s,
+				 gfp_t gfp, bool new_slab);
+void mod_objcg_state(struct obj_cgroup *objcg, struct pglist_data *pgdat,
+		     enum node_stat_item idx, int nr);
+#else /* CONFIG_MEMCG_KMEM */
+static inline struct obj_cgroup **slab_objcgs(struct slab *slab)
 {
 	return NULL;
 }
 
-#endif /* CONFIG_SLAB_OBJ_EXT */
-
-static inline enum node_stat_item cache_vmstat_idx(struct kmem_cache *s)
+static inline int memcg_alloc_slab_cgroups(struct slab *slab,
+					       struct kmem_cache *s, gfp_t gfp,
+					       bool new_slab)
 {
-	return (s->flags & SLAB_RECLAIM_ACCOUNT) ?
-		NR_SLAB_RECLAIMABLE_B : NR_SLAB_UNRECLAIMABLE_B;
+	return 0;
 }
-
-#ifdef CONFIG_MEMCG
-bool __memcg_slab_post_alloc_hook(struct kmem_cache *s, struct list_lru *lru,
-				  gfp_t flags, size_t size, void **p);
-void __memcg_slab_free_hook(struct kmem_cache *s, struct slab *slab,
-			    void **p, int objects, struct slabobj_ext *obj_exts);
-#endif
+#endif /* CONFIG_MEMCG_KMEM */
 
 size_t __ksize(const void *objp);
 

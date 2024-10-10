@@ -81,6 +81,8 @@ struct pcs_conf_type {
  * @name:	pinctrl function name
  * @vals:	register and vals array
  * @nvals:	number of entries in vals array
+ * @pgnames:	array of pingroup names the function uses
+ * @npgnames:	number of pingroup names the function uses
  * @conf:	array of pin configurations
  * @nconfs:	number of pin configurations available
  * @node:	list node
@@ -89,6 +91,8 @@ struct pcs_function {
 	const char *name;
 	struct pcs_func_vals *vals;
 	unsigned nvals;
+	const char **pgnames;
+	int npgnames;
 	struct pcs_conf_vals *conf;
 	int nconfs;
 	struct list_head node;
@@ -345,8 +349,6 @@ static int pcs_get_function(struct pinctrl_dev *pctldev, unsigned pin,
 		return -ENOTSUPP;
 	fselector = setting->func;
 	function = pinmux_generic_get_function(pctldev, fselector);
-	if (!function)
-		return -EINVAL;
 	*func = function->data;
 	if (!(*func)) {
 		dev_err(pcs->dev, "%s could not find function%i\n",
@@ -552,30 +554,21 @@ static int pcs_pinconf_set(struct pinctrl_dev *pctldev,
 	unsigned offset = 0, shift = 0, i, data, ret;
 	u32 arg;
 	int j;
-	enum pin_config_param param;
 
 	ret = pcs_get_function(pctldev, pin, &func);
 	if (ret)
 		return ret;
 
 	for (j = 0; j < num_configs; j++) {
-		param = pinconf_to_config_param(configs[j]);
-
-		/* BIAS_DISABLE has no entry in the func->conf table */
-		if (param == PIN_CONFIG_BIAS_DISABLE) {
-			/* This just disables all bias entries */
-			pcs_pinconf_clear_bias(pctldev, pin);
-			continue;
-		}
-
 		for (i = 0; i < func->nconfs; i++) {
-			if (param != func->conf[i].param)
+			if (pinconf_to_config_param(configs[j])
+				!= func->conf[i].param)
 				continue;
 
 			offset = pin * (pcs->width / BITS_PER_BYTE);
 			data = pcs->read(pcs->base + offset);
 			arg = pinconf_to_config_argument(configs[j]);
-			switch (param) {
+			switch (func->conf[i].param) {
 			/* 2 parameters */
 			case PIN_CONFIG_INPUT_SCHMITT:
 			case PIN_CONFIG_DRIVE_STRENGTH:
@@ -587,6 +580,9 @@ static int pcs_pinconf_set(struct pinctrl_dev *pctldev,
 				data |= (arg << shift) & func->conf[i].mask;
 				break;
 			/* 4 parameters */
+			case PIN_CONFIG_BIAS_DISABLE:
+				pcs_pinconf_clear_bias(pctldev, pin);
+				break;
 			case PIN_CONFIG_BIAS_PULL_DOWN:
 			case PIN_CONFIG_BIAS_PULL_UP:
 				if (arg)
@@ -1331,6 +1327,7 @@ static void pcs_irq_free(struct pcs_device *pcs)
 static void pcs_free_resources(struct pcs_device *pcs)
 {
 	pcs_irq_free(pcs);
+	pinctrl_unregister(pcs->pctl);
 
 #if IS_BUILTIN(CONFIG_PINCTRL_SINGLE)
 	if (pcs->missing_nr_pinctrl_cells)
@@ -1628,6 +1625,7 @@ static int pcs_irq_init_chained_handler(struct pcs_device *pcs,
 	return 0;
 }
 
+#ifdef CONFIG_PM
 static int pcs_save_context(struct pcs_device *pcs)
 {
 	int i, mux_bytes;
@@ -1692,9 +1690,14 @@ static void pcs_restore_context(struct pcs_device *pcs)
 	}
 }
 
-static int pinctrl_single_suspend_noirq(struct device *dev)
+static int pinctrl_single_suspend(struct platform_device *pdev,
+					pm_message_t state)
 {
-	struct pcs_device *pcs = dev_get_drvdata(dev);
+	struct pcs_device *pcs;
+
+	pcs = platform_get_drvdata(pdev);
+	if (!pcs)
+		return -EINVAL;
 
 	if (pcs->flags & PCS_CONTEXT_LOSS_OFF) {
 		int ret;
@@ -1707,19 +1710,20 @@ static int pinctrl_single_suspend_noirq(struct device *dev)
 	return pinctrl_force_sleep(pcs->pctl);
 }
 
-static int pinctrl_single_resume_noirq(struct device *dev)
+static int pinctrl_single_resume(struct platform_device *pdev)
 {
-	struct pcs_device *pcs = dev_get_drvdata(dev);
+	struct pcs_device *pcs;
+
+	pcs = platform_get_drvdata(pdev);
+	if (!pcs)
+		return -EINVAL;
 
 	if (pcs->flags & PCS_CONTEXT_LOSS_OFF)
 		pcs_restore_context(pcs);
 
 	return pinctrl_force_default(pcs->pctl);
 }
-
-static DEFINE_NOIRQ_DEV_PM_OPS(pinctrl_single_pm_ops,
-			       pinctrl_single_suspend_noirq,
-			       pinctrl_single_resume_noirq);
+#endif
 
 /**
  * pcs_quirk_missing_pinctrl_cells - handle legacy binding
@@ -1880,7 +1884,7 @@ static int pcs_probe(struct platform_device *pdev)
 	if (ret < 0)
 		goto free;
 
-	ret = devm_pinctrl_register_and_init(pcs->dev, &pcs->desc, pcs, &pcs->pctl);
+	ret = pinctrl_register_and_init(&pcs->desc, pcs->dev, pcs, &pcs->pctl);
 	if (ret) {
 		dev_err(pcs->dev, "could not register single pinctrl driver\n");
 		goto free;
@@ -1913,11 +1917,8 @@ static int pcs_probe(struct platform_device *pdev)
 
 	dev_info(pcs->dev, "%i pins, size %u\n", pcs->desc.npins, pcs->size);
 
-	ret = pinctrl_enable(pcs->pctl);
-	if (ret)
-		goto free;
+	return pinctrl_enable(pcs->pctl);
 
-	return 0;
 free:
 	pcs_free_resources(pcs);
 
@@ -1985,8 +1986,11 @@ static struct platform_driver pcs_driver = {
 	.driver = {
 		.name		= DRIVER_NAME,
 		.of_match_table	= pcs_of_match,
-		.pm = pm_sleep_ptr(&pinctrl_single_pm_ops),
 	},
+#ifdef CONFIG_PM
+	.suspend = pinctrl_single_suspend,
+	.resume = pinctrl_single_resume,
+#endif
 };
 
 module_platform_driver(pcs_driver);

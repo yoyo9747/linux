@@ -11,7 +11,6 @@
 //         with code, comments and ideas from :-
 //         Richard Purdie <richard@openedhand.com>
 
-#include <linux/cleanup.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -728,14 +727,14 @@ int snd_soc_bytes_put(struct snd_kcontrol *kcontrol,
 	struct soc_bytes *params = (void *)kcontrol->private_value;
 	int ret, len;
 	unsigned int val, mask;
+	void *data;
 
 	if (!component->regmap || !params->num_regs)
 		return -EINVAL;
 
 	len = params->num_regs * component->val_bytes;
 
-	void *data __free(kfree) = kmemdup(ucontrol->value.bytes.data, len,
-					   GFP_KERNEL | GFP_DMA);
+	data = kmemdup(ucontrol->value.bytes.data, len, GFP_KERNEL | GFP_DMA);
 	if (!data)
 		return -ENOMEM;
 
@@ -747,7 +746,7 @@ int snd_soc_bytes_put(struct snd_kcontrol *kcontrol,
 	if (params->mask) {
 		ret = regmap_read(component->regmap, params->base, &val);
 		if (ret != 0)
-			return ret;
+			goto out;
 
 		val &= params->mask;
 
@@ -761,14 +760,14 @@ int snd_soc_bytes_put(struct snd_kcontrol *kcontrol,
 			ret = regmap_parse_val(component->regmap,
 							&mask, &mask);
 			if (ret != 0)
-				return ret;
+				goto out;
 
 			((u16 *)data)[0] &= mask;
 
 			ret = regmap_parse_val(component->regmap,
 							&val, &val);
 			if (ret != 0)
-				return ret;
+				goto out;
 
 			((u16 *)data)[0] |= val;
 			break;
@@ -777,23 +776,30 @@ int snd_soc_bytes_put(struct snd_kcontrol *kcontrol,
 			ret = regmap_parse_val(component->regmap,
 							&mask, &mask);
 			if (ret != 0)
-				return ret;
+				goto out;
 
 			((u32 *)data)[0] &= mask;
 
 			ret = regmap_parse_val(component->regmap,
 							&val, &val);
 			if (ret != 0)
-				return ret;
+				goto out;
 
 			((u32 *)data)[0] |= val;
 			break;
 		default:
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 	}
 
-	return regmap_raw_write(component->regmap, params->base, data, len);
+	ret = regmap_raw_write(component->regmap, params->base,
+			       data, len);
+
+out:
+	kfree(data);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_soc_bytes_put);
 

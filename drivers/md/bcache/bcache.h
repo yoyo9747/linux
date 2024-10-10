@@ -200,7 +200,6 @@ struct bucket {
 	uint8_t		gen;
 	uint8_t		last_gc; /* Most out of date gen in the btree */
 	uint16_t	gc_mark; /* Bitfield used by GC. See below for field */
-	uint16_t	reclaimable_in_gc:1;
 };
 
 /*
@@ -458,7 +457,7 @@ struct cache {
 	/* Allocation stuff: */
 	struct bucket		*buckets;
 
-	DEFINE_MIN_HEAP(struct bucket *, cache_heap) heap;
+	DECLARE_HEAP(struct bucket *, heap);
 
 	/*
 	 * If nonzero, we know we aren't going to find any buckets to invalidate

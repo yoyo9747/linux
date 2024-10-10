@@ -39,7 +39,4 @@ struct tsa_serial_info {
 /* Get information */
 int tsa_serial_get_info(struct tsa_serial *tsa_serial, struct tsa_serial_info *info);
 
-/* Get serial number */
-int tsa_serial_get_num(struct tsa_serial *tsa_serial);
-
 #endif /* __SOC_FSL_TSA_H__ */

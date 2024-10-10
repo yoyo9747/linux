@@ -11,7 +11,6 @@
 
 #include <linux/acpi.h>
 #include <linux/component.h>
-#include <linux/mutex.h>
 #include <sound/hda_codec.h>
 
 #define HDA_MAX_COMPONENTS	4
@@ -20,6 +19,7 @@
 struct hda_component {
 	struct device *dev;
 	char name[HDA_MAX_NAME_SIZE];
+	struct hda_codec *codec;
 	struct acpi_device *adev;
 	bool acpi_notifications_supported;
 	void (*acpi_notify)(acpi_handle handle, u32 event, struct device *dev);
@@ -28,23 +28,18 @@ struct hda_component {
 	void (*post_playback_hook)(struct device *dev, int action);
 };
 
-struct hda_component_parent {
-	struct mutex mutex;
-	struct hda_codec *codec;
-	struct hda_component comps[HDA_MAX_COMPONENTS];
-};
-
 #ifdef CONFIG_ACPI
-void hda_component_acpi_device_notify(struct hda_component_parent *parent,
+void hda_component_acpi_device_notify(struct hda_component *comps, int num_comps,
 				      acpi_handle handle, u32 event, void *data);
 int hda_component_manager_bind_acpi_notifications(struct hda_codec *cdc,
-						  struct hda_component_parent *parent,
+						  struct hda_component *comps, int num_comps,
 						  acpi_notify_handler handler, void *data);
 void hda_component_manager_unbind_acpi_notifications(struct hda_codec *cdc,
-						     struct hda_component_parent *parent,
+						     struct hda_component *comps,
 						     acpi_notify_handler handler);
 #else
-static inline void hda_component_acpi_device_notify(struct hda_component_parent *parent,
+static inline void hda_component_acpi_device_notify(struct hda_component *comps,
+						    int num_comps,
 						    acpi_handle handle,
 						    u32 event,
 						    void *data)
@@ -52,7 +47,8 @@ static inline void hda_component_acpi_device_notify(struct hda_component_parent 
 }
 
 static inline int hda_component_manager_bind_acpi_notifications(struct hda_codec *cdc,
-								struct hda_component_parent *parent,
+								struct hda_component *comps,
+								int num_comps,
 								acpi_notify_handler handler,
 								void *data)
 
@@ -61,43 +57,34 @@ static inline int hda_component_manager_bind_acpi_notifications(struct hda_codec
 }
 
 static inline void hda_component_manager_unbind_acpi_notifications(struct hda_codec *cdc,
-								   struct hda_component_parent *parent,
+								   struct hda_component *comps,
 								   acpi_notify_handler handler)
 {
 }
 #endif /* ifdef CONFIG_ACPI */
 
-void hda_component_manager_playback_hook(struct hda_component_parent *parent, int action);
+void hda_component_manager_playback_hook(struct hda_component *comps, int num_comps,
+					 int action);
 
 int hda_component_manager_init(struct hda_codec *cdc,
-			       struct hda_component_parent *parent, int count,
+			       struct hda_component *comps, int count,
 			       const char *bus, const char *hid,
 			       const char *match_str,
 			       const struct component_master_ops *ops);
 
-void hda_component_manager_free(struct hda_component_parent *parent,
+void hda_component_manager_free(struct hda_codec *cdc,
 				const struct component_master_ops *ops);
 
-int hda_component_manager_bind(struct hda_codec *cdc, struct hda_component_parent *parent);
-
-static inline struct hda_component *hda_component_from_index(struct hda_component_parent *parent,
-							     int index)
+static inline int hda_component_manager_bind(struct hda_codec *cdc,
+					     struct hda_component *comps)
 {
-	if (!parent)
-		return NULL;
-
-	if (index < 0 || index >= ARRAY_SIZE(parent->comps))
-		return NULL;
-
-	return &parent->comps[index];
+	return component_bind_all(hda_codec_dev(cdc), comps);
 }
 
 static inline void hda_component_manager_unbind(struct hda_codec *cdc,
-						struct hda_component_parent *parent)
+					       struct hda_component *comps)
 {
-	mutex_lock(&parent->mutex);
-	component_unbind_all(hda_codec_dev(cdc), parent);
-	mutex_unlock(&parent->mutex);
+	component_unbind_all(hda_codec_dev(cdc), comps);
 }
 
 #endif /* ifndef __HDA_COMPONENT_H__ */

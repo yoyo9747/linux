@@ -118,7 +118,7 @@ static const struct sysfs_ops map_sysfs_ops = {
 	.show = map_type_show,
 };
 
-static const struct kobj_type map_attr_type = {
+static struct kobj_type map_attr_type = {
 	.release	= map_release,
 	.sysfs_ops	= &map_sysfs_ops,
 	.default_groups	= map_groups,
@@ -207,7 +207,7 @@ static const struct sysfs_ops portio_sysfs_ops = {
 	.show = portio_type_show,
 };
 
-static const struct kobj_type portio_attr_type = {
+static struct kobj_type portio_attr_type = {
 	.release	= portio_release,
 	.sysfs_ops	= &portio_sysfs_ops,
 	.default_groups	= portio_groups,
@@ -438,34 +438,20 @@ void uio_event_notify(struct uio_info *info)
 EXPORT_SYMBOL_GPL(uio_event_notify);
 
 /**
- * uio_interrupt_handler - hardware interrupt handler
+ * uio_interrupt - hardware interrupt handler
  * @irq: IRQ number, can be UIO_IRQ_CYCLIC for cyclic timer
  * @dev_id: Pointer to the devices uio_device structure
  */
-static irqreturn_t uio_interrupt_handler(int irq, void *dev_id)
+static irqreturn_t uio_interrupt(int irq, void *dev_id)
 {
 	struct uio_device *idev = (struct uio_device *)dev_id;
 	irqreturn_t ret;
 
 	ret = idev->info->handler(irq, idev->info);
 	if (ret == IRQ_HANDLED)
-		ret = IRQ_WAKE_THREAD;
+		uio_event_notify(idev->info);
 
 	return ret;
-}
-
-/**
- * uio_interrupt_thread - irq thread handler
- * @irq: IRQ number
- * @dev_id: Pointer to the devices uio_device structure
- */
-static irqreturn_t uio_interrupt_thread(int irq, void *dev_id)
-{
-	struct uio_device *idev = (struct uio_device *)dev_id;
-
-	uio_event_notify(idev->info);
-
-	return IRQ_HANDLED;
 }
 
 struct uio_listener {
@@ -1038,8 +1024,8 @@ int __uio_register_device(struct module *owner,
 		 * FDs at the time of unregister and therefore may not be
 		 * freed until they are released.
 		 */
-		ret = request_threaded_irq(info->irq, uio_interrupt_handler, uio_interrupt_thread,
-					   info->irq_flags, info->name, idev);
+		ret = request_irq(info->irq, uio_interrupt,
+				  info->irq_flags, info->name, idev);
 		if (ret) {
 			info->uio_dev = NULL;
 			goto err_request_irq;
@@ -1145,5 +1131,4 @@ static void __exit uio_exit(void)
 
 module_init(uio_init)
 module_exit(uio_exit)
-MODULE_DESCRIPTION("Userspace IO core module");
 MODULE_LICENSE("GPL v2");

@@ -64,7 +64,7 @@
 			active-low;
 			label = "imx6:red:front";
 			max-brightness = <248>;
-			pwms = <&pwm1 0 50000 0>;
+			pwms = <&pwm1 0 50000>;
 		};
 	};
 
@@ -100,17 +100,12 @@
 		vin-supply = <&v_5v0>;
 	};
 
-	spdif_out: spdif-out {
-		compatible = "linux,spdif-dit";
-		#sound-dai-cells = <0>;
-	};
-
 	sound-spdif {
 		compatible = "fsl,imx-audio-spdif";
 		model = "Integrated SPDIF";
 		/* IMX6 doesn't implement this yet */
-		audio-cpu = <&spdif>;
-		audio-codec = <&spdif_out>;
+		spdif-controller = <&spdif>;
+		spdif-out;
 	};
 
 	gpio-keys {
@@ -238,6 +233,7 @@
 };
 
 &pwm1 {
+	#pwm-cells = <2>;
 	status = "okay";
 };
 

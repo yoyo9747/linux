@@ -14,6 +14,7 @@
 #include <linux/pci.h>
 #include <linux/backlight.h>
 #include <linux/leds.h>
+#include <linux/fb.h>
 #include <linux/dmi.h>
 #include <linux/platform_device.h>
 #include <linux/rfkill.h>
@@ -553,7 +554,7 @@ static int update_status(struct backlight_device *bd)
 
 	set_brightness(samsung, bd->props.brightness);
 
-	if (bd->props.power == BACKLIGHT_POWER_ON)
+	if (bd->props.power == FB_BLANK_UNBLANK)
 		sabi_set_commandb(samsung, commands->set_backlight, 1);
 	else
 		sabi_set_commandb(samsung, commands->set_backlight, 0);
@@ -660,9 +661,9 @@ static ssize_t get_performance_level(struct device *dev,
 	/* The logic is backwards, yeah, lots of fun... */
 	for (i = 0; config->performance_levels[i].name; ++i) {
 		if (sretval.data[0] == config->performance_levels[i].value)
-			return sysfs_emit(buf, "%s\n", config->performance_levels[i].name);
+			return sprintf(buf, "%s\n", config->performance_levels[i].name);
 	}
-	return sysfs_emit(buf, "%s\n", "unknown");
+	return sprintf(buf, "%s\n", "unknown");
 }
 
 static ssize_t set_performance_level(struct device *dev,
@@ -743,7 +744,7 @@ static ssize_t get_battery_life_extender(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", ret);
+	return sprintf(buf, "%d\n", ret);
 }
 
 static ssize_t set_battery_life_extender(struct device *dev,
@@ -812,7 +813,7 @@ static ssize_t get_usb_charge(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", ret);
+	return sprintf(buf, "%d\n", ret);
 }
 
 static ssize_t set_usb_charge(struct device *dev,
@@ -877,7 +878,7 @@ static ssize_t get_lid_handling(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", ret);
+	return sprintf(buf, "%d\n", ret);
 }
 
 static ssize_t set_lid_handling(struct device *dev,
@@ -1188,7 +1189,7 @@ static int __init samsung_backlight_init(struct samsung_laptop *samsung)
 
 	samsung->backlight_device = bd;
 	samsung->backlight_device->props.brightness = read_brightness(samsung);
-	samsung->backlight_device->props.power = BACKLIGHT_POWER_ON;
+	samsung->backlight_device->props.power = FB_BLANK_UNBLANK;
 	backlight_update_status(samsung->backlight_device);
 
 	return 0;

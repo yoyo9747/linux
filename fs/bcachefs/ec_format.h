@@ -11,14 +11,7 @@ struct bch_stripe {
 
 	__u8			csum_granularity_bits;
 	__u8			csum_type;
-
-	/*
-	 * XXX: targets should be 16 bits - fix this if we ever do a stripe_v2
-	 *
-	 * we can manage with this because this only needs to point to a
-	 * disk label, not a target:
-	 */
-	__u8			disk_label;
+	__u8			pad;
 
 	struct bch_extent_ptr	ptrs[];
 } __packed __aligned(8);

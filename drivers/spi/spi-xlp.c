@@ -270,7 +270,7 @@ static int xlp_spi_xfer_block(struct  xlp_spi_priv *xs,
 		const unsigned char *tx_buf,
 		unsigned char *rx_buf, int xfer_len, int cmd_cont)
 {
-	unsigned long time_left;
+	int timeout;
 	u32 intr_mask = 0;
 
 	xs->tx_buf = tx_buf;
@@ -299,11 +299,11 @@ static int xlp_spi_xfer_block(struct  xlp_spi_priv *xs,
 	intr_mask |= XLP_SPI_INTR_DONE;
 	xlp_spi_reg_write(xs, xs->cs, XLP_SPI_INTR_EN, intr_mask);
 
-	time_left = wait_for_completion_timeout(&xs->done,
-						msecs_to_jiffies(1000));
+	timeout = wait_for_completion_timeout(&xs->done,
+				msecs_to_jiffies(1000));
 	/* Disable interrupts */
 	xlp_spi_reg_write(xs, xs->cs, XLP_SPI_INTR_EN, 0x0);
-	if (!time_left) {
+	if (!timeout) {
 		dev_err(&xs->dev, "xfer timedout!\n");
 		goto out;
 	}

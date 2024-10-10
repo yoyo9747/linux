@@ -154,8 +154,6 @@
 };
 
 &hdmi {
-	avdd-0v9-supply = <&vdd_10>;
-	avdd-1v8-supply = <&vcc_18>;
 	status = "okay";
 };
 

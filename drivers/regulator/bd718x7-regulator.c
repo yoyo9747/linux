@@ -2,7 +2,6 @@
 // Copyright (C) 2018 ROHM Semiconductors
 // bd71837-regulator.c ROHM BD71837MWV/BD71847MWV regulator driver
 
-#include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/interrupt.h>
@@ -1636,17 +1635,18 @@ static int get_special_regulators(struct device *dev,
 				  unsigned int num_reg_data, int *info)
 {
 	int ret;
+	struct device_node *np;
+	struct device_node *nproot = dev->of_node;
 	int uv;
 
 	*info = 0;
 
-	struct device_node *nproot __free(device_node) = of_get_child_by_name(dev->of_node,
-									      "regulators");
+	nproot = of_get_child_by_name(nproot, "regulators");
 	if (!nproot) {
 		dev_err(dev, "failed to find regulators node\n");
 		return -ENODEV;
 	}
-	for_each_child_of_node_scoped(nproot, np) {
+	for_each_child_of_node(nproot, np) {
 		if (of_property_read_bool(np, "rohm,no-regulator-enable-control"))
 			mark_hw_controlled(dev, np, reg_data, num_reg_data,
 					   info);
@@ -1656,15 +1656,22 @@ static int get_special_regulators(struct device *dev,
 			if (ret == -EINVAL)
 				continue;
 			else
-				return ret;
+				goto err_out;
 		}
 
 		ret = setup_feedback_loop(dev, np, reg_data, num_reg_data, uv);
 		if (ret)
-			return ret;
+			goto err_out;
 	}
 
+	of_node_put(nproot);
 	return 0;
+
+err_out:
+	of_node_put(np);
+	of_node_put(nproot);
+
+	return ret;
 }
 
 static int bd718xx_probe(struct platform_device *pdev)

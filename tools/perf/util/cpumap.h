@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <perf/cpumap.h>
+#include <linux/refcount.h>
 
 /** Identify where counts are aggregated, -1 implies not to aggregate. */
 struct aggr_cpu_id {
@@ -36,6 +37,7 @@ struct aggr_cpu_id {
 
 /** A collection of aggr_cpu_id values, the "built" version is sorted and uniqued. */
 struct cpu_aggr_map {
+	refcount_t refcnt;
 	/** Number of valid entries. */
 	int nr;
 	/** The entries. */

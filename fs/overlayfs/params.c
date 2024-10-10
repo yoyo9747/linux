@@ -139,6 +139,10 @@ static int ovl_verity_mode_def(void)
 	return OVL_VERITY_OFF;
 }
 
+#define fsparam_string_empty(NAME, OPT) \
+	__fsparam(fs_param_is_string, NAME, OPT, fs_param_can_be_empty, NULL)
+
+
 const struct fs_parameter_spec ovl_parameter_spec[] = {
 	fsparam_string_empty("lowerdir",    Opt_lowerdir),
 	fsparam_string("lowerdir+",         Opt_lowerdir_add),
@@ -353,8 +357,6 @@ static void ovl_add_layer(struct fs_context *fc, enum ovl_opt layer,
 	case Opt_datadir_add:
 		ctx->nr_data++;
 		fallthrough;
-	case Opt_lowerdir:
-		fallthrough;
 	case Opt_lowerdir_add:
 		WARN_ON(ctx->nr >= ctx->capacity);
 		l = &ctx->lower[ctx->nr++];
@@ -367,9 +369,10 @@ static void ovl_add_layer(struct fs_context *fc, enum ovl_opt layer,
 	}
 }
 
-static int ovl_parse_layer(struct fs_context *fc, const char *layer_name, enum ovl_opt layer)
+static int ovl_parse_layer(struct fs_context *fc, struct fs_parameter *param,
+			   enum ovl_opt layer)
 {
-	char *name = kstrdup(layer_name, GFP_KERNEL);
+	char *name = kstrdup(param->string, GFP_KERNEL);
 	bool upper = (layer == Opt_upperdir || layer == Opt_workdir);
 	struct path path;
 	int err;
@@ -377,7 +380,7 @@ static int ovl_parse_layer(struct fs_context *fc, const char *layer_name, enum o
 	if (!name)
 		return -ENOMEM;
 
-	if (upper || layer == Opt_lowerdir)
+	if (upper)
 		err = ovl_mount_dir(name, &path);
 	else
 		err = ovl_mount_dir_noesc(name, &path);
@@ -433,6 +436,7 @@ static int ovl_parse_param_lowerdir(const char *name, struct fs_context *fc)
 {
 	int err;
 	struct ovl_fs_context *ctx = fc->fs_private;
+	struct ovl_fs_context_layer *l;
 	char *dup = NULL, *iter;
 	ssize_t nr_lower, nr;
 	bool data_layer = false;
@@ -449,7 +453,7 @@ static int ovl_parse_param_lowerdir(const char *name, struct fs_context *fc)
 		return 0;
 
 	if (*name == ':') {
-		pr_err("cannot append lower layer\n");
+		pr_err("cannot append lower layer");
 		return -EINVAL;
 	}
 
@@ -472,11 +476,35 @@ static int ovl_parse_param_lowerdir(const char *name, struct fs_context *fc)
 		goto out_err;
 	}
 
-	iter = dup;
-	for (nr = 0; nr < nr_lower; nr++) {
-		err = ovl_parse_layer(fc, iter, Opt_lowerdir);
-		if (err)
+	if (nr_lower > ctx->capacity) {
+		err = -ENOMEM;
+		l = krealloc_array(ctx->lower, nr_lower, sizeof(*ctx->lower),
+				   GFP_KERNEL_ACCOUNT);
+		if (!l)
 			goto out_err;
+
+		ctx->lower = l;
+		ctx->capacity = nr_lower;
+	}
+
+	iter = dup;
+	l = ctx->lower;
+	for (nr = 0; nr < nr_lower; nr++, l++) {
+		ctx->nr++;
+		memset(l, 0, sizeof(*l));
+
+		err = ovl_mount_dir(iter, &l->path);
+		if (err)
+			goto out_put;
+
+		err = ovl_mount_dir_check(fc, &l->path, Opt_lowerdir, iter, false);
+		if (err)
+			goto out_put;
+
+		err = -ENOMEM;
+		l->name = kstrdup(iter, GFP_KERNEL_ACCOUNT);
+		if (!l->name)
+			goto out_put;
 
 		if (data_layer)
 			ctx->nr_data++;
@@ -493,8 +521,8 @@ static int ovl_parse_param_lowerdir(const char *name, struct fs_context *fc)
 			 * there are no data layers.
 			 */
 			if (ctx->nr_data > 0) {
-				pr_err("regular lower layers cannot follow data lower layers\n");
-				goto out_err;
+				pr_err("regular lower layers cannot follow data lower layers");
+				goto out_put;
 			}
 
 			data_layer = false;
@@ -507,6 +535,9 @@ static int ovl_parse_param_lowerdir(const char *name, struct fs_context *fc)
 	}
 	kfree(dup);
 	return 0;
+
+out_put:
+	ovl_reset_lowerdirs(ctx);
 
 out_err:
 	kfree(dup);
@@ -555,7 +586,7 @@ static int ovl_parse_param(struct fs_context *fc, struct fs_parameter *param)
 	case Opt_datadir_add:
 	case Opt_upperdir:
 	case Opt_workdir:
-		err = ovl_parse_layer(fc, param->string, opt);
+		err = ovl_parse_layer(fc, param, opt);
 		break;
 	case Opt_default_permissions:
 		config->default_permissions = true;
@@ -755,6 +786,11 @@ int ovl_fs_params_verify(const struct ovl_fs_context *ctx,
 {
 	struct ovl_opt_set set = ctx->set;
 
+	if (ctx->nr_data > 0 && !config->metacopy) {
+		pr_err("lower data-only dirs require metacopy support.\n");
+		return -EINVAL;
+	}
+
 	/* Workdir/index are useless in non-upper mount */
 	if (!config->upperdir) {
 		if (config->workdir) {
@@ -904,39 +940,6 @@ int ovl_fs_params_verify(const struct ovl_fs_context *ctx,
 		 */
 		config->redirect_mode = OVL_REDIRECT_NOFOLLOW;
 		config->metacopy = false;
-	}
-
-	/*
-	 * Fail if we don't have trusted xattr capability and a feature was
-	 * explicitly requested that requires them.
-	 */
-	if (!config->userxattr && !capable(CAP_SYS_ADMIN)) {
-		if (set.redirect &&
-		    config->redirect_mode != OVL_REDIRECT_NOFOLLOW) {
-			pr_err("redirect_dir requires permission to access trusted xattrs\n");
-			return -EPERM;
-		}
-		if (config->metacopy && set.metacopy) {
-			pr_err("metacopy requires permission to access trusted xattrs\n");
-			return -EPERM;
-		}
-		if (config->verity_mode) {
-			pr_err("verity requires permission to access trusted xattrs\n");
-			return -EPERM;
-		}
-		if (ctx->nr_data > 0) {
-			pr_err("lower data-only dirs require permission to access trusted xattrs\n");
-			return -EPERM;
-		}
-		/*
-		 * Other xattr-dependent features should be disabled without
-		 * great disturbance to the user in ovl_make_workdir().
-		 */
-	}
-
-	if (ctx->nr_data > 0 && !config->metacopy) {
-		pr_err("lower data-only dirs require metacopy support.\n");
-		return -EINVAL;
 	}
 
 	return 0;

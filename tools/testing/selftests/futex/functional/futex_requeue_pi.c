@@ -360,7 +360,7 @@ out:
 
 int main(int argc, char *argv[])
 {
-	char *test_name;
+	const char *test_name;
 	int c, ret;
 
 	while ((c = getopt(argc, argv, "bchlot:v:")) != -1) {

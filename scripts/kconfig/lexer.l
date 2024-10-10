@@ -13,7 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <xalloc.h>
 #include "lkc.h"
 #include "preprocess.h"
 
@@ -121,6 +120,7 @@ n	[A-Za-z0-9_-]
 "menuconfig"		return T_MENUCONFIG;
 "modules"		return T_MODULES;
 "on"			return T_ON;
+"optional"		return T_OPTIONAL;
 "prompt"		return T_PROMPT;
 "range"			return T_RANGE;
 "select"		return T_SELECT;

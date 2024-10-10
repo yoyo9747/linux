@@ -14,7 +14,6 @@
 #include <linux/uidgid.h>
 #include <uapi/linux/android/binderfs.h>
 #include "binder_alloc.h"
-#include "dbitmap.h"
 
 struct binder_context {
 	struct binder_node *binder_context_mgr_node;
@@ -130,13 +129,12 @@ enum binder_stat_types {
 	BINDER_STAT_DEATH,
 	BINDER_STAT_TRANSACTION,
 	BINDER_STAT_TRANSACTION_COMPLETE,
-	BINDER_STAT_FREEZE,
 	BINDER_STAT_COUNT
 };
 
 struct binder_stats {
-	atomic_t br[_IOC_NR(BR_CLEAR_FREEZE_NOTIFICATION_DONE) + 1];
-	atomic_t bc[_IOC_NR(BC_FREEZE_NOTIFICATION_DONE) + 1];
+	atomic_t br[_IOC_NR(BR_TRANSACTION_PENDING_FROZEN) + 1];
+	atomic_t bc[_IOC_NR(BC_REPLY_SG) + 1];
 	atomic_t obj_created[BINDER_STAT_COUNT];
 	atomic_t obj_deleted[BINDER_STAT_COUNT];
 };
@@ -161,8 +159,6 @@ struct binder_work {
 		BINDER_WORK_DEAD_BINDER,
 		BINDER_WORK_DEAD_BINDER_AND_CLEAR,
 		BINDER_WORK_CLEAR_DEATH_NOTIFICATION,
-		BINDER_WORK_FROZEN_BINDER,
-		BINDER_WORK_CLEAR_FREEZE_NOTIFICATION,
 	} type;
 };
 
@@ -279,14 +275,6 @@ struct binder_ref_death {
 	binder_uintptr_t cookie;
 };
 
-struct binder_ref_freeze {
-	struct binder_work work;
-	binder_uintptr_t cookie;
-	bool is_frozen:1;
-	bool sent:1;
-	bool resend:1;
-};
-
 /**
  * struct binder_ref_data - binder_ref counts and id
  * @debug_id:        unique ID for the ref
@@ -319,8 +307,6 @@ struct binder_ref_data {
  *               @node indicates the node must be freed
  * @death:       pointer to death notification (ref_death) if requested
  *               (protected by @node->lock)
- * @freeze:      pointer to freeze notification (ref_freeze) if requested
- *               (protected by @node->lock)
  *
  * Structure to track references from procA to target node (on procB). This
  * structure is unsafe to access without holding @proc->outer_lock.
@@ -337,7 +323,6 @@ struct binder_ref {
 	struct binder_proc *proc;
 	struct binder_node *node;
 	struct binder_ref_death *death;
-	struct binder_ref_freeze *freeze;
 };
 
 /**
@@ -383,15 +368,11 @@ struct binder_ref {
  * @freeze_wait:          waitqueue of processes waiting for all outstanding
  *                        transactions to be processed
  *                        (protected by @inner_lock)
- * @dmap                  dbitmap to manage available reference descriptors
- *                        (protected by @outer_lock)
  * @todo:                 list of work for this process
  *                        (protected by @inner_lock)
  * @stats:                per-process binder statistics
  *                        (atomics, no lock needed)
  * @delivered_death:      list of delivered death notification
- *                        (protected by @inner_lock)
- * @delivered_freeze:     list of delivered freeze notification
  *                        (protected by @inner_lock)
  * @max_threads:          cap on number of binder threads
  *                        (protected by @inner_lock)
@@ -436,12 +417,11 @@ struct binder_proc {
 	bool sync_recv;
 	bool async_recv;
 	wait_queue_head_t freeze_wait;
-	struct dbitmap dmap;
+
 	struct list_head todo;
 	struct binder_stats stats;
 	struct list_head delivered_death;
-	struct list_head delivered_freeze;
-	u32 max_threads;
+	int max_threads;
 	int requested_threads;
 	int requested_threads_started;
 	int tmp_ref;

@@ -29,6 +29,9 @@
 #include "qxl_drv.h"
 #include "qxl_object.h"
 
+static int __qxl_bo_pin(struct qxl_bo *bo);
+static void __qxl_bo_unpin(struct qxl_bo *bo);
+
 static void qxl_ttm_bo_destroy(struct ttm_buffer_object *tbo)
 {
 	struct qxl_bo *bo;
@@ -164,9 +167,13 @@ int qxl_bo_vmap_locked(struct qxl_bo *bo, struct iosys_map *map)
 		goto out;
 	}
 
+	r = __qxl_bo_pin(bo);
+	if (r)
+		return r;
+
 	r = ttm_bo_vmap(&bo->tbo, &bo->map);
 	if (r) {
-		qxl_bo_unpin_locked(bo);
+		__qxl_bo_unpin(bo);
 		return r;
 	}
 	bo->map_count = 1;
@@ -182,7 +189,7 @@ out:
 	return 0;
 }
 
-int qxl_bo_pin_and_vmap(struct qxl_bo *bo, struct iosys_map *map)
+int qxl_bo_vmap(struct qxl_bo *bo, struct iosys_map *map)
 {
 	int r;
 
@@ -190,15 +197,7 @@ int qxl_bo_pin_and_vmap(struct qxl_bo *bo, struct iosys_map *map)
 	if (r)
 		return r;
 
-	r = qxl_bo_pin_locked(bo);
-	if (r) {
-		qxl_bo_unreserve(bo);
-		return r;
-	}
-
 	r = qxl_bo_vmap_locked(bo, map);
-	if (r)
-		qxl_bo_unpin_locked(bo);
 	qxl_bo_unreserve(bo);
 	return r;
 }
@@ -247,9 +246,10 @@ void qxl_bo_vunmap_locked(struct qxl_bo *bo)
 		return;
 	bo->kptr = NULL;
 	ttm_bo_vunmap(&bo->tbo, &bo->map);
+	__qxl_bo_unpin(bo);
 }
 
-int qxl_bo_vunmap_and_unpin(struct qxl_bo *bo)
+int qxl_bo_vunmap(struct qxl_bo *bo)
 {
 	int r;
 
@@ -258,7 +258,6 @@ int qxl_bo_vunmap_and_unpin(struct qxl_bo *bo)
 		return r;
 
 	qxl_bo_vunmap_locked(bo);
-	qxl_bo_unpin_locked(bo);
 	qxl_bo_unreserve(bo);
 	return 0;
 }
@@ -291,13 +290,11 @@ struct qxl_bo *qxl_bo_ref(struct qxl_bo *bo)
 	return bo;
 }
 
-int qxl_bo_pin_locked(struct qxl_bo *bo)
+static int __qxl_bo_pin(struct qxl_bo *bo)
 {
 	struct ttm_operation_ctx ctx = { false, false };
 	struct drm_device *ddev = bo->tbo.base.dev;
 	int r;
-
-	dma_resv_assert_held(bo->tbo.base.resv);
 
 	if (bo->tbo.pin_count) {
 		ttm_bo_pin(&bo->tbo);
@@ -312,16 +309,14 @@ int qxl_bo_pin_locked(struct qxl_bo *bo)
 	return r;
 }
 
-void qxl_bo_unpin_locked(struct qxl_bo *bo)
+static void __qxl_bo_unpin(struct qxl_bo *bo)
 {
-	dma_resv_assert_held(bo->tbo.base.resv);
-
 	ttm_bo_unpin(&bo->tbo);
 }
 
 /*
  * Reserve the BO before pinning the object.  If the BO was reserved
- * beforehand, use the internal version directly qxl_bo_pin_locked.
+ * beforehand, use the internal version directly __qxl_bo_pin.
  *
  */
 int qxl_bo_pin(struct qxl_bo *bo)
@@ -332,14 +327,14 @@ int qxl_bo_pin(struct qxl_bo *bo)
 	if (r)
 		return r;
 
-	r = qxl_bo_pin_locked(bo);
+	r = __qxl_bo_pin(bo);
 	qxl_bo_unreserve(bo);
 	return r;
 }
 
 /*
  * Reserve the BO before pinning the object.  If the BO was reserved
- * beforehand, use the internal version directly qxl_bo_unpin_locked.
+ * beforehand, use the internal version directly __qxl_bo_unpin.
  *
  */
 int qxl_bo_unpin(struct qxl_bo *bo)
@@ -350,7 +345,7 @@ int qxl_bo_unpin(struct qxl_bo *bo)
 	if (r)
 		return r;
 
-	qxl_bo_unpin_locked(bo);
+	__qxl_bo_unpin(bo);
 	qxl_bo_unreserve(bo);
 	return 0;
 }

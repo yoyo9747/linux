@@ -52,7 +52,9 @@ static void update_enumeration_value(int instance_id, char *attr_value)
 {
 	struct enumeration_data *enum_data = &bioscfg_drv.enumeration_data[instance_id];
 
-	strscpy(enum_data->current_value, attr_value);
+	strscpy(enum_data->current_value,
+		attr_value,
+		sizeof(enum_data->current_value));
 }
 
 ATTRIBUTE_S_COMMON_PROPERTY_SHOW(display_name, enumeration);
@@ -172,7 +174,8 @@ static int hp_populate_enumeration_elements_from_package(union acpi_object *enum
 		case VALUE:
 			break;
 		case PATH:
-			strscpy(enum_data->common.path, str_value);
+			strscpy(enum_data->common.path, str_value,
+				sizeof(enum_data->common.path));
 			break;
 		case IS_READONLY:
 			enum_data->common.is_readonly = int_value;
@@ -219,7 +222,9 @@ static int hp_populate_enumeration_elements_from_package(union acpi_object *enum
 				if (ret)
 					return -EINVAL;
 
-				strscpy(enum_data->common.prerequisites[reqs], str_value);
+				strscpy(enum_data->common.prerequisites[reqs],
+					str_value,
+					sizeof(enum_data->common.prerequisites[reqs]));
 
 				kfree(str_value);
 				str_value = NULL;
@@ -231,7 +236,8 @@ static int hp_populate_enumeration_elements_from_package(union acpi_object *enum
 			break;
 
 		case ENUM_CURRENT_VALUE:
-			strscpy(enum_data->current_value, str_value);
+			strscpy(enum_data->current_value,
+				str_value, sizeof(enum_data->current_value));
 			break;
 		case ENUM_SIZE:
 			if (int_value > MAX_VALUES_SIZE) {
@@ -272,7 +278,9 @@ static int hp_populate_enumeration_elements_from_package(union acpi_object *enum
 				 * is greater than MAX_VALUES_SIZE
 				 */
 				if (size < MAX_VALUES_SIZE)
-					strscpy(enum_data->possible_values[pos_values], str_value);
+					strscpy(enum_data->possible_values[pos_values],
+						str_value,
+						sizeof(enum_data->possible_values[pos_values]));
 
 				kfree(str_value);
 				str_value = NULL;

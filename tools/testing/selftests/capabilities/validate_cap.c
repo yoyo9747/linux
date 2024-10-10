@@ -28,7 +28,6 @@ static bool bool_arg(char **argv, int i)
 int main(int argc, char **argv)
 {
 	const char *atsec = "";
-	int ret;
 
 	/*
 	 * Be careful just in case a setgid or setcapped copy of this
@@ -45,11 +44,7 @@ int main(int argc, char **argv)
 		atsec = " (AT_SECURE is not set)";
 #endif
 
-	ret = capng_get_caps_process();
-	if (ret == -1) {
-		ksft_print_msg("capng_get_caps_process failed\n");
-		return 1;
-	}
+	capng_get_caps_process();
 
 	if (capng_have_capability(CAPNG_EFFECTIVE, CAP_NET_BIND_SERVICE) != bool_arg(argv, 1)) {
 		ksft_print_msg("Wrong effective state%s\n", atsec);

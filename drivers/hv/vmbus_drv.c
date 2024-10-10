@@ -685,7 +685,7 @@ static const struct hv_vmbus_device_id vmbus_device_null;
  * Return a matching hv_vmbus_device_id pointer.
  * If there is no match, return NULL.
  */
-static const struct hv_vmbus_device_id *hv_vmbus_get_id(const struct hv_driver *drv,
+static const struct hv_vmbus_device_id *hv_vmbus_get_id(struct hv_driver *drv,
 							struct hv_device *dev)
 {
 	const guid_t *guid = &dev->dev_type;
@@ -696,7 +696,7 @@ static const struct hv_vmbus_device_id *hv_vmbus_get_id(const struct hv_driver *
 		return NULL;
 
 	/* Look at the dynamic ids first, before the static ones */
-	id = hv_vmbus_dynid_match((struct hv_driver *)drv, guid);
+	id = hv_vmbus_dynid_match(drv, guid);
 	if (!id)
 		id = hv_vmbus_dev_match(drv->id_table, guid);
 
@@ -809,9 +809,9 @@ ATTRIBUTE_GROUPS(vmbus_drv);
 /*
  * vmbus_match - Attempt to match the specified device to the specified driver
  */
-static int vmbus_match(struct device *device, const struct device_driver *driver)
+static int vmbus_match(struct device *device, struct device_driver *driver)
 {
-	const struct hv_driver *drv = drv_to_hv_drv(driver);
+	struct hv_driver *drv = drv_to_hv_drv(driver);
 	struct hv_device *hv_dev = device_to_hv_device(device);
 
 	/* The hv_sock driver handles all hv_sock offers. */
@@ -1306,13 +1306,6 @@ static irqreturn_t vmbus_percpu_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static void vmbus_percpu_work(struct work_struct *work)
-{
-	unsigned int cpu = smp_processor_id();
-
-	hv_synic_init(cpu);
-}
-
 /*
  * vmbus_bus_init -Main vmbus driver initialization routine.
  *
@@ -1323,8 +1316,7 @@ static void vmbus_percpu_work(struct work_struct *work)
  */
 static int vmbus_bus_init(void)
 {
-	int ret, cpu;
-	struct work_struct __percpu *works;
+	int ret;
 
 	ret = hv_init();
 	if (ret != 0) {
@@ -1363,32 +1355,12 @@ static int vmbus_bus_init(void)
 	if (ret)
 		goto err_alloc;
 
-	works = alloc_percpu(struct work_struct);
-	if (!works) {
-		ret = -ENOMEM;
-		goto err_alloc;
-	}
-
 	/*
 	 * Initialize the per-cpu interrupt state and stimer state.
 	 * Then connect to the host.
 	 */
-	cpus_read_lock();
-	for_each_online_cpu(cpu) {
-		struct work_struct *work = per_cpu_ptr(works, cpu);
-
-		INIT_WORK(work, vmbus_percpu_work);
-		schedule_work_on(cpu, work);
-	}
-
-	for_each_online_cpu(cpu)
-		flush_work(per_cpu_ptr(works, cpu));
-
-	/* Register the callbacks for possible CPU online/offline'ing */
-	ret = cpuhp_setup_state_nocalls_cpuslocked(CPUHP_AP_ONLINE_DYN, "hyperv/vmbus:online",
-						   hv_synic_init, hv_synic_cleanup);
-	cpus_read_unlock();
-	free_percpu(works);
+	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "hyperv/vmbus:online",
+				hv_synic_init, hv_synic_cleanup);
 	if (ret < 0)
 		goto err_alloc;
 	hyperv_cpuhp_online = ret;
@@ -1831,12 +1803,12 @@ static umode_t vmbus_chan_attr_is_visible(struct kobject *kobj,
 	return attr->mode;
 }
 
-static const struct attribute_group vmbus_chan_group = {
+static struct attribute_group vmbus_chan_group = {
 	.attrs = vmbus_chan_attrs,
 	.is_visible = vmbus_chan_attr_is_visible
 };
 
-static const struct kobj_type vmbus_chan_ktype = {
+static struct kobj_type vmbus_chan_ktype = {
 	.sysfs_ops = &vmbus_chan_sysfs_ops,
 	.release = vmbus_chan_release,
 };
@@ -1980,7 +1952,6 @@ void vmbus_device_unregister(struct hv_device *device_obj)
 	 */
 	device_unregister(&device_obj->device);
 }
-EXPORT_SYMBOL_GPL(vmbus_device_unregister);
 
 #ifdef CONFIG_ACPI
 /*

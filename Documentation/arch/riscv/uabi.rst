@@ -65,6 +65,4 @@ the extension, or may have deliberately removed it from the listing.
 Misaligned accesses
 -------------------
 
-Misaligned scalar accesses are supported in userspace, but they may perform
-poorly.  Misaligned vector accesses are only supported if the Zicclsm extension
-is supported.
+Misaligned accesses are supported in userspace, but they may perform poorly.

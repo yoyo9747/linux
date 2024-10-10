@@ -177,7 +177,6 @@
 &cpsw3g {
 	pinctrl-names = "default";
 	pinctrl-0 = <&rgmii1_default_pins>;
-	status = "okay";
 };
 
 &cpsw3g_mdio {
@@ -211,7 +210,10 @@
 &cpsw_port1 {
 	phy-mode = "rgmii-id";
 	phy-handle = <&ethernet_phy0>;
-	status = "okay";
+};
+
+&cpsw_port2 {
+	status = "disabled";
 };
 
 &icssg1_mdio {

@@ -100,7 +100,6 @@ nfserrno (int errno)
 		{ nfserr_io, -EUCLEAN },
 		{ nfserr_perm, -ENOKEY },
 		{ nfserr_no_grace, -ENOGRACE},
-		{ nfserr_io, -EBADMSG },
 	};
 	int	i;
 
@@ -422,9 +421,8 @@ nfsd_get_write_access(struct svc_rqst *rqstp, struct svc_fh *fhp,
 	if (iap->ia_size < inode->i_size) {
 		__be32 err;
 
-		err = nfsd_permission(&rqstp->rq_cred,
-				      fhp->fh_export, fhp->fh_dentry,
-				      NFSD_MAY_TRUNC | NFSD_MAY_OWNER_OVERRIDE);
+		err = nfsd_permission(rqstp, fhp->fh_export, fhp->fh_dentry,
+				NFSD_MAY_TRUNC | NFSD_MAY_OWNER_OVERRIDE);
 		if (err)
 			return err;
 	}
@@ -816,8 +814,7 @@ nfsd_access(struct svc_rqst *rqstp, struct svc_fh *fhp, u32 *access, u32 *suppor
 
 			sresult |= map->access;
 
-			err2 = nfsd_permission(&rqstp->rq_cred, export,
-					       dentry, map->how);
+			err2 = nfsd_permission(rqstp, export, dentry, map->how);
 			switch (err2) {
 			case nfs_ok:
 				result |= map->access;
@@ -1163,6 +1160,7 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct nfsd_file *nf,
 	errseq_t		since;
 	__be32			nfserr;
 	int			host_err;
+	int			use_wgather;
 	loff_t			pos = offset;
 	unsigned long		exp_op_flags = 0;
 	unsigned int		pflags = current->flags;
@@ -1188,11 +1186,12 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct nfsd_file *nf,
 	}
 
 	exp = fhp->fh_export;
+	use_wgather = (rqstp->rq_vers == 2) && EX_WGATHER(exp);
 
 	if (!EX_ISSYNC(exp))
 		stable = NFS_UNSTABLE;
 
-	if (stable && !fhp->fh_use_wgather)
+	if (stable && !use_wgather)
 		flags |= RWF_SYNC;
 
 	iov_iter_kvec(&iter, ITER_SOURCE, vec, vlen, *cnt);
@@ -1211,7 +1210,7 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct nfsd_file *nf,
 	if (host_err < 0)
 		goto out_nfserr;
 
-	if (stable && fhp->fh_use_wgather) {
+	if (stable && use_wgather) {
 		host_err = wait_for_concurrent_writes(file);
 		if (host_err < 0)
 			commit_reset_write_verifier(nn, rqstp, host_err);
@@ -1423,7 +1422,7 @@ nfsd_create_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp,
 	 * Callers expect new file metadata to be committed even
 	 * if the attributes have not changed.
 	 */
-	if (nfsd_attrs_valid(attrs))
+	if (iap->ia_valid)
 		status = nfsd_setattr(rqstp, resfhp, attrs, NULL);
 	else
 		status = nfserrno(commit_metadata(resfhp));
@@ -1476,8 +1475,7 @@ nfsd_create_locked(struct svc_rqst *rqstp, struct svc_fh *fhp,
 	dirp = d_inode(dentry);
 
 	dchild = dget(resfhp->fh_dentry);
-	err = nfsd_permission(&rqstp->rq_cred, fhp->fh_export, dentry,
-			      NFSD_MAY_CREATE);
+	err = nfsd_permission(rqstp, fhp->fh_export, dentry, NFSD_MAY_CREATE);
 	if (err)
 		goto out;
 
@@ -1769,7 +1767,10 @@ nfsd_link(struct svc_rqst *rqstp, struct svc_fh *ffhp,
 		if (!err)
 			err = nfserrno(commit_metadata(tfhp));
 	} else {
-		err = nfserrno(host_err);
+		if (host_err == -EXDEV && rqstp->rq_vers == 2)
+			err = nfserr_acces;
+		else
+			err = nfserrno(host_err);
 	}
 	dput(dnew);
 out_drop_write:
@@ -1835,7 +1836,7 @@ nfsd_rename(struct svc_rqst *rqstp, struct svc_fh *ffhp, char *fname, int flen,
 	if (!flen || isdotent(fname, flen) || !tlen || isdotent(tname, tlen))
 		goto out;
 
-	err = nfserr_xdev;
+	err = (rqstp->rq_vers == 2) ? nfserr_acces : nfserr_xdev;
 	if (ffhp->fh_export->ex_path.mnt != tfhp->fh_export->ex_path.mnt)
 		goto out;
 	if (ffhp->fh_export->ex_path.dentry != tfhp->fh_export->ex_path.dentry)
@@ -1850,7 +1851,7 @@ retry:
 
 	trap = lock_rename(tdentry, fdentry);
 	if (IS_ERR(trap)) {
-		err = nfserr_xdev;
+		err = (rqstp->rq_vers == 2) ? nfserr_acces : nfserr_xdev;
 		goto out_want_write;
 	}
 	err = fh_fill_pre_attrs(ffhp);
@@ -2019,7 +2020,10 @@ out_nfserr:
 		/* name is mounted-on. There is no perfect
 		 * error status.
 		 */
-		err = nfserr_file_open;
+		if (nfsd_v4client(rqstp))
+			err = nfserr_file_open;
+		else
+			err = nfserr_acces;
 	} else {
 		err = nfserrno(host_err);
 	}
@@ -2174,7 +2178,8 @@ nfsd_readdir(struct svc_rqst *rqstp, struct svc_fh *fhp, loff_t *offsetp,
 	loff_t		offset = *offsetp;
 	int             may_flags = NFSD_MAY_READ;
 
-	if (fhp->fh_64bit_cookies)
+	/* NFSv2 only supports 32 bit cookies */
+	if (rqstp->rq_vers > 2)
 		may_flags |= NFSD_MAY_64BIT_COOKIE;
 
 	err = nfsd_open(rqstp, fhp, S_IFDIR, may_flags, &file);
@@ -2250,9 +2255,9 @@ nfsd_statfs(struct svc_rqst *rqstp, struct svc_fh *fhp, struct kstatfs *stat, in
 	return err;
 }
 
-static int exp_rdonly(struct svc_cred *cred, struct svc_export *exp)
+static int exp_rdonly(struct svc_rqst *rqstp, struct svc_export *exp)
 {
-	return nfsexp_flags(cred, exp) & NFSEXP_READONLY;
+	return nfsexp_flags(rqstp, exp) & NFSEXP_READONLY;
 }
 
 #ifdef CONFIG_NFSD_V4
@@ -2496,8 +2501,8 @@ out_unlock:
  * Check for a user's access permissions to this inode.
  */
 __be32
-nfsd_permission(struct svc_cred *cred, struct svc_export *exp,
-		struct dentry *dentry, int acc)
+nfsd_permission(struct svc_rqst *rqstp, struct svc_export *exp,
+					struct dentry *dentry, int acc)
 {
 	struct inode	*inode = d_inode(dentry);
 	int		err;
@@ -2528,7 +2533,7 @@ nfsd_permission(struct svc_cred *cred, struct svc_export *exp,
 	 */
 	if (!(acc & NFSD_MAY_LOCAL_ACCESS))
 		if (acc & (NFSD_MAY_WRITE | NFSD_MAY_SATTR | NFSD_MAY_TRUNC)) {
-			if (exp_rdonly(cred, exp) ||
+			if (exp_rdonly(rqstp, exp) ||
 			    __mnt_is_readonly(exp->ex_path.mnt))
 				return nfserr_rofs;
 			if (/* (acc & NFSD_MAY_WRITE) && */ IS_IMMUTABLE(inode))

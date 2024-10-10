@@ -197,7 +197,7 @@ out:
 	return err;
 }
 
-static void p54_stop(struct ieee80211_hw *dev, bool suspend)
+static void p54_stop(struct ieee80211_hw *dev)
 {
 	struct p54_common *priv = dev->priv;
 	int i;

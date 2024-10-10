@@ -61,7 +61,8 @@ void *jent_kvzalloc(unsigned int len)
 
 void jent_kvzfree(void *ptr, unsigned int len)
 {
-	kvfree_sensitive(ptr, len);
+	memzero_explicit(ptr, len);
+	kvfree(ptr);
 }
 
 void *jent_zalloc(unsigned int len)

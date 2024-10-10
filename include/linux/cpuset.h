@@ -70,6 +70,7 @@ extern int cpuset_init(void);
 extern void cpuset_init_smp(void);
 extern void cpuset_force_rebuild(void);
 extern void cpuset_update_active_cpus(void);
+extern void cpuset_wait_for_hotplug(void);
 extern void inc_dl_tasks_cs(struct task_struct *task);
 extern void dec_dl_tasks_cs(struct task_struct *task);
 extern void cpuset_lock(void);
@@ -99,7 +100,6 @@ static inline bool cpuset_zone_allowed(struct zone *z, gfp_t gfp_mask)
 extern int cpuset_mems_allowed_intersects(const struct task_struct *tsk1,
 					  const struct task_struct *tsk2);
 
-#ifdef CONFIG_CPUSETS_V1
 #define cpuset_memory_pressure_bump() 				\
 	do {							\
 		if (cpuset_memory_pressure_enabled)		\
@@ -107,9 +107,6 @@ extern int cpuset_mems_allowed_intersects(const struct task_struct *tsk1,
 	} while (0)
 extern int cpuset_memory_pressure_enabled;
 extern void __cpuset_memory_pressure_bump(void);
-#else
-static inline void cpuset_memory_pressure_bump(void) { }
-#endif
 
 extern void cpuset_task_status_allowed(struct seq_file *m,
 					struct task_struct *task);
@@ -117,6 +114,7 @@ extern int proc_cpuset_show(struct seq_file *m, struct pid_namespace *ns,
 			    struct pid *pid, struct task_struct *tsk);
 
 extern int cpuset_mem_spread_node(void);
+extern int cpuset_slab_spread_node(void);
 
 static inline int cpuset_do_page_mem_spread(void)
 {
@@ -187,6 +185,8 @@ static inline void cpuset_update_active_cpus(void)
 	partition_sched_domains(1, NULL, NULL);
 }
 
+static inline void cpuset_wait_for_hotplug(void) { }
+
 static inline void inc_dl_tasks_cs(struct task_struct *task) { }
 static inline void dec_dl_tasks_cs(struct task_struct *task) { }
 static inline void cpuset_lock(void) { }
@@ -245,6 +245,11 @@ static inline void cpuset_task_status_allowed(struct seq_file *m,
 }
 
 static inline int cpuset_mem_spread_node(void)
+{
+	return 0;
+}
+
+static inline int cpuset_slab_spread_node(void)
 {
 	return 0;
 }

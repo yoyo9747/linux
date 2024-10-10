@@ -36,14 +36,15 @@ static inline void bch2_two_state_unlock(two_state_lock_t *lock, int s)
 static inline bool bch2_two_state_trylock(two_state_lock_t *lock, int s)
 {
 	long i = s ? 1 : -1;
-	long old;
+	long v = atomic_long_read(&lock->v), old;
 
-	old = atomic_long_read(&lock->v);
 	do {
-		if (i > 0 ? old < 0 : old > 0)
-			return false;
-	} while (!atomic_long_try_cmpxchg_acquire(&lock->v, &old, old + i));
+		old = v;
 
+		if (i > 0 ? v < 0 : v > 0)
+			return false;
+	} while ((v = atomic_long_cmpxchg_acquire(&lock->v,
+					old, old + i)) != old);
 	return true;
 }
 

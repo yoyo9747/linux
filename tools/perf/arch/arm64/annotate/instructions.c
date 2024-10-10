@@ -11,8 +11,7 @@ struct arm64_annotate {
 
 static int arm64_mov__parse(struct arch *arch __maybe_unused,
 			    struct ins_operands *ops,
-			    struct map_symbol *ms __maybe_unused,
-			    struct disasm_line *dl __maybe_unused)
+			    struct map_symbol *ms __maybe_unused)
 {
 	char *s = strchr(ops->raw, ','), *target, *endptr;
 

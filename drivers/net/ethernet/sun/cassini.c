@@ -73,7 +73,6 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
-#include <linux/skbuff_ref.h>
 #include <linux/ethtool.h>
 #include <linux/crc32.h>
 #include <linux/random.h>
@@ -3804,7 +3803,7 @@ static int cas_change_mtu(struct net_device *dev, int new_mtu)
 {
 	struct cas *cp = netdev_priv(dev);
 
-	WRITE_ONCE(dev->mtu, new_mtu);
+	dev->mtu = new_mtu;
 	if (!netif_running(dev) || !netif_device_present(dev))
 		return 0;
 

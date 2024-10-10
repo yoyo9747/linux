@@ -256,6 +256,7 @@ struct uart_amba_port {
 	const u16		*reg_offset;
 	struct clk		*clk;
 	const struct vendor_data *vendor;
+	unsigned int		dmacr;		/* dma control reg */
 	unsigned int		im;		/* interrupt mask */
 	unsigned int		old_status;
 	unsigned int		fifosize;	/* vendor-specific */
@@ -265,7 +266,6 @@ struct uart_amba_port {
 	unsigned int		rs485_tx_drain_interval; /* usecs */
 #ifdef CONFIG_DMA_ENGINE
 	/* DMA stuff */
-	unsigned int		dmacr;		/* dma control reg */
 	bool			using_tx_dma;
 	bool			using_rx_dma;
 	struct pl011_dmarx_data dmarx;
@@ -535,7 +535,6 @@ static void pl011_start_tx_pio(struct uart_amba_port *uap);
 static void pl011_dma_tx_callback(void *data)
 {
 	struct uart_amba_port *uap = data;
-	struct tty_port *tport = &uap->port.state->port;
 	struct pl011_dmatx_data *dmatx = &uap->dmatx;
 	unsigned long flags;
 	u16 dmacr;
@@ -559,7 +558,7 @@ static void pl011_dma_tx_callback(void *data)
 	 * get further refills (hence we check dmacr).
 	 */
 	if (!(dmacr & UART011_TXDMAE) || uart_tx_stopped(&uap->port) ||
-	    kfifo_is_empty(&tport->xmit_fifo)) {
+	    uart_circ_empty(&uap->port.state->xmit)) {
 		uap->dmatx.queued = false;
 		uart_port_unlock_irqrestore(&uap->port, flags);
 		return;
@@ -589,7 +588,7 @@ static int pl011_dma_tx_refill(struct uart_amba_port *uap)
 	struct dma_chan *chan = dmatx->chan;
 	struct dma_device *dma_dev = chan->device;
 	struct dma_async_tx_descriptor *desc;
-	struct tty_port *tport = &uap->port.state->port;
+	struct circ_buf *xmit = &uap->port.state->xmit;
 	unsigned int count;
 
 	/*
@@ -598,7 +597,7 @@ static int pl011_dma_tx_refill(struct uart_amba_port *uap)
 	 * the standard interrupt handling.  This ensures that we
 	 * issue a uart_write_wakeup() at the appropriate time.
 	 */
-	count = kfifo_len(&tport->xmit_fifo);
+	count = uart_circ_chars_pending(xmit);
 	if (count < (uap->fifosize >> 1)) {
 		uap->dmatx.queued = false;
 		return 0;
@@ -614,7 +613,21 @@ static int pl011_dma_tx_refill(struct uart_amba_port *uap)
 	if (count > PL011_DMA_BUFFER_SIZE)
 		count = PL011_DMA_BUFFER_SIZE;
 
-	count = kfifo_out_peek(&tport->xmit_fifo, dmatx->buf, count);
+	if (xmit->tail < xmit->head) {
+		memcpy(&dmatx->buf[0], &xmit->buf[xmit->tail], count);
+	} else {
+		size_t first = UART_XMIT_SIZE - xmit->tail;
+		size_t second;
+
+		if (first > count)
+			first = count;
+		second = count - first;
+
+		memcpy(&dmatx->buf[0], &xmit->buf[xmit->tail], first);
+		if (second)
+			memcpy(&dmatx->buf[first], &xmit->buf[0], second);
+	}
+
 	dmatx->len = count;
 	dmatx->dma = dma_map_single(dma_dev->dev, dmatx->buf, count,
 				    DMA_TO_DEVICE);
@@ -657,7 +670,7 @@ static int pl011_dma_tx_refill(struct uart_amba_port *uap)
 	 */
 	uart_xmit_advance(&uap->port, count);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&uap->port);
 
 	return 1;
@@ -1441,7 +1454,7 @@ static bool pl011_tx_char(struct uart_amba_port *uap, unsigned char c,
 /* Returns true if tx interrupts have to be (kept) enabled  */
 static bool pl011_tx_chars(struct uart_amba_port *uap, bool from_irq)
 {
-	struct tty_port *tport = &uap->port.state->port;
+	struct circ_buf *xmit = &uap->port.state->xmit;
 	int count = uap->fifosize >> 1;
 
 	if (uap->port.x_char) {
@@ -1450,7 +1463,7 @@ static bool pl011_tx_chars(struct uart_amba_port *uap, bool from_irq)
 		uap->port.x_char = 0;
 		--count;
 	}
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(&uap->port)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(&uap->port)) {
 		pl011_stop_tx(&uap->port);
 		return false;
 	}
@@ -1459,25 +1472,20 @@ static bool pl011_tx_chars(struct uart_amba_port *uap, bool from_irq)
 	if (pl011_dma_tx_irq(uap))
 		return true;
 
-	while (1) {
-		unsigned char c;
-
+	do {
 		if (likely(from_irq) && count-- == 0)
 			break;
 
-		if (!kfifo_peek(&tport->xmit_fifo, &c))
+		if (!pl011_tx_char(uap, xmit->buf[xmit->tail], from_irq))
 			break;
 
-		if (!pl011_tx_char(uap, c, from_irq))
-			break;
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+	} while (!uart_circ_empty(xmit));
 
-		kfifo_skip(&tport->xmit_fifo);
-	}
-
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&uap->port);
 
-	if (kfifo_is_empty(&tport->xmit_fifo)) {
+	if (uart_circ_empty(xmit)) {
 		pl011_stop_tx(&uap->port);
 		return false;
 	}
@@ -2480,7 +2488,7 @@ static int pl011_console_match(struct console *co, char *name, int idx,
 			continue;
 
 		co->index = i;
-		uart_port_set_cons(port, co);
+		port->cons = co;
 		return pl011_console_setup(co, options);
 	}
 
@@ -2692,6 +2700,18 @@ static int pl011_find_free_port(void)
 	return -EBUSY;
 }
 
+static int pl011_get_rs485_mode(struct uart_amba_port *uap)
+{
+	struct uart_port *port = &uap->port;
+	int ret;
+
+	ret = uart_get_rs485_mode(port);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
 static int pl011_setup_port(struct device *dev, struct uart_amba_port *uap,
 			    struct resource *mmiobase, int index)
 {
@@ -2712,7 +2732,7 @@ static int pl011_setup_port(struct device *dev, struct uart_amba_port *uap,
 	uap->port.flags = UPF_BOOT_AUTOCONF;
 	uap->port.line = index;
 
-	ret = uart_get_rs485_mode(&uap->port);
+	ret = pl011_get_rs485_mode(uap);
 	if (ret)
 		return ret;
 

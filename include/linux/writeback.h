@@ -79,9 +79,6 @@ struct writeback_control {
 	 */
 	struct swap_iocb **swap_plug;
 
-	/* Target list for splitting a large folio */
-	struct list_head *list;
-
 	/* internal fields used by the ->writepages implementation: */
 	struct folio_batch fbatch;
 	pgoff_t index;
@@ -203,8 +200,7 @@ void inode_io_list_del(struct inode *inode);
 /* writeback.h requires fs.h; it, too, is not included from here. */
 static inline void wait_on_inode(struct inode *inode)
 {
-	wait_var_event(inode_state_wait_address(inode, __I_NEW),
-		       !(READ_ONCE(inode->i_state) & I_NEW));
+	wait_on_bit(&inode->i_state, __I_NEW, TASK_UNINTERRUPTIBLE);
 }
 
 #ifdef CONFIG_CGROUP_WRITEBACK
@@ -221,7 +217,7 @@ void wbc_account_cgroup_owner(struct writeback_control *wbc, struct page *page,
 			      size_t bytes);
 int cgroup_writeback_by_id(u64 bdi_id, int memcg_id,
 			   enum wb_reason reason, struct wb_completion *done);
-void cgroup_writeback_umount(struct super_block *sb);
+void cgroup_writeback_umount(void);
 bool cleanup_offline_cgwb(struct bdi_writeback *wb);
 
 /**
@@ -328,7 +324,7 @@ static inline void wbc_account_cgroup_owner(struct writeback_control *wbc,
 {
 }
 
-static inline void cgroup_writeback_umount(struct super_block *sb)
+static inline void cgroup_writeback_umount(void)
 {
 }
 
@@ -354,12 +350,11 @@ extern unsigned int dirty_expire_interval;
 extern unsigned int dirtytime_expire_interval;
 extern int laptop_mode;
 
-int dirtytime_interval_handler(const struct ctl_table *table, int write,
+int dirtytime_interval_handler(struct ctl_table *table, int write,
 		void *buffer, size_t *lenp, loff_t *ppos);
 
 void global_dirty_limits(unsigned long *pbackground, unsigned long *pdirty);
 unsigned long wb_calc_thresh(struct bdi_writeback *wb, unsigned long thresh);
-unsigned long cgwb_calc_thresh(struct bdi_writeback *wb);
 
 void wb_update_bandwidth(struct bdi_writeback *wb);
 

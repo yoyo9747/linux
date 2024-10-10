@@ -24,9 +24,7 @@ properties:
     const: 1
 
   compatible:
-    enum:
-      - amd,versal2-dma-1.0
-      - xlnx,zynqmp-dma-1.0
+    const: xlnx,zynqmp-dma-1.0
 
   reg:
     description: memory map for gdma/adma module access

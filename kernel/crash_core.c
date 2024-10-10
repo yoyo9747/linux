@@ -4,8 +4,6 @@
  * Copyright (C) 2002-2004 Eric Biederman  <ebiederm@xmission.com>
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/buildid.h>
 #include <linux/init.h>
 #include <linux/utsname.h>
@@ -495,22 +493,25 @@ static DEFINE_MUTEX(__crash_hotplug_lock);
 
 /*
  * This routine utilized when the crash_hotplug sysfs node is read.
- * It reflects the kernel's ability/permission to update the kdump
- * image directly.
+ * It reflects the kernel's ability/permission to update the crash
+ * elfcorehdr directly.
  */
-int crash_check_hotplug_support(void)
+int crash_check_update_elfcorehdr(void)
 {
 	int rc = 0;
 
 	crash_hotplug_lock();
 	/* Obtain lock while reading crash information */
 	if (!kexec_trylock()) {
-		pr_info("kexec_trylock() failed, kdump image may be inaccurate\n");
+		pr_info("kexec_trylock() failed, elfcorehdr may be inaccurate\n");
 		crash_hotplug_unlock();
 		return 0;
 	}
 	if (kexec_crash_image) {
-		rc = kexec_crash_image->hotplug_support;
+		if (kexec_crash_image->file_mode)
+			rc = 1;
+		else
+			rc = kexec_crash_image->update_elfcorehdr;
 	}
 	/* Release lock now that update complete */
 	kexec_unlock();
@@ -520,34 +521,27 @@ int crash_check_hotplug_support(void)
 }
 
 /*
- * To accurately reflect hot un/plug changes of CPU and Memory resources
- * (including onling and offlining of those resources), the relevant
- * kexec segments must be updated with latest CPU and Memory resources.
+ * To accurately reflect hot un/plug changes of cpu and memory resources
+ * (including onling and offlining of those resources), the elfcorehdr
+ * (which is passed to the crash kernel via the elfcorehdr= parameter)
+ * must be updated with the new list of CPUs and memories.
  *
- * Architectures must ensure two things for all segments that need
- * updating during hotplug events:
- *
- * 1. Segments must be large enough to accommodate a growing number of
- *    resources.
- * 2. Exclude the segments from SHA verification.
- *
- * For example, on most architectures, the elfcorehdr (which is passed
- * to the crash kernel via the elfcorehdr= parameter) must include the
- * new list of CPUs and memory. To make changes to the elfcorehdr, it
- * should be large enough to permit a growing number of CPU and Memory
- * resources. One can estimate the elfcorehdr memory size based on
- * NR_CPUS_DEFAULT and CRASH_MAX_MEMORY_RANGES. The elfcorehdr is
- * excluded from SHA verification by default if the architecture
- * supports crash hotplug.
+ * In order to make changes to elfcorehdr, two conditions are needed:
+ * First, the segment containing the elfcorehdr must be large enough
+ * to permit a growing number of resources; the elfcorehdr memory size
+ * is based on NR_CPUS_DEFAULT and CRASH_MAX_MEMORY_RANGES.
+ * Second, purgatory must explicitly exclude the elfcorehdr from the
+ * list of segments it checks (since the elfcorehdr changes and thus
+ * would require an update to purgatory itself to update the digest).
  */
-static void crash_handle_hotplug_event(unsigned int hp_action, unsigned int cpu, void *arg)
+static void crash_handle_hotplug_event(unsigned int hp_action, unsigned int cpu)
 {
 	struct kimage *image;
 
 	crash_hotplug_lock();
 	/* Obtain lock while changing crash information */
 	if (!kexec_trylock()) {
-		pr_info("kexec_trylock() failed, kdump image may be inaccurate\n");
+		pr_info("kexec_trylock() failed, elfcorehdr may be inaccurate\n");
 		crash_hotplug_unlock();
 		return;
 	}
@@ -558,8 +552,8 @@ static void crash_handle_hotplug_event(unsigned int hp_action, unsigned int cpu,
 
 	image = kexec_crash_image;
 
-	/* Check that kexec segments update is permitted */
-	if (!image->hotplug_support)
+	/* Check that updating elfcorehdr is permitted */
+	if (!(image->file_mode || image->update_elfcorehdr))
 		goto out;
 
 	if (hp_action == KEXEC_CRASH_HP_ADD_CPU ||
@@ -602,7 +596,7 @@ static void crash_handle_hotplug_event(unsigned int hp_action, unsigned int cpu,
 	image->hp_action = hp_action;
 
 	/* Now invoke arch-specific update handler */
-	arch_crash_handle_hotplug_event(image, arg);
+	arch_crash_handle_hotplug_event(image);
 
 	/* No longer handling a hotplug event */
 	image->hp_action = KEXEC_CRASH_HP_NONE;
@@ -618,17 +612,17 @@ out:
 	crash_hotplug_unlock();
 }
 
-static int crash_memhp_notifier(struct notifier_block *nb, unsigned long val, void *arg)
+static int crash_memhp_notifier(struct notifier_block *nb, unsigned long val, void *v)
 {
 	switch (val) {
 	case MEM_ONLINE:
 		crash_handle_hotplug_event(KEXEC_CRASH_HP_ADD_MEMORY,
-			KEXEC_CRASH_HP_INVALID_CPU, arg);
+			KEXEC_CRASH_HP_INVALID_CPU);
 		break;
 
 	case MEM_OFFLINE:
 		crash_handle_hotplug_event(KEXEC_CRASH_HP_REMOVE_MEMORY,
-			KEXEC_CRASH_HP_INVALID_CPU, arg);
+			KEXEC_CRASH_HP_INVALID_CPU);
 		break;
 	}
 	return NOTIFY_OK;
@@ -641,13 +635,13 @@ static struct notifier_block crash_memhp_nb = {
 
 static int crash_cpuhp_online(unsigned int cpu)
 {
-	crash_handle_hotplug_event(KEXEC_CRASH_HP_ADD_CPU, cpu, NULL);
+	crash_handle_hotplug_event(KEXEC_CRASH_HP_ADD_CPU, cpu);
 	return 0;
 }
 
 static int crash_cpuhp_offline(unsigned int cpu)
 {
-	crash_handle_hotplug_event(KEXEC_CRASH_HP_REMOVE_CPU, cpu, NULL);
+	crash_handle_hotplug_event(KEXEC_CRASH_HP_REMOVE_CPU, cpu);
 	return 0;
 }
 

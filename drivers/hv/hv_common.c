@@ -207,13 +207,13 @@ static int hv_die_panic_notify_crash(struct notifier_block *self,
  * buffer and call into Hyper-V to transfer the data.
  */
 static void hv_kmsg_dump(struct kmsg_dumper *dumper,
-			 struct kmsg_dump_detail *detail)
+			 enum kmsg_dump_reason reason)
 {
 	struct kmsg_dump_iter iter;
 	size_t bytes_written;
 
 	/* We are only interested in panics. */
-	if (detail->reason != KMSG_DUMP_PANIC || !sysctl_record_panic_msg)
+	if (reason != KMSG_DUMP_PANIC || !sysctl_record_panic_msg)
 		return;
 
 	/*
@@ -561,7 +561,11 @@ EXPORT_SYMBOL_GPL(hv_query_ext_cap);
 
 void hv_setup_dma_ops(struct device *dev, bool coherent)
 {
-	arch_setup_dma_ops(dev, coherent);
+	/*
+	 * Hyper-V does not offer a vIOMMU in the guest
+	 * VM, so pass 0/NULL for the IOMMU settings
+	 */
+	arch_setup_dma_ops(dev, 0, 0, coherent);
 }
 EXPORT_SYMBOL_GPL(hv_setup_dma_ops);
 

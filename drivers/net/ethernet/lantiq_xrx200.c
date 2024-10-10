@@ -419,7 +419,7 @@ xrx200_change_mtu(struct net_device *net_dev, int new_mtu)
 	int curr_desc;
 	int ret = 0;
 
-	WRITE_ONCE(net_dev->mtu, new_mtu);
+	net_dev->mtu = new_mtu;
 	priv->rx_buf_size = xrx200_buffer_size(new_mtu);
 	priv->rx_skb_size = xrx200_skb_size(priv->rx_buf_size);
 
@@ -440,7 +440,7 @@ xrx200_change_mtu(struct net_device *net_dev, int new_mtu)
 		buff = ch_rx->rx_buff[ch_rx->dma.desc];
 		ret = xrx200_alloc_buf(ch_rx, netdev_alloc_frag);
 		if (ret) {
-			WRITE_ONCE(net_dev->mtu, old_mtu);
+			net_dev->mtu = old_mtu;
 			priv->rx_buf_size = xrx200_buffer_size(old_mtu);
 			priv->rx_skb_size = xrx200_skb_size(priv->rx_buf_size);
 			break;

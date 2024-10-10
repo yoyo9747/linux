@@ -954,5 +954,4 @@ static struct hid_driver lg_g15_driver = {
 module_hid_driver(lg_g15_driver);
 
 MODULE_AUTHOR("Hans de Goede <hdegoede@redhat.com>");
-MODULE_DESCRIPTION("HID driver for gaming keys on Logitech gaming keyboards");
 MODULE_LICENSE("GPL");

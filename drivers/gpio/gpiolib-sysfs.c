@@ -412,7 +412,7 @@ static ssize_t base_show(struct device *dev,
 {
 	const struct gpio_device *gdev = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%u\n", gdev->base);
+	return sysfs_emit(buf, "%d\n", gdev->base);
 }
 static DEVICE_ATTR_RO(base);
 
@@ -568,8 +568,7 @@ static struct class gpio_class = {
  * will see "direction" sysfs attribute which may be used to change
  * the gpio's direction.  A "value" attribute will always be provided.
  *
- * Returns:
- * 0 on success, or negative errno on failure.
+ * Returns zero on success, else an error.
  */
 int gpiod_export(struct gpio_desc *desc, bool direction_may_change)
 {
@@ -668,8 +667,7 @@ static int match_export(struct device *dev, const void *desc)
  * Set up a symlink from /sys/.../dev/name to /sys/class/gpio/gpioN
  * node. Caller is responsible for unlinking.
  *
- * Returns:
- * 0 on success, or negative errno on failure.
+ * Returns zero on success, else an error.
  */
 int gpiod_export_link(struct device *dev, const char *name,
 		      struct gpio_desc *desc)

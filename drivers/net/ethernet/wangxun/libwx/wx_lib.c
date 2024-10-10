@@ -148,11 +148,10 @@ static struct wx_dec_ptype wx_ptype_lookup[256] = {
 	[0xFD] = WX_PTT(IP, IPV6, IGMV, IPV6, SCTP, PAY4),
 };
 
-struct wx_dec_ptype wx_decode_ptype(const u8 ptype)
+static struct wx_dec_ptype wx_decode_ptype(const u8 ptype)
 {
 	return wx_ptype_lookup[ptype];
 }
-EXPORT_SYMBOL(wx_decode_ptype);
 
 /* wx_test_staterr - tests bits in Rx descriptor status and error fields */
 static __le32 wx_test_staterr(union wx_rx_desc *rx_desc,
@@ -251,7 +250,10 @@ static struct sk_buff *wx_build_skb(struct wx_ring *rx_ring,
 				  rx_buffer->page_offset;
 
 		/* prefetch first cache line of first page */
-		net_prefetch(page_addr);
+		prefetch(page_addr);
+#if L1_CACHE_BYTES < 128
+		prefetch(page_addr + L1_CACHE_BYTES);
+#endif
 
 		/* allocate a skb to store the frags */
 		skb = napi_alloc_skb(&rx_ring->q_vector->napi, WX_RXBUFFER_256);
@@ -1451,7 +1453,6 @@ static void wx_tx_csum(struct wx_ring *tx_ring, struct wx_tx_buffer *first,
 static netdev_tx_t wx_xmit_frame_ring(struct sk_buff *skb,
 				      struct wx_ring *tx_ring)
 {
-	struct wx *wx = netdev_priv(tx_ring->netdev);
 	u16 count = TXD_USE_COUNT(skb_headlen(skb));
 	struct wx_tx_buffer *first;
 	u8 hdr_len = 0, ptype;
@@ -1497,10 +1498,6 @@ static netdev_tx_t wx_xmit_frame_ring(struct sk_buff *skb,
 		goto out_drop;
 	else if (!tso)
 		wx_tx_csum(tx_ring, first, ptype);
-
-	if (test_bit(WX_FLAG_FDIR_CAPABLE, wx->flags) && tx_ring->atr_sample_rate)
-		wx->atr(tx_ring, first, ptype);
-
 	wx_tx_map(tx_ring, first, hdr_len);
 
 	return NETDEV_TX_OK;
@@ -1577,27 +1574,8 @@ static void wx_set_rss_queues(struct wx *wx)
 	f = &wx->ring_feature[RING_F_RSS];
 	f->indices = f->limit;
 
-	if (!(test_bit(WX_FLAG_FDIR_CAPABLE, wx->flags)))
-		goto out;
-
-	clear_bit(WX_FLAG_FDIR_HASH, wx->flags);
-
-	/* Use Flow Director in addition to RSS to ensure the best
-	 * distribution of flows across cores, even when an FDIR flow
-	 * isn't matched.
-	 */
-	if (f->indices > 1) {
-		f = &wx->ring_feature[RING_F_FDIR];
-
-		f->indices = f->limit;
-
-		if (!(test_bit(WX_FLAG_FDIR_PERFECT, wx->flags)))
-			set_bit(WX_FLAG_FDIR_HASH, wx->flags);
-	}
-
-out:
-	wx->num_rx_queues = f->indices;
-	wx->num_tx_queues = f->indices;
+	wx->num_rx_queues = f->limit;
+	wx->num_tx_queues = f->limit;
 }
 
 static void wx_set_num_queues(struct wx *wx)
@@ -1696,19 +1674,18 @@ static int wx_set_interrupt_capability(struct wx *wx)
 	/* minmum one for queue, one for misc*/
 	nvecs = 1;
 	nvecs = pci_alloc_irq_vectors(pdev, nvecs,
-				      nvecs, PCI_IRQ_MSI | PCI_IRQ_INTX);
+				      nvecs, PCI_IRQ_MSI | PCI_IRQ_LEGACY);
 	if (nvecs == 1) {
 		if (pdev->msi_enabled)
 			wx_err(wx, "Fallback to MSI.\n");
 		else
-			wx_err(wx, "Fallback to INTx.\n");
+			wx_err(wx, "Fallback to LEGACY.\n");
 	} else {
-		wx_err(wx, "Failed to allocate MSI/INTx interrupts. Error: %d\n", nvecs);
+		wx_err(wx, "Failed to allocate MSI/LEGACY interrupts. Error: %d\n", nvecs);
 		return nvecs;
 	}
 
 	pdev->irq = pci_irq_vector(pdev, 0);
-	wx->num_q_vectors = 1;
 
 	return 0;
 }
@@ -2019,8 +1996,7 @@ void wx_free_irq(struct wx *wx)
 	int vector;
 
 	if (!(pdev->msix_enabled)) {
-		if (!wx->misc_irq_domain)
-			free_irq(pdev->irq, wx);
+		free_irq(pdev->irq, wx);
 		return;
 	}
 
@@ -2035,7 +2011,7 @@ void wx_free_irq(struct wx *wx)
 		free_irq(entry->vector, q_vector);
 	}
 
-	if (!wx->misc_irq_domain)
+	if (wx->mac.type == wx_mac_em)
 		free_irq(wx->msix_entry->vector, wx);
 }
 EXPORT_SYMBOL(wx_free_irq);
@@ -2049,9 +2025,6 @@ EXPORT_SYMBOL(wx_free_irq);
 int wx_setup_isb_resources(struct wx *wx)
 {
 	struct pci_dev *pdev = wx->pdev;
-
-	if (wx->isb_mem)
-		return 0;
 
 	wx->isb_mem = dma_alloc_coherent(&pdev->dev,
 					 sizeof(u32) * 4,
@@ -2154,7 +2127,7 @@ void wx_write_eitr(struct wx_q_vector *q_vector)
  * wx_configure_vectors - Configure vectors for hardware
  * @wx: board private structure
  *
- * wx_configure_vectors sets up the hardware to properly generate MSI-X/MSI/INTx
+ * wx_configure_vectors sets up the hardware to properly generate MSI-X/MSI/LEGACY
  * interrupts.
  **/
 void wx_configure_vectors(struct wx *wx)
@@ -2412,6 +2385,7 @@ static void wx_free_all_tx_resources(struct wx *wx)
 
 void wx_free_resources(struct wx *wx)
 {
+	wx_free_isb_resources(wx);
 	wx_free_all_rx_resources(wx);
 	wx_free_all_tx_resources(wx);
 }
@@ -2706,7 +2680,6 @@ int wx_set_features(struct net_device *netdev, netdev_features_t features)
 {
 	netdev_features_t changed = netdev->features ^ features;
 	struct wx *wx = netdev_priv(netdev);
-	bool need_reset = false;
 
 	if (features & NETIF_F_RXHASH) {
 		wr32m(wx, WX_RDB_RA_CTL, WX_RDB_RA_CTL_RSS_EN,
@@ -2717,92 +2690,14 @@ int wx_set_features(struct net_device *netdev, netdev_features_t features)
 		wx->rss_enabled = false;
 	}
 
-	netdev->features = features;
-
-	if (wx->mac.type == wx_mac_sp && changed & NETIF_F_HW_VLAN_CTAG_RX)
-		wx->do_reset(netdev);
-	else if (changed & (NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_CTAG_FILTER))
+	if (changed &
+	    (NETIF_F_HW_VLAN_CTAG_RX |
+	     NETIF_F_HW_VLAN_STAG_RX))
 		wx_set_rx_mode(netdev);
 
-	if (!(test_bit(WX_FLAG_FDIR_CAPABLE, wx->flags)))
-		return 0;
-
-	/* Check if Flow Director n-tuple support was enabled or disabled.  If
-	 * the state changed, we need to reset.
-	 */
-	switch (features & NETIF_F_NTUPLE) {
-	case NETIF_F_NTUPLE:
-		/* turn off ATR, enable perfect filters and reset */
-		if (!(test_and_set_bit(WX_FLAG_FDIR_PERFECT, wx->flags)))
-			need_reset = true;
-
-		clear_bit(WX_FLAG_FDIR_HASH, wx->flags);
-		break;
-	default:
-		/* turn off perfect filters, enable ATR and reset */
-		if (test_and_clear_bit(WX_FLAG_FDIR_PERFECT, wx->flags))
-			need_reset = true;
-
-		/* We cannot enable ATR if RSS is disabled */
-		if (wx->ring_feature[RING_F_RSS].limit <= 1)
-			break;
-
-		set_bit(WX_FLAG_FDIR_HASH, wx->flags);
-		break;
-	}
-
-	if (need_reset)
-		wx->do_reset(netdev);
-
-	return 0;
+	return 1;
 }
 EXPORT_SYMBOL(wx_set_features);
-
-#define NETIF_VLAN_STRIPPING_FEATURES	(NETIF_F_HW_VLAN_CTAG_RX | \
-					 NETIF_F_HW_VLAN_STAG_RX)
-
-#define NETIF_VLAN_INSERTION_FEATURES	(NETIF_F_HW_VLAN_CTAG_TX | \
-					 NETIF_F_HW_VLAN_STAG_TX)
-
-#define NETIF_VLAN_FILTERING_FEATURES	(NETIF_F_HW_VLAN_CTAG_FILTER | \
-					 NETIF_F_HW_VLAN_STAG_FILTER)
-
-netdev_features_t wx_fix_features(struct net_device *netdev,
-				  netdev_features_t features)
-{
-	netdev_features_t changed = netdev->features ^ features;
-	struct wx *wx = netdev_priv(netdev);
-
-	if (changed & NETIF_VLAN_STRIPPING_FEATURES) {
-		if ((features & NETIF_VLAN_STRIPPING_FEATURES) != NETIF_VLAN_STRIPPING_FEATURES &&
-		    (features & NETIF_VLAN_STRIPPING_FEATURES) != 0) {
-			features &= ~NETIF_VLAN_STRIPPING_FEATURES;
-			features |= netdev->features & NETIF_VLAN_STRIPPING_FEATURES;
-			wx_err(wx, "802.1Q and 802.1ad VLAN stripping must be either both on or both off.");
-		}
-	}
-
-	if (changed & NETIF_VLAN_INSERTION_FEATURES) {
-		if ((features & NETIF_VLAN_INSERTION_FEATURES) != NETIF_VLAN_INSERTION_FEATURES &&
-		    (features & NETIF_VLAN_INSERTION_FEATURES) != 0) {
-			features &= ~NETIF_VLAN_INSERTION_FEATURES;
-			features |= netdev->features & NETIF_VLAN_INSERTION_FEATURES;
-			wx_err(wx, "802.1Q and 802.1ad VLAN insertion must be either both on or both off.");
-		}
-	}
-
-	if (changed & NETIF_VLAN_FILTERING_FEATURES) {
-		if ((features & NETIF_VLAN_FILTERING_FEATURES) != NETIF_VLAN_FILTERING_FEATURES &&
-		    (features & NETIF_VLAN_FILTERING_FEATURES) != 0) {
-			features &= ~NETIF_VLAN_FILTERING_FEATURES;
-			features |= netdev->features & NETIF_VLAN_FILTERING_FEATURES;
-			wx_err(wx, "802.1Q and 802.1ad VLAN filtering must be either both on or both off.");
-		}
-	}
-
-	return features;
-}
-EXPORT_SYMBOL(wx_fix_features);
 
 void wx_set_ring(struct wx *wx, u32 new_tx_count,
 		 u32 new_rx_count, struct wx_ring *temp_ring)

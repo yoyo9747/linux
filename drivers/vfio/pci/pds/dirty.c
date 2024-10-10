@@ -3,7 +3,6 @@
 
 #include <linux/interval_tree.h>
 #include <linux/vfio.h>
-#include <linux/vmalloc.h>
 
 #include <linux/pds/pds_common.h>
 #include <linux/pds/pds_core_if.h>

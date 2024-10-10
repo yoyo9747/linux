@@ -34,7 +34,6 @@
 #include <linux/pseudo_fs.h>
 #include <linux/slab.h>
 #include <linux/srcu.h>
-#include <linux/xarray.h>
 
 #include <drm/drm_accel.h>
 #include <drm/drm_cache.h>
@@ -44,7 +43,6 @@
 #include <drm/drm_file.h>
 #include <drm/drm_managed.h>
 #include <drm/drm_mode_object.h>
-#include <drm/drm_panic.h>
 #include <drm/drm_print.h>
 #include <drm/drm_privacy_screen_machine.h>
 
@@ -55,7 +53,8 @@ MODULE_AUTHOR("Gareth Hughes, Leif Delgass, José Fonseca, Jon Smirl");
 MODULE_DESCRIPTION("DRM shared core routines");
 MODULE_LICENSE("GPL and additional rights");
 
-DEFINE_XARRAY_ALLOC(drm_minors_xa);
+static DEFINE_SPINLOCK(drm_minor_lock);
+static struct idr drm_minors_idr;
 
 /*
  * If the drm core fails to init for whatever reason,
@@ -83,18 +82,6 @@ DEFINE_STATIC_SRCU(drm_unplug_srcu);
  * registered and unregistered dynamically according to device-state.
  */
 
-static struct xarray *drm_minor_get_xa(enum drm_minor_type type)
-{
-	if (type == DRM_MINOR_PRIMARY || type == DRM_MINOR_RENDER)
-		return &drm_minors_xa;
-#if IS_ENABLED(CONFIG_DRM_ACCEL)
-	else if (type == DRM_MINOR_ACCEL)
-		return &accel_minors_xa;
-#endif
-	else
-		return ERR_PTR(-EOPNOTSUPP);
-}
-
 static struct drm_minor **drm_minor_get_slot(struct drm_device *dev,
 					     enum drm_minor_type type)
 {
@@ -113,31 +100,25 @@ static struct drm_minor **drm_minor_get_slot(struct drm_device *dev,
 static void drm_minor_alloc_release(struct drm_device *dev, void *data)
 {
 	struct drm_minor *minor = data;
+	unsigned long flags;
 
 	WARN_ON(dev != minor->dev);
 
 	put_device(minor->kdev);
 
-	xa_erase(drm_minor_get_xa(minor->type), minor->index);
+	if (minor->type == DRM_MINOR_ACCEL) {
+		accel_minor_remove(minor->index);
+	} else {
+		spin_lock_irqsave(&drm_minor_lock, flags);
+		idr_remove(&drm_minors_idr, minor->index);
+		spin_unlock_irqrestore(&drm_minor_lock, flags);
+	}
 }
-
-/*
- * DRM used to support 64 devices, for backwards compatibility we need to maintain the
- * minor allocation scheme where minors 0-63 are primary nodes, 64-127 are control nodes,
- * and 128-191 are render nodes.
- * After reaching the limit, we're allocating minors dynamically - first-come, first-serve.
- * Accel nodes are using a distinct major, so the minors are allocated in continuous 0-MAX
- * range.
- */
-#define DRM_MINOR_LIMIT(t) ({ \
-	typeof(t) _t = (t); \
-	_t == DRM_MINOR_ACCEL ? XA_LIMIT(0, ACCEL_MAX_MINORS) : XA_LIMIT(64 * _t, 64 * _t + 63); \
-})
-#define DRM_EXTENDED_MINOR_LIMIT XA_LIMIT(192, (1 << MINORBITS) - 1)
 
 static int drm_minor_alloc(struct drm_device *dev, enum drm_minor_type type)
 {
 	struct drm_minor *minor;
+	unsigned long flags;
 	int r;
 
 	minor = drmm_kzalloc(dev, sizeof(*minor), GFP_KERNEL);
@@ -147,13 +128,24 @@ static int drm_minor_alloc(struct drm_device *dev, enum drm_minor_type type)
 	minor->type = type;
 	minor->dev = dev;
 
-	r = xa_alloc(drm_minor_get_xa(type), &minor->index,
-		     NULL, DRM_MINOR_LIMIT(type), GFP_KERNEL);
-	if (r == -EBUSY && (type == DRM_MINOR_PRIMARY || type == DRM_MINOR_RENDER))
-		r = xa_alloc(&drm_minors_xa, &minor->index,
-			     NULL, DRM_EXTENDED_MINOR_LIMIT, GFP_KERNEL);
+	idr_preload(GFP_KERNEL);
+	if (type == DRM_MINOR_ACCEL) {
+		r = accel_minor_alloc();
+	} else {
+		spin_lock_irqsave(&drm_minor_lock, flags);
+		r = idr_alloc(&drm_minors_idr,
+			NULL,
+			64 * type,
+			64 * (type + 1),
+			GFP_NOWAIT);
+		spin_unlock_irqrestore(&drm_minor_lock, flags);
+	}
+	idr_preload_end();
+
 	if (r < 0)
 		return r;
+
+	minor->index = r;
 
 	r = drmm_add_action_or_reset(dev, drm_minor_alloc_release, minor);
 	if (r)
@@ -170,7 +162,7 @@ static int drm_minor_alloc(struct drm_device *dev, enum drm_minor_type type)
 static int drm_minor_register(struct drm_device *dev, enum drm_minor_type type)
 {
 	struct drm_minor *minor;
-	void *entry;
+	unsigned long flags;
 	int ret;
 
 	DRM_DEBUG("\n");
@@ -193,12 +185,13 @@ static int drm_minor_register(struct drm_device *dev, enum drm_minor_type type)
 		goto err_debugfs;
 
 	/* replace NULL with @minor so lookups will succeed from now on */
-	entry = xa_store(drm_minor_get_xa(type), minor->index, minor, GFP_KERNEL);
-	if (xa_is_err(entry)) {
-		ret = xa_err(entry);
-		goto err_debugfs;
+	if (minor->type == DRM_MINOR_ACCEL) {
+		accel_minor_replace(minor, minor->index);
+	} else {
+		spin_lock_irqsave(&drm_minor_lock, flags);
+		idr_replace(&drm_minors_idr, minor, minor->index);
+		spin_unlock_irqrestore(&drm_minor_lock, flags);
 	}
-	WARN_ON(entry);
 
 	DRM_DEBUG("new minor registered %d\n", minor->index);
 	return 0;
@@ -211,13 +204,20 @@ err_debugfs:
 static void drm_minor_unregister(struct drm_device *dev, enum drm_minor_type type)
 {
 	struct drm_minor *minor;
+	unsigned long flags;
 
 	minor = *drm_minor_get_slot(dev, type);
 	if (!minor || !device_is_registered(minor->kdev))
 		return;
 
 	/* replace @minor with NULL so lookups will fail from now on */
-	xa_store(drm_minor_get_xa(type), minor->index, NULL, GFP_KERNEL);
+	if (minor->type == DRM_MINOR_ACCEL) {
+		accel_minor_replace(NULL, minor->index);
+	} else {
+		spin_lock_irqsave(&drm_minor_lock, flags);
+		idr_replace(&drm_minors_idr, NULL, minor->index);
+		spin_unlock_irqrestore(&drm_minor_lock, flags);
+	}
 
 	device_del(minor->kdev);
 	dev_set_drvdata(minor->kdev, NULL); /* safety belt */
@@ -233,15 +233,16 @@ static void drm_minor_unregister(struct drm_device *dev, enum drm_minor_type typ
  * minor->dev pointer will stay valid! However, the device may get unplugged and
  * unregistered while you hold the minor.
  */
-struct drm_minor *drm_minor_acquire(struct xarray *minor_xa, unsigned int minor_id)
+struct drm_minor *drm_minor_acquire(unsigned int minor_id)
 {
 	struct drm_minor *minor;
+	unsigned long flags;
 
-	xa_lock(minor_xa);
-	minor = xa_load(minor_xa, minor_id);
+	spin_lock_irqsave(&drm_minor_lock, flags);
+	minor = idr_find(&drm_minors_idr, minor_id);
 	if (minor)
 		drm_dev_get(minor->dev);
-	xa_unlock(minor_xa);
+	spin_unlock_irqrestore(&drm_minor_lock, flags);
 
 	if (!minor) {
 		return ERR_PTR(-ENODEV);
@@ -344,7 +345,7 @@ void drm_minor_release(struct drm_minor *minor)
  *		if (ret)
  *			return ret;
  *
- *		drm_fbdev_{...}_setup(drm, 32);
+ *		drm_fbdev_generic_setup(drm, 32);
  *
  *		return 0;
  *	}
@@ -637,7 +638,6 @@ static int drm_dev_init(struct drm_device *dev,
 	mutex_init(&dev->filelist_mutex);
 	mutex_init(&dev->clientlist_mutex);
 	mutex_init(&dev->master_mutex);
-	raw_spin_lock_init(&dev->mode_config.panic_lock);
 
 	ret = drmm_add_action_or_reset(dev, drm_dev_init_release, NULL);
 	if (ret)
@@ -943,11 +943,10 @@ int drm_dev_register(struct drm_device *dev, unsigned long flags)
 		if (ret)
 			goto err_unload;
 	}
-	drm_panic_register(dev);
 
-	DRM_INFO("Initialized %s %d.%d.%d for %s on minor %d\n",
+	DRM_INFO("Initialized %s %d.%d.%d %s for %s on minor %d\n",
 		 driver->name, driver->major, driver->minor,
-		 driver->patchlevel,
+		 driver->patchlevel, driver->date,
 		 dev->dev ? dev_name(dev->dev) : "virtual device",
 		 dev->primary ? dev->primary->index : dev->accel->index);
 
@@ -987,8 +986,6 @@ EXPORT_SYMBOL(drm_dev_register);
 void drm_dev_unregister(struct drm_device *dev)
 {
 	dev->registered = false;
-
-	drm_panic_unregister(dev);
 
 	drm_client_dev_unregister(dev);
 
@@ -1034,7 +1031,7 @@ static int drm_stub_open(struct inode *inode, struct file *filp)
 
 	DRM_DEBUG("\n");
 
-	minor = drm_minor_acquire(&drm_minors_xa, iminor(inode));
+	minor = drm_minor_acquire(iminor(inode));
 	if (IS_ERR(minor))
 		return PTR_ERR(minor);
 
@@ -1065,12 +1062,11 @@ static const struct file_operations drm_stub_fops = {
 static void drm_core_exit(void)
 {
 	drm_privacy_screen_lookup_exit();
-	drm_panic_exit();
 	accel_core_exit();
 	unregister_chrdev(DRM_MAJOR, "drm");
 	debugfs_remove(drm_debugfs_root);
 	drm_sysfs_destroy();
-	WARN_ON(!xa_empty(&drm_minors_xa));
+	idr_destroy(&drm_minors_idr);
 	drm_connector_ida_destroy();
 }
 
@@ -1079,6 +1075,7 @@ static int __init drm_core_init(void)
 	int ret;
 
 	drm_connector_ida_init();
+	idr_init(&drm_minors_idr);
 	drm_memcpy_init_early();
 
 	ret = drm_sysfs_init();
@@ -1096,8 +1093,6 @@ static int __init drm_core_init(void)
 	ret = accel_core_init();
 	if (ret < 0)
 		goto error;
-
-	drm_panic_init();
 
 	drm_privacy_screen_lookup_init();
 

@@ -13,7 +13,7 @@ struct mini_Qdisc;
 struct tcx_entry {
 	struct mini_Qdisc __rcu *miniq;
 	struct bpf_mprog_bundle bundle;
-	u32 miniq_active;
+	bool miniq_active;
 	struct rcu_head rcu;
 };
 
@@ -75,9 +75,9 @@ tcx_entry_fetch(struct net_device *dev, bool ingress)
 		return rcu_dereference_rtnl(dev->tcx_egress);
 }
 
-static inline struct bpf_mprog_entry *tcx_entry_create_noprof(void)
+static inline struct bpf_mprog_entry *tcx_entry_create(void)
 {
-	struct tcx_entry *tcx = kzalloc_noprof(sizeof(*tcx), GFP_KERNEL);
+	struct tcx_entry *tcx = kzalloc(sizeof(*tcx), GFP_KERNEL);
 
 	if (tcx) {
 		bpf_mprog_bundle_init(&tcx->bundle);
@@ -85,7 +85,6 @@ static inline struct bpf_mprog_entry *tcx_entry_create_noprof(void)
 	}
 	return NULL;
 }
-#define tcx_entry_create(...)	alloc_hooks(tcx_entry_create_noprof(__VA_ARGS__))
 
 static inline void tcx_entry_free(struct bpf_mprog_entry *entry)
 {
@@ -125,16 +124,11 @@ static inline void tcx_skeys_dec(bool ingress)
 	tcx_dec();
 }
 
-static inline void tcx_miniq_inc(struct bpf_mprog_entry *entry)
+static inline void tcx_miniq_set_active(struct bpf_mprog_entry *entry,
+					const bool active)
 {
 	ASSERT_RTNL();
-	tcx_entry(entry)->miniq_active++;
-}
-
-static inline void tcx_miniq_dec(struct bpf_mprog_entry *entry)
-{
-	ASSERT_RTNL();
-	tcx_entry(entry)->miniq_active--;
+	tcx_entry(entry)->miniq_active = active;
 }
 
 static inline bool tcx_entry_is_active(struct bpf_mprog_entry *entry)

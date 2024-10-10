@@ -1367,9 +1367,9 @@ retry:
 		locks_wake_up_blocks(&left->c);
 	}
  out:
-	trace_posix_lock_inode(inode, request, error);
 	spin_unlock(&ctx->flc_lock);
 	percpu_up_read(&file_rwsem);
+	trace_posix_lock_inode(inode, request, error);
 	/*
 	 * Free any unused locks.
 	 */
@@ -1451,7 +1451,7 @@ int lease_modify(struct file_lease *fl, int arg, struct list_head *dispose)
 		struct file *filp = fl->c.flc_file;
 
 		f_delown(filp);
-		file_f_owner(filp)->signum = 0;
+		filp->f_owner.signum = 0;
 		fasync_helper(0, fl->c.flc_file, 0, &fl->fl_fasync);
 		if (fl->fl_fasync != NULL) {
 			printk(KERN_ERR "locks_delete_lock: fasync == %p\n", fl->fl_fasync);
@@ -1782,10 +1782,6 @@ generic_add_lease(struct file *filp, int arg, struct file_lease **flp, void **pr
 
 	lease = *flp;
 	trace_generic_add_lease(inode, lease);
-
-	error = file_f_owner_allocate(filp);
-	if (error)
-		return error;
 
 	/* Note that arg is never F_UNLCK here */
 	ctx = locks_get_lock_context(inode, arg);
@@ -2157,15 +2153,15 @@ SYSCALL_DEFINE2(flock, unsigned int, fd, unsigned int, cmd)
 
 	error = -EBADF;
 	f = fdget(fd);
-	if (!fd_file(f))
+	if (!f.file)
 		return error;
 
-	if (type != F_UNLCK && !(fd_file(f)->f_mode & (FMODE_READ | FMODE_WRITE)))
+	if (type != F_UNLCK && !(f.file->f_mode & (FMODE_READ | FMODE_WRITE)))
 		goto out_putf;
 
-	flock_make_lock(fd_file(f), &fl, type);
+	flock_make_lock(f.file, &fl, type);
 
-	error = security_file_lock(fd_file(f), fl.c.flc_type);
+	error = security_file_lock(f.file, fl.c.flc_type);
 	if (error)
 		goto out_putf;
 
@@ -2173,12 +2169,12 @@ SYSCALL_DEFINE2(flock, unsigned int, fd, unsigned int, cmd)
 	if (can_sleep)
 		fl.c.flc_flags |= FL_SLEEP;
 
-	if (fd_file(f)->f_op->flock)
-		error = fd_file(f)->f_op->flock(fd_file(f),
+	if (f.file->f_op->flock)
+		error = f.file->f_op->flock(f.file,
 					    (can_sleep) ? F_SETLKW : F_SETLK,
 					    &fl);
 	else
-		error = locks_lock_file_wait(fd_file(f), &fl);
+		error = locks_lock_file_wait(f.file, &fl);
 
 	locks_release_private(&fl);
  out_putf:
@@ -2452,9 +2448,8 @@ int fcntl_setlk(unsigned int fd, struct file *filp, unsigned int cmd,
 	error = do_lock_file_wait(filp, cmd, file_lock);
 
 	/*
-	 * Detect close/fcntl races and recover by zapping all POSIX locks
-	 * associated with this file and our files_struct, just like on
-	 * filp_flush(). There is no need to do that when we're
+	 * Attempt to detect a close/fcntl race and recover by releasing the
+	 * lock that was just acquired. There is no need to do that when we're
 	 * unlocking though, or for OFD locks.
 	 */
 	if (!error && file_lock->c.flc_type != F_UNLCK &&
@@ -2469,7 +2464,9 @@ int fcntl_setlk(unsigned int fd, struct file *filp, unsigned int cmd,
 		f = files_lookup_fd_locked(files, fd);
 		spin_unlock(&files->file_lock);
 		if (f != filp) {
-			locks_remove_posix(filp, files);
+			file_lock->c.flc_type = F_UNLCK;
+			error = do_lock_file_wait(filp, cmd, file_lock);
+			WARN_ON_ONCE(error);
 			error = -EBADF;
 		}
 	}
@@ -2574,9 +2571,8 @@ int fcntl_setlk64(unsigned int fd, struct file *filp, unsigned int cmd,
 	error = do_lock_file_wait(filp, cmd, file_lock);
 
 	/*
-	 * Detect close/fcntl races and recover by zapping all POSIX locks
-	 * associated with this file and our files_struct, just like on
-	 * filp_flush(). There is no need to do that when we're
+	 * Attempt to detect a close/fcntl race and recover by releasing the
+	 * lock that was just acquired. There is no need to do that when we're
 	 * unlocking though, or for OFD locks.
 	 */
 	if (!error && file_lock->c.flc_type != F_UNLCK &&
@@ -2591,7 +2587,9 @@ int fcntl_setlk64(unsigned int fd, struct file *filp, unsigned int cmd,
 		f = files_lookup_fd_locked(files, fd);
 		spin_unlock(&files->file_lock);
 		if (f != filp) {
-			locks_remove_posix(filp, files);
+			file_lock->c.flc_type = F_UNLCK;
+			error = do_lock_file_wait(filp, cmd, file_lock);
+			WARN_ON_ONCE(error);
 			error = -EBADF;
 		}
 	}
@@ -2988,7 +2986,7 @@ static int __init filelock_init(void)
 	filelock_cache = kmem_cache_create("file_lock_cache",
 			sizeof(struct file_lock), 0, SLAB_PANIC, NULL);
 
-	filelease_cache = kmem_cache_create("file_lease_cache",
+	filelease_cache = kmem_cache_create("file_lock_cache",
 			sizeof(struct file_lease), 0, SLAB_PANIC, NULL);
 
 	for_each_possible_cpu(i) {

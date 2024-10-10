@@ -163,7 +163,6 @@ MODULE_DEVICE_TABLE(of, bcm2835_thermal_of_match_table);
 
 static int bcm2835_thermal_probe(struct platform_device *pdev)
 {
-	struct device *dev = &pdev->dev;
 	const struct of_device_id *match;
 	struct thermal_zone_device *tz;
 	struct bcm2835_thermal_data *data;
@@ -171,11 +170,12 @@ static int bcm2835_thermal_probe(struct platform_device *pdev)
 	u32 val;
 	unsigned long rate;
 
-	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
-	match = of_match_device(bcm2835_thermal_of_match_table, dev);
+	match = of_match_device(bcm2835_thermal_of_match_table,
+				&pdev->dev);
 	if (!match)
 		return -EINVAL;
 
@@ -185,20 +185,34 @@ static int bcm2835_thermal_probe(struct platform_device *pdev)
 		return err;
 	}
 
-	data->clk = devm_clk_get_enabled(dev, NULL);
-	if (IS_ERR(data->clk))
-		return dev_err_probe(dev, PTR_ERR(data->clk), "Could not get clk\n");
+	data->clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(data->clk)) {
+		err = PTR_ERR(data->clk);
+		if (err != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Could not get clk: %d\n", err);
+		return err;
+	}
+
+	err = clk_prepare_enable(data->clk);
+	if (err)
+		return err;
 
 	rate = clk_get_rate(data->clk);
 	if ((rate < 1920000) || (rate > 5000000))
-		dev_warn(dev,
+		dev_warn(&pdev->dev,
 			 "Clock %pCn running at %lu Hz is outside of the recommended range: 1.92 to 5MHz\n",
 			 data->clk, rate);
 
 	/* register of thermal sensor and get info from DT */
-	tz = devm_thermal_of_zone_register(dev, 0, data, &bcm2835_thermal_ops);
-	if (IS_ERR(tz))
-		return dev_err_probe(dev, PTR_ERR(tz), "Failed to register the thermal device\n");
+	tz = devm_thermal_of_zone_register(&pdev->dev, 0, data,
+					   &bcm2835_thermal_ops);
+	if (IS_ERR(tz)) {
+		err = PTR_ERR(tz);
+		dev_err(&pdev->dev,
+			"Failed to register the thermal device: %d\n",
+			err);
+		goto err_clk;
+	}
 
 	/*
 	 * right now the FW does set up the HW-block, so we are not
@@ -208,7 +222,8 @@ static int bcm2835_thermal_probe(struct platform_device *pdev)
 	 */
 	val = readl(data->regs + BCM2835_TS_TSENSCTL);
 	if (!(val & BCM2835_TS_TSENSCTL_RSTB)) {
-		int offset, slope, crit_temp;
+		struct thermal_trip trip;
+		int offset, slope;
 
 		slope = thermal_zone_get_slope(tz);
 		offset = thermal_zone_get_offset(tz);
@@ -216,10 +231,12 @@ static int bcm2835_thermal_probe(struct platform_device *pdev)
 		 * For now we deal only with critical, otherwise
 		 * would need to iterate
 		 */
-		err = thermal_zone_get_crit_temp(tz, &crit_temp);
+		err = thermal_zone_get_trip(tz, 0, &trip);
 		if (err < 0) {
-			dev_err(dev, "Not able to read trip_temp: %d\n", err);
-			return err;
+			dev_err(&pdev->dev,
+				"Not able to read trip_temp: %d\n",
+				err);
+			goto err_tz;
 		}
 
 		/* set bandgap reference voltage and enable voltage regulator */
@@ -231,7 +248,7 @@ static int bcm2835_thermal_probe(struct platform_device *pdev)
 		val |= (0xFE << BCM2835_TS_TSENSCTL_RSTDELAY_SHIFT);
 
 		/*  trip_adc value from info */
-		val |= bcm2835_thermal_temp2adc(crit_temp,
+		val |= bcm2835_thermal_temp2adc(trip.temperature,
 						offset,
 						slope)
 			<< BCM2835_TS_TSENSCTL_THOLD_SHIFT;
@@ -252,11 +269,17 @@ static int bcm2835_thermal_probe(struct platform_device *pdev)
 	 */
 	err = thermal_add_hwmon_sysfs(tz);
 	if (err)
-		return err;
+		goto err_tz;
 
 	bcm2835_thermal_debugfs(pdev);
 
 	return 0;
+err_tz:
+	devm_thermal_of_zone_unregister(&pdev->dev, tz);
+err_clk:
+	clk_disable_unprepare(data->clk);
+
+	return err;
 }
 
 static void bcm2835_thermal_remove(struct platform_device *pdev)
@@ -264,6 +287,7 @@ static void bcm2835_thermal_remove(struct platform_device *pdev)
 	struct bcm2835_thermal_data *data = platform_get_drvdata(pdev);
 
 	debugfs_remove_recursive(data->debugfsdir);
+	clk_disable_unprepare(data->clk);
 }
 
 static struct platform_driver bcm2835_thermal_driver = {

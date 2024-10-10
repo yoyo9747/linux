@@ -35,9 +35,10 @@
 // of the (filtered) output from the PCM5142 codec.
 
 #include <linux/clk.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
 
 #include <sound/soc.h>
@@ -431,7 +432,7 @@ static struct platform_driver tse850_driver = {
 		.of_match_table = tse850_dt_ids,
 	},
 	.probe = tse850_probe,
-	.remove = tse850_remove,
+	.remove_new = tse850_remove,
 };
 
 module_platform_driver(tse850_driver);

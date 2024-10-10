@@ -479,8 +479,11 @@ static int solve_linear_system(struct bch_control *bch, unsigned int *rows,
 		/* find suitable row for elimination */
 		for (r = p; r < m; r++) {
 			if (rows[r] & mask) {
-				if (r != p)
-					swap(rows[r], rows[p]);
+				if (r != p) {
+					tmp = rows[r];
+					rows[r] = rows[p];
+					rows[p] = tmp;
+				}
 				rem = r+1;
 				break;
 			}
@@ -796,14 +799,21 @@ static void gf_poly_div(struct bch_control *bch, struct gf_poly *a,
 static struct gf_poly *gf_poly_gcd(struct bch_control *bch, struct gf_poly *a,
 				   struct gf_poly *b)
 {
+	struct gf_poly *tmp;
+
 	dbg("gcd(%s,%s)=", gf_poly_str(a), gf_poly_str(b));
 
-	if (a->deg < b->deg)
-		swap(a, b);
+	if (a->deg < b->deg) {
+		tmp = b;
+		b = a;
+		a = tmp;
+	}
 
 	while (b->deg > 0) {
 		gf_poly_mod(bch, a, b, NULL);
-		swap(a, b);
+		tmp = b;
+		b = a;
+		a = tmp;
 	}
 
 	dbg("%s\n", gf_poly_str(a));

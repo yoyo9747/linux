@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 #include <linux/stddef.h>
 #include <linux/export.h>
+#include <linux/moduleloader.h>
 #include <linux/kallsyms.h>
 #include <linux/freezer.h>
 #include <linux/seq_file.h>
@@ -38,7 +39,6 @@
 #include <linux/jump_label.h>
 #include <linux/static_call.h>
 #include <linux/perf_event.h>
-#include <linux/execmem.h>
 
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
@@ -113,17 +113,17 @@ enum kprobe_slot_state {
 void __weak *alloc_insn_page(void)
 {
 	/*
-	 * Use execmem_alloc() so this page is within +/- 2GB of where the
+	 * Use module_alloc() so this page is within +/- 2GB of where the
 	 * kernel image and loaded module images reside. This is required
 	 * for most of the architectures.
 	 * (e.g. x86-64 needs this to handle the %rip-relative fixups.)
 	 */
-	return execmem_alloc(EXECMEM_KPROBES, PAGE_SIZE);
+	return module_alloc(PAGE_SIZE);
 }
 
 static void free_insn_page(void *page)
 {
-	execmem_free(page);
+	module_memfree(page);
 }
 
 struct kprobe_insn_cache kprobe_insn_slots = {
@@ -939,7 +939,7 @@ static void unoptimize_all_kprobes(void)
 
 static DEFINE_MUTEX(kprobe_sysctl_mutex);
 static int sysctl_kprobes_optimization;
-static int proc_kprobes_optimization_handler(const struct ctl_table *table,
+static int proc_kprobes_optimization_handler(struct ctl_table *table,
 					     int write, void *buffer,
 					     size_t *length, loff_t *ppos)
 {
@@ -968,6 +968,7 @@ static struct ctl_table kprobe_sysctls[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_ONE,
 	},
+	{}
 };
 
 static void __init kprobe_sysctls_init(void)
@@ -1067,7 +1068,6 @@ static struct ftrace_ops kprobe_ipmodify_ops __read_mostly = {
 
 static int kprobe_ipmodify_enabled;
 static int kprobe_ftrace_enabled;
-bool kprobe_ftrace_disabled;
 
 static int __arm_kprobe_ftrace(struct kprobe *p, struct ftrace_ops *ops,
 			       int *cnt)
@@ -1135,11 +1135,6 @@ static int disarm_kprobe_ftrace(struct kprobe *p)
 	return __disarm_kprobe_ftrace(p,
 		ipmodify ? &kprobe_ipmodify_ops : &kprobe_ftrace_ops,
 		ipmodify ? &kprobe_ipmodify_enabled : &kprobe_ftrace_enabled);
-}
-
-void kprobe_ftrace_kill(void)
-{
-	kprobe_ftrace_disabled = true;
 }
 #else	/* !CONFIG_KPROBES_ON_FTRACE */
 static inline int arm_kprobe_ftrace(struct kprobe *p)
@@ -1557,8 +1552,8 @@ static bool is_cfi_preamble_symbol(unsigned long addr)
 	if (lookup_symbol_name(addr, symbuf))
 		return false;
 
-	return str_has_prefix(symbuf, "__cfi_") ||
-		str_has_prefix(symbuf, "__pfx_");
+	return str_has_prefix("__cfi_", symbuf) ||
+		str_has_prefix("__pfx_", symbuf);
 }
 
 static int check_kprobe_address_safe(struct kprobe *p,
@@ -1593,7 +1588,7 @@ static int check_kprobe_address_safe(struct kprobe *p,
 	}
 
 	/* Get module refcount and reject __init functions for loaded modules. */
-	if (IS_ENABLED(CONFIG_MODULES) && *probed_mod) {
+	if (*probed_mod) {
 		/*
 		 * We must hold a refcount of the probed module while updating
 		 * its code to prohibit unexpected unloading.
@@ -1608,13 +1603,12 @@ static int check_kprobe_address_safe(struct kprobe *p,
 		 * kprobes in there.
 		 */
 		if (within_module_init((unsigned long)p->addr, *probed_mod) &&
-		    !module_is_coming(*probed_mod)) {
+		    (*probed_mod)->state != MODULE_STATE_COMING) {
 			module_put(*probed_mod);
 			*probed_mod = NULL;
 			ret = -ENOENT;
 		}
 	}
-
 out:
 	preempt_enable();
 	jump_label_unlock();
@@ -2494,6 +2488,24 @@ int kprobe_add_area_blacklist(unsigned long start, unsigned long end)
 	return 0;
 }
 
+/* Remove all symbols in given area from kprobe blacklist */
+static void kprobe_remove_area_blacklist(unsigned long start, unsigned long end)
+{
+	struct kprobe_blacklist_entry *ent, *n;
+
+	list_for_each_entry_safe(ent, n, &kprobe_blacklist, list) {
+		if (ent->start_addr < start || ent->start_addr >= end)
+			continue;
+		list_del(&ent->list);
+		kfree(ent);
+	}
+}
+
+static void kprobe_remove_ksym_blacklist(unsigned long entry)
+{
+	kprobe_remove_area_blacklist(entry, entry + 1);
+}
+
 int __weak arch_kprobe_get_kallsym(unsigned int *symnum, unsigned long *value,
 				   char *type, char *sym)
 {
@@ -2556,25 +2568,6 @@ static int __init populate_kprobe_blacklist(unsigned long *start,
 					(unsigned long)__noinstr_text_end);
 
 	return ret ? : arch_populate_kprobe_blacklist();
-}
-
-#ifdef CONFIG_MODULES
-/* Remove all symbols in given area from kprobe blacklist */
-static void kprobe_remove_area_blacklist(unsigned long start, unsigned long end)
-{
-	struct kprobe_blacklist_entry *ent, *n;
-
-	list_for_each_entry_safe(ent, n, &kprobe_blacklist, list) {
-		if (ent->start_addr < start || ent->start_addr >= end)
-			continue;
-		list_del(&ent->list);
-		kfree(ent);
-	}
-}
-
-static void kprobe_remove_ksym_blacklist(unsigned long entry)
-{
-	kprobe_remove_area_blacklist(entry, entry + 1);
 }
 
 static void add_module_kprobe_blacklist(struct module *mod)
@@ -2679,17 +2672,6 @@ static struct notifier_block kprobe_module_nb = {
 	.priority = 0
 };
 
-static int kprobe_register_module_notifier(void)
-{
-	return register_module_notifier(&kprobe_module_nb);
-}
-#else
-static int kprobe_register_module_notifier(void)
-{
-	return 0;
-}
-#endif /* CONFIG_MODULES */
-
 void kprobe_free_init_mem(void)
 {
 	void *start = (void *)(&__init_begin);
@@ -2749,7 +2731,7 @@ static int __init init_kprobes(void)
 	if (!err)
 		err = register_die_notifier(&kprobe_exceptions_nb);
 	if (!err)
-		err = kprobe_register_module_notifier();
+		err = register_module_notifier(&kprobe_module_nb);
 
 	kprobes_initialized = (err == 0);
 	kprobe_sysctls_init();

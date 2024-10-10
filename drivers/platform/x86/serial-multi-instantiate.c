@@ -83,15 +83,11 @@ static int smi_get_irq(struct platform_device *pdev, struct acpi_device *adev,
 
 static void smi_devs_unregister(struct smi *smi)
 {
-#if IS_REACHABLE(CONFIG_I2C)
 	while (smi->i2c_num--)
 		i2c_unregister_device(smi->i2c_devs[smi->i2c_num]);
-#endif
 
-	if (IS_REACHABLE(CONFIG_SPI)) {
-		while (smi->spi_num--)
-			spi_unregister_device(smi->spi_devs[smi->spi_num]);
-	}
+	while (smi->spi_num--)
+		spi_unregister_device(smi->spi_devs[smi->spi_num]);
 }
 
 /**
@@ -135,7 +131,7 @@ static int smi_spi_probe(struct platform_device *pdev, struct smi *smi,
 
 		ctlr = spi_dev->controller;
 
-		strscpy(spi_dev->modalias, inst_array[i].type);
+		strscpy(spi_dev->modalias, inst_array[i].type, sizeof(spi_dev->modalias));
 
 		ret = smi_get_irq(pdev, adev, &inst_array[i]);
 		if (ret < 0) {
@@ -209,7 +205,7 @@ static int smi_i2c_probe(struct platform_device *pdev, struct smi *smi,
 
 	for (i = 0; i < count && inst_array[i].type; i++) {
 		memset(&board_info, 0, sizeof(board_info));
-		strscpy(board_info.type, inst_array[i].type);
+		strscpy(board_info.type, inst_array[i].type, I2C_NAME_SIZE);
 		snprintf(name, sizeof(name), "%s-%s.%d", dev_name(dev), inst_array[i].type, i);
 		board_info.dev_name = name;
 
@@ -262,15 +258,9 @@ static int smi_probe(struct platform_device *pdev)
 
 	switch (node->bus_type) {
 	case SMI_I2C:
-		if (IS_REACHABLE(CONFIG_I2C))
-			return smi_i2c_probe(pdev, smi, node->instances);
-
-		return -ENODEV;
+		return smi_i2c_probe(pdev, smi, node->instances);
 	case SMI_SPI:
-		if (IS_REACHABLE(CONFIG_SPI))
-			return smi_spi_probe(pdev, smi, node->instances);
-
-		return -ENODEV;
+		return smi_spi_probe(pdev, smi, node->instances);
 	case SMI_AUTO_DETECT:
 		/*
 		 * For backwards-compatibility with the existing nodes I2C
@@ -280,16 +270,10 @@ static int smi_probe(struct platform_device *pdev)
 		 * SpiSerialBus nodes that were previously ignored, and this
 		 * preserves that behavior.
 		 */
-		if (IS_REACHABLE(CONFIG_I2C)) {
-			ret = smi_i2c_probe(pdev, smi, node->instances);
-			if (ret != -ENOENT)
-				return ret;
-		}
-
-		if (IS_REACHABLE(CONFIG_SPI))
-			return smi_spi_probe(pdev, smi, node->instances);
-
-		return -ENODEV;
+		ret = smi_i2c_probe(pdev, smi, node->instances);
+		if (ret != -ENOENT)
+			return ret;
+		return smi_spi_probe(pdev, smi, node->instances);
 	default:
 		return -EINVAL;
 	}

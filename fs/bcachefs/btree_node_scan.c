@@ -22,9 +22,7 @@ struct find_btree_nodes_worker {
 
 static void found_btree_node_to_text(struct printbuf *out, struct bch_fs *c, const struct found_btree_node *n)
 {
-	prt_printf(out, "%s l=%u seq=%u journal_seq=%llu cookie=%llx ",
-		   bch2_btree_id_str(n->btree_id), n->level, n->seq,
-		   n->journal_seq, n->cookie);
+	prt_printf(out, "%s l=%u seq=%u cookie=%llx ", bch2_btree_id_str(n->btree_id), n->level, n->seq, n->cookie);
 	bch2_bpos_to_text(out, n->min_key);
 	prt_str(out, "-");
 	bch2_bpos_to_text(out, n->max_key);
@@ -65,38 +63,19 @@ static void found_btree_node_to_key(struct bkey_i *k, const struct found_btree_n
 	memcpy(bp->v.start, f->ptrs, sizeof(struct bch_extent_ptr) * f->nr_ptrs);
 }
 
-static inline u64 bkey_journal_seq(struct bkey_s_c k)
-{
-	switch (k.k->type) {
-	case KEY_TYPE_inode_v3:
-		return le64_to_cpu(bkey_s_c_to_inode_v3(k).v->bi_journal_seq);
-	default:
-		return 0;
-	}
-}
-
 static bool found_btree_node_is_readable(struct btree_trans *trans,
 					 struct found_btree_node *f)
 {
-	struct { __BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX); } tmp;
+	struct { __BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX); } k;
 
-	found_btree_node_to_key(&tmp.k, f);
+	found_btree_node_to_key(&k.k, f);
 
-	struct btree *b = bch2_btree_node_get_noiter(trans, &tmp.k, f->btree_id, f->level, false);
+	struct btree *b = bch2_btree_node_get_noiter(trans, &k.k, f->btree_id, f->level, false);
 	bool ret = !IS_ERR_OR_NULL(b);
-	if (!ret)
-		return ret;
-
-	f->sectors_written = b->written;
-	f->journal_seq = le64_to_cpu(b->data->keys.journal_seq);
-
-	struct bkey_s_c k;
-	struct bkey unpacked;
-	struct btree_node_iter iter;
-	for_each_btree_node_key_unpack(b, k, &iter, &unpacked)
-		f->journal_seq = max(f->journal_seq, bkey_journal_seq(k));
-
-	six_unlock_read(&b->c.lock);
+	if (ret) {
+		f->sectors_written = b->written;
+		six_unlock_read(&b->c.lock);
+	}
 
 	/*
 	 * We might update this node's range; if that happens, we need the node
@@ -104,7 +83,7 @@ static bool found_btree_node_is_readable(struct btree_trans *trans,
 	 * this node
 	 */
 	if (b != btree_node_root(trans->c, b))
-		bch2_btree_node_evict(trans, &tmp.k);
+		bch2_btree_node_evict(trans, &k.k);
 	return ret;
 }
 
@@ -125,8 +104,7 @@ static int found_btree_node_cmp_cookie(const void *_l, const void *_r)
 static int found_btree_node_cmp_time(const struct found_btree_node *l,
 				     const struct found_btree_node *r)
 {
-	return  cmp_int(l->seq, r->seq) ?:
-		cmp_int(l->journal_seq, r->journal_seq);
+	return cmp_int(l->seq, r->seq);
 }
 
 static int found_btree_node_cmp_pos(const void *_l, const void *_r)
@@ -275,7 +253,7 @@ static int read_btree_nodes(struct find_btree_nodes *f)
 		w->ca		= ca;
 
 		t = kthread_run(read_btree_nodes_worker, w, "read_btree_nodes/%s", ca->name);
-		ret = PTR_ERR_OR_ZERO(t);
+		ret = IS_ERR_OR_NULL(t);
 		if (ret) {
 			percpu_ref_put(&ca->io_ref);
 			closure_put(&cl);
@@ -330,15 +308,15 @@ again:
 		} else if (n->level) {
 			n->overwritten = true;
 		} else {
-			if (bpos_cmp(start->max_key, n->max_key) >= 0)
-				n->overwritten = true;
-			else {
-				n->range_updated = true;
-				n->min_key = bpos_successor(start->max_key);
-				n->range_updated = true;
-				bubble_up(n, end);
-				goto again;
-			}
+			struct printbuf buf = PRINTBUF;
+
+			prt_str(&buf, "overlapping btree nodes with same seq! halting\n  ");
+			found_btree_node_to_text(&buf, c, start);
+			prt_str(&buf, "\n  ");
+			found_btree_node_to_text(&buf, c, n);
+			bch_err(c, "%s", buf.buf);
+			printbuf_exit(&buf);
+			return -BCH_ERR_fsck_repair_unimplemented;
 		}
 	}
 
@@ -530,7 +508,7 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 		bch_verbose(c, "%s(): recovering %s", __func__, buf.buf);
 		printbuf_exit(&buf);
 
-		BUG_ON(bch2_bkey_validate(c, bkey_i_to_s_c(&tmp.k), BKEY_TYPE_btree, 0));
+		BUG_ON(bch2_bkey_invalid(c, bkey_i_to_s_c(&tmp.k), BKEY_TYPE_btree, 0, NULL));
 
 		ret = bch2_journal_key_insert(c, btree, level + 1, &tmp.k);
 		if (ret)

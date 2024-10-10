@@ -143,22 +143,17 @@
 			"AIN2R", "Line In Jack";
 	};
 
-	spdif_in: spdif-in {
-		compatible = "linux,spdif-dir";
-		#sound-dai-cells = <0>;
-	};
-
 	sound-spdif {
-		compatible = "fsl,imx-sabreauto-spdif",
-			     "fsl,imx-audio-spdif";
+		compatible = "fsl,imx-audio-spdif",
+			   "fsl,imx-sabreauto-spdif";
 		model = "imx-spdif";
-		audio-cpu = <&spdif>;
-		audio-codec = <&spdif_in>;
+		spdif-controller = <&spdif>;
+		spdif-in;
 	};
 
 	backlight {
 		compatible = "pwm-backlight";
-		pwms = <&pwm3 0 5000000 0>;
+		pwms = <&pwm3 0 5000000>;
 		brightness-levels = <0 4 8 16 32 64 128 255>;
 		default-brightness-level = <7>;
 		status = "okay";
@@ -695,7 +690,7 @@
 			>;
 		};
 
-		pinctrl_usdhc3_100mhz: usdhc3-100mhz-grp {
+		pinctrl_usdhc3_100mhz: usdhc3grp100mhz {
 			fsl,pins = <
 				MX6QDL_PAD_SD3_CMD__SD3_CMD		0x170b9
 				MX6QDL_PAD_SD3_CLK__SD3_CLK		0x100b9
@@ -710,7 +705,7 @@
 			>;
 		};
 
-		pinctrl_usdhc3_200mhz: usdhc3-200mhz-grp {
+		pinctrl_usdhc3_200mhz: usdhc3grp200mhz {
 			fsl,pins = <
 				MX6QDL_PAD_SD3_CMD__SD3_CMD		0x170f9
 				MX6QDL_PAD_SD3_CLK__SD3_CLK		0x100f9
@@ -791,7 +786,7 @@
 
 		display-timings {
 			native-mode = <&timing0>;
-			timing0: timing-hsd100pxn1 {
+			timing0: hsd100pxn1 {
 				clock-frequency = <65000000>;
 				hactive = <1024>;
 				vactive = <768>;
@@ -807,6 +802,7 @@
 };
 
 &pwm3 {
+	#pwm-cells = <2>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pwm3>;
 	status = "okay";

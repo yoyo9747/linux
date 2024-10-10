@@ -8,7 +8,6 @@
  *
  */
 
-#include "linux/virtio_net.h"
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/cdev.h>
@@ -29,7 +28,6 @@
 #include <uapi/linux/virtio_config.h>
 #include <uapi/linux/virtio_ids.h>
 #include <uapi/linux/virtio_blk.h>
-#include <uapi/linux/virtio_ring.h>
 #include <linux/mod_devicetable.h>
 
 #include "iova_domain.h"
@@ -143,7 +141,6 @@ static struct workqueue_struct *vduse_irq_bound_wq;
 
 static u32 allowed_device_id[] = {
 	VIRTIO_ID_BLOCK,
-	VIRTIO_ID_NET,
 };
 
 static inline struct vduse_dev *vdpa_to_vduse(struct vdpa_device *vdpa)
@@ -1708,21 +1705,13 @@ static bool device_is_allowed(u32 device_id)
 	return false;
 }
 
-static bool features_is_valid(struct vduse_dev_config *config)
+static bool features_is_valid(u64 features)
 {
-	if (!(config->features & BIT_ULL(VIRTIO_F_ACCESS_PLATFORM)))
+	if (!(features & (1ULL << VIRTIO_F_ACCESS_PLATFORM)))
 		return false;
 
 	/* Now we only support read-only configuration space */
-	if ((config->device_id == VIRTIO_ID_BLOCK) &&
-			(config->features & BIT_ULL(VIRTIO_BLK_F_CONFIG_WCE)))
-		return false;
-	else if ((config->device_id == VIRTIO_ID_NET) &&
-			(config->features & BIT_ULL(VIRTIO_NET_F_CTRL_VQ)))
-		return false;
-
-	if ((config->device_id == VIRTIO_ID_NET) &&
-			!(config->features & BIT_ULL(VIRTIO_F_VERSION_1)))
+	if (features & (1ULL << VIRTIO_BLK_F_CONFIG_WCE))
 		return false;
 
 	return true;
@@ -1749,7 +1738,7 @@ static bool vduse_validate_config(struct vduse_dev_config *config)
 	if (!device_is_allowed(config->device_id))
 		return false;
 
-	if (!features_is_valid(config))
+	if (!features_is_valid(config->features))
 		return false;
 
 	return true;
@@ -1831,10 +1820,6 @@ static int vduse_create_dev(struct vduse_dev_config *config,
 {
 	int ret;
 	struct vduse_dev *dev;
-
-	ret = -EPERM;
-	if ((config->device_id == VIRTIO_ID_NET) && !capable(CAP_NET_ADMIN))
-		goto err;
 
 	ret = -EEXIST;
 	if (vduse_find_dev(config->name))
@@ -2079,7 +2064,6 @@ static const struct vdpa_mgmtdev_ops vdpa_dev_mgmtdev_ops = {
 
 static struct virtio_device_id id_table[] = {
 	{ VIRTIO_ID_BLOCK, VIRTIO_DEV_ANY_ID },
-	{ VIRTIO_ID_NET, VIRTIO_DEV_ANY_ID },
 	{ 0 },
 };
 

@@ -837,5 +837,4 @@ complete:
 	return IRQ_HANDLED;
 }
 
-MODULE_DESCRIPTION("Intel Keem Bay OCS HCU Crypto Driver");
 MODULE_LICENSE("GPL");

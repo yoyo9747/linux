@@ -13,6 +13,7 @@
 #include <linux/firewire-constants.h>
 #include <linux/fs.h>
 #include <linux/init.h>
+#include <linux/idr.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -28,12 +29,37 @@
 #include <asm/byteorder.h>
 
 #include "core.h"
-#include "packet-header-definitions.h"
-#include "phy-packet-definitions.h"
-#include <trace/events/firewire.h>
 
-#define HEADER_DESTINATION_IS_BROADCAST(header) \
-	((async_header_get_destination(header) & 0x3f) == 0x3f)
+#define HEADER_PRI(pri)			((pri) << 0)
+#define HEADER_TCODE(tcode)		((tcode) << 4)
+#define HEADER_RETRY(retry)		((retry) << 8)
+#define HEADER_TLABEL(tlabel)		((tlabel) << 10)
+#define HEADER_DESTINATION(destination)	((destination) << 16)
+#define HEADER_SOURCE(source)		((source) << 16)
+#define HEADER_RCODE(rcode)		((rcode) << 12)
+#define HEADER_OFFSET_HIGH(offset_high)	((offset_high) << 0)
+#define HEADER_DATA_LENGTH(length)	((length) << 16)
+#define HEADER_EXTENDED_TCODE(tcode)	((tcode) << 0)
+
+#define HEADER_GET_TCODE(q)		(((q) >> 4) & 0x0f)
+#define HEADER_GET_TLABEL(q)		(((q) >> 10) & 0x3f)
+#define HEADER_GET_RCODE(q)		(((q) >> 12) & 0x0f)
+#define HEADER_GET_DESTINATION(q)	(((q) >> 16) & 0xffff)
+#define HEADER_GET_SOURCE(q)		(((q) >> 16) & 0xffff)
+#define HEADER_GET_OFFSET_HIGH(q)	(((q) >> 0) & 0xffff)
+#define HEADER_GET_DATA_LENGTH(q)	(((q) >> 16) & 0xffff)
+#define HEADER_GET_EXTENDED_TCODE(q)	(((q) >> 0) & 0xffff)
+
+#define HEADER_DESTINATION_IS_BROADCAST(q) \
+	(((q) & HEADER_DESTINATION(0x3f)) == HEADER_DESTINATION(0x3f))
+
+#define PHY_PACKET_CONFIG	0x0
+#define PHY_PACKET_LINK_ON	0x1
+#define PHY_PACKET_SELF_ID	0x2
+
+#define PHY_CONFIG_GAP_COUNT(gap_count)	(((gap_count) << 16) | (1 << 22))
+#define PHY_CONFIG_ROOT_ID(node_id)	((((node_id) & 0x3f) << 24) | (1 << 23))
+#define PHY_IDENTIFIER(id)		((id) << 30)
 
 /* returns 0 if the split timeout handler is already running */
 static int try_cancel_split_timeout(struct fw_transaction *t)
@@ -48,31 +74,35 @@ static int close_transaction(struct fw_transaction *transaction, struct fw_card 
 			     u32 response_tstamp)
 {
 	struct fw_transaction *t = NULL, *iter;
+	unsigned long flags;
 
-	scoped_guard(spinlock_irqsave, &card->lock) {
-		list_for_each_entry(iter, &card->transaction_list, link) {
-			if (iter == transaction) {
-				if (try_cancel_split_timeout(iter)) {
-					list_del_init(&iter->link);
-					card->tlabel_mask &= ~(1ULL << iter->tlabel);
-					t = iter;
-				}
-				break;
+	spin_lock_irqsave(&card->lock, flags);
+	list_for_each_entry(iter, &card->transaction_list, link) {
+		if (iter == transaction) {
+			if (!try_cancel_split_timeout(iter)) {
+				spin_unlock_irqrestore(&card->lock, flags);
+				goto timed_out;
 			}
+			list_del_init(&iter->link);
+			card->tlabel_mask &= ~(1ULL << iter->tlabel);
+			t = iter;
+			break;
 		}
 	}
+	spin_unlock_irqrestore(&card->lock, flags);
 
-	if (!t)
-		return -ENOENT;
-
-	if (!t->with_tstamp) {
-		t->callback.without_tstamp(card, rcode, NULL, 0, t->callback_data);
-	} else {
-		t->callback.with_tstamp(card, rcode, t->packet.timestamp, response_tstamp, NULL, 0,
-					t->callback_data);
+	if (t) {
+		if (!t->with_tstamp) {
+			t->callback.without_tstamp(card, rcode, NULL, 0, t->callback_data);
+		} else {
+			t->callback.with_tstamp(card, rcode, t->packet.timestamp, response_tstamp,
+						NULL, 0, t->callback_data);
+		}
+		return 0;
 	}
 
-	return 0;
+ timed_out:
+	return -ENOENT;
 }
 
 /*
@@ -116,13 +146,16 @@ static void split_transaction_timeout_callback(struct timer_list *timer)
 {
 	struct fw_transaction *t = from_timer(t, timer, split_timeout_timer);
 	struct fw_card *card = t->card;
+	unsigned long flags;
 
-	scoped_guard(spinlock_irqsave, &card->lock) {
-		if (list_empty(&t->link))
-			return;
-		list_del(&t->link);
-		card->tlabel_mask &= ~(1ULL << t->tlabel);
+	spin_lock_irqsave(&card->lock, flags);
+	if (list_empty(&t->link)) {
+		spin_unlock_irqrestore(&card->lock, flags);
+		return;
 	}
+	list_del(&t->link);
+	card->tlabel_mask &= ~(1ULL << t->tlabel);
+	spin_unlock_irqrestore(&card->lock, flags);
 
 	if (!t->with_tstamp) {
 		t->callback.without_tstamp(card, RCODE_CANCELLED, NULL, 0, t->callback_data);
@@ -135,14 +168,20 @@ static void split_transaction_timeout_callback(struct timer_list *timer)
 static void start_split_transaction_timeout(struct fw_transaction *t,
 					    struct fw_card *card)
 {
-	guard(spinlock_irqsave)(&card->lock);
+	unsigned long flags;
 
-	if (list_empty(&t->link) || WARN_ON(t->is_split_transaction))
+	spin_lock_irqsave(&card->lock, flags);
+
+	if (list_empty(&t->link) || WARN_ON(t->is_split_transaction)) {
+		spin_unlock_irqrestore(&card->lock, flags);
 		return;
+	}
 
 	t->is_split_transaction = true;
 	mod_timer(&t->split_timeout_timer,
 		  jiffies + card->split_timeout_jiffies);
+
+	spin_unlock_irqrestore(&card->lock, flags);
 }
 
 static u32 compute_split_timeout_timestamp(struct fw_card *card, u32 request_timestamp);
@@ -152,9 +191,6 @@ static void transmit_complete_callback(struct fw_packet *packet,
 {
 	struct fw_transaction *t =
 	    container_of(packet, struct fw_transaction, packet);
-
-	trace_async_request_outbound_complete((uintptr_t)t, card->index, packet->generation,
-					      packet->speed, status, packet->timestamp);
 
 	switch (status) {
 	case ACK_COMPLETE:
@@ -195,11 +231,10 @@ static void fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
 	int ext_tcode;
 
 	if (tcode == TCODE_STREAM_DATA) {
-		// The value of destination_id argument should include tag, channel, and sy fields
-		// as isochronous packet header has.
-		packet->header[0] = destination_id;
-		isoc_header_set_data_length(packet->header, length);
-		isoc_header_set_tcode(packet->header, TCODE_STREAM_DATA);
+		packet->header[0] =
+			HEADER_DATA_LENGTH(length) |
+			destination_id |
+			HEADER_TCODE(TCODE_STREAM_DATA);
 		packet->header_length = 4;
 		packet->payload = payload;
 		packet->payload_length = length;
@@ -213,24 +248,28 @@ static void fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
 	} else
 		ext_tcode = 0;
 
-	async_header_set_retry(packet->header, RETRY_X);
-	async_header_set_tlabel(packet->header, tlabel);
-	async_header_set_tcode(packet->header, tcode);
-	async_header_set_destination(packet->header, destination_id);
-	async_header_set_source(packet->header, source_id);
-	async_header_set_offset(packet->header, offset);
+	packet->header[0] =
+		HEADER_RETRY(RETRY_X) |
+		HEADER_TLABEL(tlabel) |
+		HEADER_TCODE(tcode) |
+		HEADER_DESTINATION(destination_id);
+	packet->header[1] =
+		HEADER_OFFSET_HIGH(offset >> 32) | HEADER_SOURCE(source_id);
+	packet->header[2] =
+		offset;
 
 	switch (tcode) {
 	case TCODE_WRITE_QUADLET_REQUEST:
-		async_header_set_quadlet_data(packet->header, *(u32 *)payload);
+		packet->header[3] = *(u32 *)payload;
 		packet->header_length = 16;
 		packet->payload_length = 0;
 		break;
 
 	case TCODE_LOCK_REQUEST:
 	case TCODE_WRITE_BLOCK_REQUEST:
-		async_header_set_data_length(packet->header, length);
-		async_header_set_extended_tcode(packet->header, ext_tcode);
+		packet->header[3] =
+			HEADER_DATA_LENGTH(length) |
+			HEADER_EXTENDED_TCODE(ext_tcode);
 		packet->header_length = 16;
 		packet->payload = payload;
 		packet->payload_length = length;
@@ -242,8 +281,9 @@ static void fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
 		break;
 
 	case TCODE_READ_BLOCK_REQUEST:
-		async_header_set_data_length(packet->header, length);
-		async_header_set_extended_tcode(packet->header, ext_tcode);
+		packet->header[3] =
+			HEADER_DATA_LENGTH(length) |
+			HEADER_EXTENDED_TCODE(ext_tcode);
 		packet->header_length = 16;
 		packet->payload_length = 0;
 		break;
@@ -377,10 +417,6 @@ void __fw_send_request(struct fw_card *card, struct fw_transaction *t, int tcode
 
 	spin_unlock_irqrestore(&card->lock, flags);
 
-	trace_async_request_outbound_initiate((uintptr_t)t, card->index, generation, speed,
-					      t->packet.header, payload,
-					      tcode_is_read_request(tcode) ? 0 : length / 4);
-
 	card->driver->send_request(card, &t->packet);
 }
 EXPORT_SYMBOL_GPL(__fw_send_request);
@@ -443,13 +479,12 @@ static DECLARE_COMPLETION(phy_config_done);
 static void transmit_phy_packet_callback(struct fw_packet *packet,
 					 struct fw_card *card, int status)
 {
-	trace_async_phy_outbound_complete((uintptr_t)packet, card->index, packet->generation, status,
-					  packet->timestamp);
 	complete(&phy_config_done);
 }
 
 static struct fw_packet phy_config_packet = {
 	.header_length	= 12,
+	.header[0]	= TCODE_LINK_INTERNAL << 4,
 	.payload_length	= 0,
 	.speed		= SCODE_100,
 	.callback	= transmit_phy_packet_callback,
@@ -459,14 +494,10 @@ void fw_send_phy_config(struct fw_card *card,
 			int node_id, int generation, int gap_count)
 {
 	long timeout = DIV_ROUND_UP(HZ, 10);
-	u32 data = 0;
+	u32 data = PHY_IDENTIFIER(PHY_PACKET_CONFIG);
 
-	phy_packet_set_packet_identifier(&data, PHY_PACKET_PACKET_IDENTIFIER_PHY_CONFIG);
-
-	if (node_id != FW_PHY_CONFIG_NO_NODE_ID) {
-		phy_packet_phy_config_set_root_id(&data, node_id);
-		phy_packet_phy_config_set_force_root_node(&data, true);
-	}
+	if (node_id != FW_PHY_CONFIG_NO_NODE_ID)
+		data |= PHY_CONFIG_ROOT_ID(node_id);
 
 	if (gap_count == FW_PHY_CONFIG_CURRENT_GAP_COUNT) {
 		gap_count = card->driver->read_phy_reg(card, 1);
@@ -477,23 +508,19 @@ void fw_send_phy_config(struct fw_card *card,
 		if (gap_count == 63)
 			return;
 	}
-	phy_packet_phy_config_set_gap_count(&data, gap_count);
-	phy_packet_phy_config_set_gap_count_optimization(&data, true);
+	data |= PHY_CONFIG_GAP_COUNT(gap_count);
 
-	guard(mutex)(&phy_config_mutex);
+	mutex_lock(&phy_config_mutex);
 
-	async_header_set_tcode(phy_config_packet.header, TCODE_LINK_INTERNAL);
 	phy_config_packet.header[1] = data;
 	phy_config_packet.header[2] = ~data;
 	phy_config_packet.generation = generation;
 	reinit_completion(&phy_config_done);
 
-	trace_async_phy_outbound_initiate((uintptr_t)&phy_config_packet, card->index,
-					  phy_config_packet.generation, phy_config_packet.header[1],
-					  phy_config_packet.header[2]);
-
 	card->driver->send_request(card, &phy_config_packet);
 	wait_for_completion_timeout(&phy_config_done, timeout);
+
+	mutex_unlock(&phy_config_mutex);
 }
 
 static struct fw_address_handler *lookup_overlapping_address_handler(
@@ -582,7 +609,7 @@ int fw_core_add_address_handler(struct fw_address_handler *handler,
 	    handler->length == 0)
 		return -EINVAL;
 
-	guard(spinlock)(&address_handler_list_lock);
+	spin_lock(&address_handler_list_lock);
 
 	handler->offset = region->start;
 	while (handler->offset + handler->length <= region->end) {
@@ -601,6 +628,8 @@ int fw_core_add_address_handler(struct fw_address_handler *handler,
 		}
 	}
 
+	spin_unlock(&address_handler_list_lock);
+
 	return ret;
 }
 EXPORT_SYMBOL(fw_core_add_address_handler);
@@ -616,9 +645,9 @@ EXPORT_SYMBOL(fw_core_add_address_handler);
  */
 void fw_core_remove_address_handler(struct fw_address_handler *handler)
 {
-	scoped_guard(spinlock, &address_handler_list_lock)
-		list_del_rcu(&handler->link);
-
+	spin_lock(&address_handler_list_lock);
+	list_del_rcu(&handler->link);
+	spin_unlock(&address_handler_list_lock);
 	synchronize_rcu();
 }
 EXPORT_SYMBOL(fw_core_remove_address_handler);
@@ -626,7 +655,7 @@ EXPORT_SYMBOL(fw_core_remove_address_handler);
 struct fw_request {
 	struct kref kref;
 	struct fw_packet response;
-	u32 request_header[ASYNC_HEADER_QUADLET_COUNT];
+	u32 request_header[4];
 	int ack;
 	u32 timestamp;
 	u32 length;
@@ -655,9 +684,6 @@ static void free_response_callback(struct fw_packet *packet,
 {
 	struct fw_request *request = container_of(packet, struct fw_request, response);
 
-	trace_async_response_outbound_complete((uintptr_t)request, card->index, packet->generation,
-					       packet->speed, status, packet->timestamp);
-
 	// Decrease the reference count since not at in-flight.
 	fw_request_put(request);
 
@@ -669,7 +695,7 @@ int fw_get_response_length(struct fw_request *r)
 {
 	int tcode, ext_tcode, data_length;
 
-	tcode = async_header_get_tcode(r->request_header);
+	tcode = HEADER_GET_TCODE(r->request_header[0]);
 
 	switch (tcode) {
 	case TCODE_WRITE_QUADLET_REQUEST:
@@ -680,12 +706,12 @@ int fw_get_response_length(struct fw_request *r)
 		return 4;
 
 	case TCODE_READ_BLOCK_REQUEST:
-		data_length = async_header_get_data_length(r->request_header);
+		data_length = HEADER_GET_DATA_LENGTH(r->request_header[3]);
 		return data_length;
 
 	case TCODE_LOCK_REQUEST:
-		ext_tcode = async_header_get_extended_tcode(r->request_header);
-		data_length = async_header_get_data_length(r->request_header);
+		ext_tcode = HEADER_GET_EXTENDED_TCODE(r->request_header[3]);
+		data_length = HEADER_GET_DATA_LENGTH(r->request_header[3]);
 		switch (ext_tcode) {
 		case EXTCODE_FETCH_ADD:
 		case EXTCODE_LITTLE_ADD:
@@ -705,42 +731,46 @@ void fw_fill_response(struct fw_packet *response, u32 *request_header,
 {
 	int tcode, tlabel, extended_tcode, source, destination;
 
-	tcode = async_header_get_tcode(request_header);
-	tlabel = async_header_get_tlabel(request_header);
-	source = async_header_get_destination(request_header); // Exchange.
-	destination = async_header_get_source(request_header); // Exchange.
-	extended_tcode = async_header_get_extended_tcode(request_header);
+	tcode          = HEADER_GET_TCODE(request_header[0]);
+	tlabel         = HEADER_GET_TLABEL(request_header[0]);
+	source         = HEADER_GET_DESTINATION(request_header[0]);
+	destination    = HEADER_GET_SOURCE(request_header[1]);
+	extended_tcode = HEADER_GET_EXTENDED_TCODE(request_header[3]);
 
-	async_header_set_retry(response->header, RETRY_1);
-	async_header_set_tlabel(response->header, tlabel);
-	async_header_set_destination(response->header, destination);
-	async_header_set_source(response->header, source);
-	async_header_set_rcode(response->header, rcode);
-	response->header[2] = 0;	// The field is reserved.
+	response->header[0] =
+		HEADER_RETRY(RETRY_1) |
+		HEADER_TLABEL(tlabel) |
+		HEADER_DESTINATION(destination);
+	response->header[1] =
+		HEADER_SOURCE(source) |
+		HEADER_RCODE(rcode);
+	response->header[2] = 0;
 
 	switch (tcode) {
 	case TCODE_WRITE_QUADLET_REQUEST:
 	case TCODE_WRITE_BLOCK_REQUEST:
-		async_header_set_tcode(response->header, TCODE_WRITE_RESPONSE);
+		response->header[0] |= HEADER_TCODE(TCODE_WRITE_RESPONSE);
 		response->header_length = 12;
 		response->payload_length = 0;
 		break;
 
 	case TCODE_READ_QUADLET_REQUEST:
-		async_header_set_tcode(response->header, TCODE_READ_QUADLET_RESPONSE);
+		response->header[0] |=
+			HEADER_TCODE(TCODE_READ_QUADLET_RESPONSE);
 		if (payload != NULL)
-			async_header_set_quadlet_data(response->header, *(u32 *)payload);
+			response->header[3] = *(u32 *)payload;
 		else
-			async_header_set_quadlet_data(response->header, 0);
+			response->header[3] = 0;
 		response->header_length = 16;
 		response->payload_length = 0;
 		break;
 
 	case TCODE_READ_BLOCK_REQUEST:
 	case TCODE_LOCK_REQUEST:
-		async_header_set_tcode(response->header, tcode + 2);
-		async_header_set_data_length(response->header, length);
-		async_header_set_extended_tcode(response->header, extended_tcode);
+		response->header[0] |= HEADER_TCODE(tcode + 2);
+		response->header[3] =
+			HEADER_DATA_LENGTH(length) |
+			HEADER_EXTENDED_TCODE(extended_tcode);
 		response->header_length = 16;
 		response->payload = payload;
 		response->payload_length = length;
@@ -777,7 +807,7 @@ static struct fw_request *allocate_request(struct fw_card *card,
 	u32 *data, length;
 	int request_tcode;
 
-	request_tcode = async_header_get_tcode(p->header);
+	request_tcode = HEADER_GET_TCODE(p->header[0]);
 	switch (request_tcode) {
 	case TCODE_WRITE_QUADLET_REQUEST:
 		data = &p->header[3];
@@ -787,7 +817,7 @@ static struct fw_request *allocate_request(struct fw_card *card,
 	case TCODE_WRITE_BLOCK_REQUEST:
 	case TCODE_LOCK_REQUEST:
 		data = p->payload;
-		length = async_header_get_data_length(p->header);
+		length = HEADER_GET_DATA_LENGTH(p->header[3]);
 		break;
 
 	case TCODE_READ_QUADLET_REQUEST:
@@ -797,7 +827,7 @@ static struct fw_request *allocate_request(struct fw_card *card,
 
 	case TCODE_READ_BLOCK_REQUEST:
 		data = NULL;
-		length = async_header_get_data_length(p->header);
+		length = HEADER_GET_DATA_LENGTH(p->header[3]);
 		break;
 
 	default:
@@ -840,30 +870,23 @@ static struct fw_request *allocate_request(struct fw_card *card,
 void fw_send_response(struct fw_card *card,
 		      struct fw_request *request, int rcode)
 {
-	u32 *data = NULL;
-	unsigned int data_length = 0;
-
 	/* unified transaction or broadcast transaction: don't respond */
 	if (request->ack != ACK_PENDING ||
-	    HEADER_DESTINATION_IS_BROADCAST(request->request_header)) {
+	    HEADER_DESTINATION_IS_BROADCAST(request->request_header[0])) {
 		fw_request_put(request);
 		return;
 	}
 
-	if (rcode == RCODE_COMPLETE) {
-		data = request->data;
-		data_length = fw_get_response_length(request);
-	}
-
-	fw_fill_response(&request->response, request->request_header, rcode, data, data_length);
+	if (rcode == RCODE_COMPLETE)
+		fw_fill_response(&request->response, request->request_header,
+				 rcode, request->data,
+				 fw_get_response_length(request));
+	else
+		fw_fill_response(&request->response, request->request_header,
+				 rcode, NULL, 0);
 
 	// Increase the reference count so that the object is kept during in-flight.
 	fw_request_get(request);
-
-	trace_async_response_outbound_initiate((uintptr_t)request, card->index,
-					       request->response.generation, request->response.speed,
-					       request->response.header, data,
-					       data ? data_length / 4 : 0);
 
 	card->driver->send_response(card, &request->response);
 }
@@ -903,20 +926,22 @@ static void handle_exclusive_region_request(struct fw_card *card,
 	struct fw_address_handler *handler;
 	int tcode, destination, source;
 
-	destination = async_header_get_destination(p->header);
-	source = async_header_get_source(p->header);
-	tcode = async_header_get_tcode(p->header);
+	destination = HEADER_GET_DESTINATION(p->header[0]);
+	source      = HEADER_GET_SOURCE(p->header[1]);
+	tcode       = HEADER_GET_TCODE(p->header[0]);
 	if (tcode == TCODE_LOCK_REQUEST)
-		tcode = 0x10 + async_header_get_extended_tcode(p->header);
+		tcode = 0x10 + HEADER_GET_EXTENDED_TCODE(p->header[3]);
 
-	scoped_guard(rcu) {
-		handler = lookup_enclosing_address_handler(&address_handler_list, offset,
-							   request->length);
-		if (handler)
-			handler->address_callback(card, request, tcode, destination, source,
-						  p->generation, offset, request->data,
-						  request->length, handler->callback_data);
-	}
+	rcu_read_lock();
+	handler = lookup_enclosing_address_handler(&address_handler_list,
+						   offset, request->length);
+	if (handler)
+		handler->address_callback(card, request,
+					  tcode, destination, source,
+					  p->generation, offset,
+					  request->data, request->length,
+					  handler->callback_data);
+	rcu_read_unlock();
 
 	if (!handler)
 		fw_send_response(card, request, RCODE_ADDRESS_ERROR);
@@ -938,9 +963,9 @@ static void handle_fcp_region_request(struct fw_card *card,
 		return;
 	}
 
-	tcode = async_header_get_tcode(p->header);
-	destination = async_header_get_destination(p->header);
-	source = async_header_get_source(p->header);
+	tcode       = HEADER_GET_TCODE(p->header[0]);
+	destination = HEADER_GET_DESTINATION(p->header[0]);
+	source      = HEADER_GET_SOURCE(p->header[1]);
 
 	if (tcode != TCODE_WRITE_QUADLET_REQUEST &&
 	    tcode != TCODE_WRITE_BLOCK_REQUEST) {
@@ -949,14 +974,17 @@ static void handle_fcp_region_request(struct fw_card *card,
 		return;
 	}
 
-	scoped_guard(rcu) {
-		list_for_each_entry_rcu(handler, &address_handler_list, link) {
-			if (is_enclosing_handler(handler, offset, request->length))
-				handler->address_callback(card, request, tcode, destination, source,
-							  p->generation, offset, request->data,
-							  request->length, handler->callback_data);
-		}
+	rcu_read_lock();
+	list_for_each_entry_rcu(handler, &address_handler_list, link) {
+		if (is_enclosing_handler(handler, offset, request->length))
+			handler->address_callback(card, request, tcode,
+						  destination, source,
+						  p->generation, offset,
+						  request->data,
+						  request->length,
+						  handler->callback_data);
 	}
+	rcu_read_unlock();
 
 	fw_send_response(card, request, RCODE_COMPLETE);
 }
@@ -965,15 +993,11 @@ void fw_core_handle_request(struct fw_card *card, struct fw_packet *p)
 {
 	struct fw_request *request;
 	unsigned long long offset;
-	unsigned int tcode;
 
 	if (p->ack != ACK_PENDING && p->ack != ACK_COMPLETE)
 		return;
 
-	tcode = async_header_get_tcode(p->header);
-	if (tcode_is_link_internal(tcode)) {
-		trace_async_phy_inbound((uintptr_t)p, card->index, p->generation, p->ack, p->timestamp,
-					 p->header[1], p->header[2]);
+	if (TCODE_IS_LINK_INTERNAL(HEADER_GET_TCODE(p->header[0]))) {
 		fw_cdev_handle_phy_packet(card, p);
 		return;
 	}
@@ -984,11 +1008,8 @@ void fw_core_handle_request(struct fw_card *card, struct fw_packet *p)
 		return;
 	}
 
-	trace_async_request_inbound((uintptr_t)request, card->index, p->generation, p->speed,
-				    p->ack, p->timestamp, p->header, request->data,
-				    tcode_is_read_request(tcode) ? 0 : request->length / 4);
-
-	offset = async_header_get_offset(p->header);
+	offset = ((u64)HEADER_GET_OFFSET_HIGH(p->header[1]) << 32) |
+		p->header[2];
 
 	if (!is_in_fcp_region(offset, request->length))
 		handle_exclusive_region_request(card, p, request, offset);
@@ -1001,19 +1022,42 @@ EXPORT_SYMBOL(fw_core_handle_request);
 void fw_core_handle_response(struct fw_card *card, struct fw_packet *p)
 {
 	struct fw_transaction *t = NULL, *iter;
+	unsigned long flags;
 	u32 *data;
 	size_t data_length;
 	int tcode, tlabel, source, rcode;
 
-	tcode = async_header_get_tcode(p->header);
-	tlabel = async_header_get_tlabel(p->header);
-	source = async_header_get_source(p->header);
-	rcode = async_header_get_rcode(p->header);
+	tcode	= HEADER_GET_TCODE(p->header[0]);
+	tlabel	= HEADER_GET_TLABEL(p->header[0]);
+	source	= HEADER_GET_SOURCE(p->header[1]);
+	rcode	= HEADER_GET_RCODE(p->header[1]);
 
-	// FIXME: sanity check packet, is length correct, does tcodes
-	// and addresses match to the transaction request queried later.
-	//
-	// For the tracepoints event, let us decode the header here against the concern.
+	spin_lock_irqsave(&card->lock, flags);
+	list_for_each_entry(iter, &card->transaction_list, link) {
+		if (iter->node_id == source && iter->tlabel == tlabel) {
+			if (!try_cancel_split_timeout(iter)) {
+				spin_unlock_irqrestore(&card->lock, flags);
+				goto timed_out;
+			}
+			list_del_init(&iter->link);
+			card->tlabel_mask &= ~(1ULL << iter->tlabel);
+			t = iter;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&card->lock, flags);
+
+	if (!t) {
+ timed_out:
+		fw_notice(card, "unsolicited response (source %x, tlabel %x)\n",
+			  source, tlabel);
+		return;
+	}
+
+	/*
+	 * FIXME: sanity check packet, is length correct, does tcodes
+	 * and addresses match.
+	 */
 
 	switch (tcode) {
 	case TCODE_READ_QUADLET_RESPONSE:
@@ -1029,7 +1073,7 @@ void fw_core_handle_response(struct fw_card *card, struct fw_packet *p)
 	case TCODE_READ_BLOCK_RESPONSE:
 	case TCODE_LOCK_RESPONSE:
 		data = p->payload;
-		data_length = async_header_get_data_length(p->header);
+		data_length = HEADER_GET_DATA_LENGTH(p->header[3]);
 		break;
 
 	default:
@@ -1037,28 +1081,6 @@ void fw_core_handle_response(struct fw_card *card, struct fw_packet *p)
 		data = NULL;
 		data_length = 0;
 		break;
-	}
-
-	scoped_guard(spinlock_irqsave, &card->lock) {
-		list_for_each_entry(iter, &card->transaction_list, link) {
-			if (iter->node_id == source && iter->tlabel == tlabel) {
-				if (try_cancel_split_timeout(iter)) {
-					list_del_init(&iter->link);
-					card->tlabel_mask &= ~(1ULL << iter->tlabel);
-					t = iter;
-				}
-				break;
-			}
-		}
-	}
-
-	trace_async_response_inbound((uintptr_t)t, card->index, p->generation, p->speed, p->ack,
-				     p->timestamp, p->header, data, data_length / 4);
-
-	if (!t) {
-		fw_notice(card, "unsolicited response (source %x, tlabel %x)\n",
-			  source, tlabel);
-		return;
 	}
 
 	/*
@@ -1113,7 +1135,7 @@ static void handle_topology_map(struct fw_card *card, struct fw_request *request
 {
 	int start;
 
-	if (!tcode_is_read_request(tcode)) {
+	if (!TCODE_IS_READ_REQUEST(tcode)) {
 		fw_send_response(card, request, RCODE_TYPE_ERROR);
 		return;
 	}
@@ -1159,6 +1181,7 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 	int reg = offset & ~CSR_REGISTER_BASE;
 	__be32 *data = payload;
 	int rcode = RCODE_COMPLETE;
+	unsigned long flags;
 
 	switch (reg) {
 	case CSR_PRIORITY_BUDGET:
@@ -1200,10 +1223,10 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 		if (tcode == TCODE_READ_QUADLET_REQUEST) {
 			*data = cpu_to_be32(card->split_timeout_hi);
 		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-			guard(spinlock_irqsave)(&card->lock);
-
+			spin_lock_irqsave(&card->lock, flags);
 			card->split_timeout_hi = be32_to_cpu(*data) & 7;
 			update_split_timeout(card);
+			spin_unlock_irqrestore(&card->lock, flags);
 		} else {
 			rcode = RCODE_TYPE_ERROR;
 		}
@@ -1213,10 +1236,11 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 		if (tcode == TCODE_READ_QUADLET_REQUEST) {
 			*data = cpu_to_be32(card->split_timeout_lo);
 		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-			guard(spinlock_irqsave)(&card->lock);
-
-			card->split_timeout_lo = be32_to_cpu(*data) & 0xfff80000;
+			spin_lock_irqsave(&card->lock, flags);
+			card->split_timeout_lo =
+					be32_to_cpu(*data) & 0xfff80000;
 			update_split_timeout(card);
+			spin_unlock_irqrestore(&card->lock, flags);
 		} else {
 			rcode = RCODE_TYPE_ERROR;
 		}
@@ -1358,7 +1382,7 @@ static void __exit fw_core_cleanup(void)
 	unregister_chrdev(fw_cdev_major, "firewire");
 	bus_unregister(&fw_bus_type);
 	destroy_workqueue(fw_workqueue);
-	xa_destroy(&fw_device_xa);
+	idr_destroy(&fw_device_idr);
 }
 
 module_init(fw_core_init);

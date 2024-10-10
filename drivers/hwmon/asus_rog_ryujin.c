@@ -11,7 +11,7 @@
 #include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/spinlock.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define DRIVER_NAME	"asus_rog_ryujin"
 

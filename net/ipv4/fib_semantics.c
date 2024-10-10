@@ -254,7 +254,7 @@ void free_fib_info(struct fib_info *fi)
 		return;
 	}
 
-	call_rcu_hurry(&fi->rcu, free_fib_info_rcu);
+	call_rcu(&fi->rcu, free_fib_info_rcu);
 }
 EXPORT_SYMBOL_GPL(free_fib_info);
 
@@ -543,7 +543,8 @@ void rtmsg_fib(int event, __be32 key, struct fib_alias *fa,
 		    info->nlh, GFP_KERNEL);
 	return;
 errout:
-	rtnl_set_sk_err(info->nl_net, RTNLGRP_IPV4_ROUTE, err);
+	if (err < 0)
+		rtnl_set_sk_err(info->nl_net, RTNLGRP_IPV4_ROUTE, err);
 }
 
 static int fib_detect_death(struct fib_info *fi, int order,
@@ -1029,7 +1030,7 @@ bool fib_metrics_match(struct fib_config *cfg, struct fib_info *fi)
 			bool ecn_ca = false;
 
 			nla_strscpy(tmp, nla, sizeof(tmp));
-			val = tcp_ca_get_key_by_name(tmp, &ecn_ca);
+			val = tcp_ca_get_key_by_name(fi->fib_net, tmp, &ecn_ca);
 		} else {
 			if (nla_len(nla) != sizeof(u32))
 				return false;
@@ -1458,7 +1459,8 @@ struct fib_info *fib_create_info(struct fib_config *cfg,
 	fi = kzalloc(struct_size(fi, fib_nh, nhs), GFP_KERNEL);
 	if (!fi)
 		goto failure;
-	fi->fib_metrics = ip_fib_metrics_init(cfg->fc_mx, cfg->fc_mx_len, extack);
+	fi->fib_metrics = ip_fib_metrics_init(fi->fib_net, cfg->fc_mx,
+					      cfg->fc_mx_len, extack);
 	if (IS_ERR(fi->fib_metrics)) {
 		err = PTR_ERR(fi->fib_metrics);
 		kfree(fi);
@@ -2065,7 +2067,8 @@ static void fib_select_default(const struct flowi4 *flp, struct fib_result *res)
 
 		if (fa->fa_slen != slen)
 			continue;
-		if (fa->fa_dscp && !fib_dscp_masked_match(fa->fa_dscp, flp))
+		if (fa->fa_dscp &&
+		    fa->fa_dscp != inet_dsfield_to_dscp(flp->flowi4_tos))
 			continue;
 		if (fa->tb_id != tb->tb_id)
 			continue;
@@ -2267,15 +2270,6 @@ void fib_select_path(struct net *net, struct fib_result *res,
 		fib_select_default(fl4, res);
 
 check_saddr:
-	if (!fl4->saddr) {
-		struct net_device *l3mdev;
-
-		l3mdev = dev_get_by_index_rcu(net, fl4->flowi4_l3mdev);
-
-		if (!l3mdev ||
-		    l3mdev_master_dev_rcu(FIB_RES_DEV(*res)) == l3mdev)
-			fl4->saddr = fib_result_prefsrc(net, res);
-		else
-			fl4->saddr = inet_select_addr(l3mdev, 0, RT_SCOPE_LINK);
-	}
+	if (!fl4->saddr)
+		fl4->saddr = fib_result_prefsrc(net, res);
 }

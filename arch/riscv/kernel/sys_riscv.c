@@ -7,6 +7,7 @@
 
 #include <linux/syscalls.h>
 #include <asm/cacheflush.h>
+#include <asm-generic/mman-common.h>
 
 static long riscv_sys_mmap(unsigned long addr, unsigned long len,
 			   unsigned long prot, unsigned long flags,
@@ -23,7 +24,7 @@ static long riscv_sys_mmap(unsigned long addr, unsigned long len,
 #ifdef CONFIG_64BIT
 SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
 	unsigned long, prot, unsigned long, flags,
-	unsigned long, fd, unsigned long, offset)
+	unsigned long, fd, off_t, offset)
 {
 	return riscv_sys_mmap(addr, len, prot, flags, fd, offset, 0);
 }
@@ -32,7 +33,7 @@ SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
 #if defined(CONFIG_32BIT) || defined(CONFIG_COMPAT)
 SYSCALL_DEFINE6(mmap2, unsigned long, addr, unsigned long, len,
 	unsigned long, prot, unsigned long, flags,
-	unsigned long, fd, unsigned long, offset)
+	unsigned long, fd, off_t, offset)
 {
 	/*
 	 * Note that the shift for mmap2 is constant (12),

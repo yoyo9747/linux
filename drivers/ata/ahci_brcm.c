@@ -437,6 +437,7 @@ static int brcm_ahci_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct brcm_ahci_priv *priv;
 	struct ahci_host_priv *hpriv;
+	struct resource *res;
 	int ret;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
@@ -450,7 +451,8 @@ static int brcm_ahci_probe(struct platform_device *pdev)
 	priv->version = (unsigned long)of_id->data;
 	priv->dev = dev;
 
-	priv->top_ctrl = devm_platform_ioremap_resource_byname(pdev, "top-ctrl");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "top-ctrl");
+	priv->top_ctrl = devm_ioremap_resource(dev, res);
 	if (IS_ERR(priv->top_ctrl))
 		return PTR_ERR(priv->top_ctrl);
 

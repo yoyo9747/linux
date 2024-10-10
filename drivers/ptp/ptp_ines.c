@@ -556,13 +556,17 @@ static bool ines_timestamp_expired(struct ines_timestamp *ts)
 }
 
 static int ines_ts_info(struct mii_timestamper *mii_ts,
-			struct kernel_ethtool_ts_info *info)
+			struct ethtool_ts_info *info)
 {
 	info->so_timestamping =
 		SOF_TIMESTAMPING_TX_HARDWARE |
 		SOF_TIMESTAMPING_TX_SOFTWARE |
 		SOF_TIMESTAMPING_RX_HARDWARE |
+		SOF_TIMESTAMPING_RX_SOFTWARE |
+		SOF_TIMESTAMPING_SOFTWARE |
 		SOF_TIMESTAMPING_RAW_HARDWARE;
+
+	info->phc_index = -1;
 
 	info->tx_types =
 		(1 << HWTSTAMP_TX_OFF) |
@@ -761,7 +765,7 @@ out:
 	return err;
 }
 
-static void ines_ptp_ctrl_remove(struct platform_device *pld)
+static int ines_ptp_ctrl_remove(struct platform_device *pld)
 {
 	struct ines_clock *clock = dev_get_drvdata(&pld->dev);
 
@@ -771,6 +775,7 @@ static void ines_ptp_ctrl_remove(struct platform_device *pld)
 	mutex_unlock(&ines_clocks_lock);
 	ines_clock_cleanup(clock);
 	kfree(clock);
+	return 0;
 }
 
 static const struct of_device_id ines_ptp_ctrl_of_match[] = {
@@ -782,7 +787,7 @@ MODULE_DEVICE_TABLE(of, ines_ptp_ctrl_of_match);
 
 static struct platform_driver ines_ptp_ctrl_driver = {
 	.probe  = ines_ptp_ctrl_probe,
-	.remove_new = ines_ptp_ctrl_remove,
+	.remove = ines_ptp_ctrl_remove,
 	.driver = {
 		.name = "ines_ptp_ctrl",
 		.of_match_table = ines_ptp_ctrl_of_match,

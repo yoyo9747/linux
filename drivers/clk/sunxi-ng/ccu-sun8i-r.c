@@ -262,7 +262,6 @@ static const struct of_device_id sun8i_r_ccu_ids[] = {
 	},
 	{ }
 };
-MODULE_DEVICE_TABLE(of, sun8i_r_ccu_ids);
 
 static struct platform_driver sun8i_r_ccu_driver = {
 	.probe	= sun8i_r_ccu_probe,
@@ -275,5 +274,4 @@ static struct platform_driver sun8i_r_ccu_driver = {
 module_platform_driver(sun8i_r_ccu_driver);
 
 MODULE_IMPORT_NS(SUNXI_CCU);
-MODULE_DESCRIPTION("Support for Allwinner SoCs' PRCM CCUs");
 MODULE_LICENSE("GPL");

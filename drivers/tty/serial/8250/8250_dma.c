@@ -15,7 +15,7 @@ static void __dma_tx_complete(void *param)
 {
 	struct uart_8250_port	*p = param;
 	struct uart_8250_dma	*dma = p->dma;
-	struct tty_port		*tport = &p->port.state->port;
+	struct circ_buf		*xmit = &p->port.state->xmit;
 	unsigned long	flags;
 	int		ret;
 
@@ -28,7 +28,7 @@ static void __dma_tx_complete(void *param)
 
 	uart_xmit_advance(&p->port, dma->tx_size);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&p->port);
 
 	ret = serial8250_tx_dma(p);
@@ -86,12 +86,9 @@ static void dma_rx_complete(void *param)
 int serial8250_tx_dma(struct uart_8250_port *p)
 {
 	struct uart_8250_dma		*dma = p->dma;
-	struct tty_port			*tport = &p->port.state->port;
+	struct circ_buf			*xmit = &p->port.state->xmit;
 	struct dma_async_tx_descriptor	*desc;
 	struct uart_port		*up = &p->port;
-	struct scatterlist		*sg;
-	struct scatterlist		sgl[2];
-	int i;
 	int ret;
 
 	if (dma->tx_running) {
@@ -105,26 +102,19 @@ int serial8250_tx_dma(struct uart_8250_port *p)
 		uart_xchar_out(up, UART_TX);
 	}
 
-	if (uart_tx_stopped(&p->port) || kfifo_is_empty(&tport->xmit_fifo)) {
+	if (uart_tx_stopped(&p->port) || uart_circ_empty(xmit)) {
 		/* We have been called from __dma_tx_complete() */
 		return 0;
 	}
 
+	dma->tx_size = CIRC_CNT_TO_END(xmit->head, xmit->tail, UART_XMIT_SIZE);
+
 	serial8250_do_prepare_tx_dma(p);
 
-	sg_init_table(sgl, ARRAY_SIZE(sgl));
-
-	ret = kfifo_dma_out_prepare_mapped(&tport->xmit_fifo, sgl, ARRAY_SIZE(sgl),
-					   UART_XMIT_SIZE, dma->tx_addr);
-
-	dma->tx_size = 0;
-
-	for_each_sg(sgl, sg, ret, i)
-		dma->tx_size += sg_dma_len(sg);
-
-	desc = dmaengine_prep_slave_sg(dma->txchan, sgl, ret,
-				       DMA_MEM_TO_DEV,
-				       DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+	desc = dmaengine_prep_slave_single(dma->txchan,
+					   dma->tx_addr + xmit->tail,
+					   dma->tx_size, DMA_MEM_TO_DEV,
+					   DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
 	if (!desc) {
 		ret = -EBUSY;
 		goto err;
@@ -263,7 +253,7 @@ int serial8250_request_dma(struct uart_8250_port *p)
 
 	/* TX buffer */
 	dma->tx_addr = dma_map_single(dma->txchan->device->dev,
-					p->port.state->port.xmit_buf,
+					p->port.state->xmit.buf,
 					UART_XMIT_SIZE,
 					DMA_TO_DEVICE);
 	if (dma_mapping_error(dma->txchan->device->dev, dma->tx_addr)) {

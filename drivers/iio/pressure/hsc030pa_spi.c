@@ -23,9 +23,14 @@
 static int hsc_spi_recv(struct hsc_data *data)
 {
 	struct spi_device *spi = to_spi_device(data->dev);
+	struct spi_transfer xfer = {
+		.tx_buf = NULL,
+		.rx_buf = data->buffer,
+		.len = HSC_REG_MEASUREMENT_RD_SIZE,
+	};
 
 	msleep_interruptible(HSC_RESP_TIME_MS);
-	return spi_read(spi, data->buffer, HSC_REG_MEASUREMENT_RD_SIZE);
+	return spi_sync_transfer(spi, &xfer, 1);
 }
 
 static int hsc_spi_probe(struct spi_device *spi)

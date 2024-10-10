@@ -13,11 +13,10 @@
 #include "mutex.h"
 #include "spark.h"
 #include "hashmap.h"
-#include "disasm.h"
-#include "branch.h"
 
 struct hist_browser_timer;
 struct hist_entry;
+struct ins_ops;
 struct map;
 struct map_symbol;
 struct addr_map_symbol;
@@ -27,11 +26,63 @@ struct evsel;
 struct symbol;
 struct annotated_data_type;
 
+struct ins {
+	const char     *name;
+	struct ins_ops *ops;
+};
+
+struct ins_operands {
+	char	*raw;
+	struct {
+		char	*raw;
+		char	*name;
+		struct symbol *sym;
+		u64	addr;
+		s64	offset;
+		bool	offset_avail;
+		bool	outside;
+		bool	multi_regs;
+	} target;
+	union {
+		struct {
+			char	*raw;
+			char	*name;
+			u64	addr;
+			bool	multi_regs;
+		} source;
+		struct {
+			struct ins	    ins;
+			struct ins_operands *ops;
+		} locked;
+		struct {
+			char	*raw_comment;
+			char	*raw_func_start;
+		} jump;
+	};
+};
+
+struct arch;
+
+bool arch__is(struct arch *arch, const char *name);
+
+struct ins_ops {
+	void (*free)(struct ins_operands *ops);
+	int (*parse)(struct arch *arch, struct ins_operands *ops, struct map_symbol *ms);
+	int (*scnprintf)(struct ins *ins, char *bf, size_t size,
+			 struct ins_operands *ops, int max_ins_name);
+};
+
+bool ins__is_jump(const struct ins *ins);
+bool ins__is_call(const struct ins *ins);
+bool ins__is_ret(const struct ins *ins);
+bool ins__is_lock(const struct ins *ins);
+int ins__scnprintf(struct ins *ins, char *bf, size_t size, struct ins_operands *ops, int max_ins_name);
+bool ins__is_fused(struct arch *arch, const char *ins1, const char *ins2);
+
 #define ANNOTATION__IPC_WIDTH 6
 #define ANNOTATION__CYCLES_WIDTH 6
 #define ANNOTATION__MINMAX_CYCLES_WIDTH 19
 #define ANNOTATION__AVG_IPC_WIDTH 36
-#define ANNOTATION__BR_CNTR_WIDTH 30
 #define ANNOTATION_DUMMY_LEN	256
 
 struct annotation_options {
@@ -45,7 +96,6 @@ struct annotation_options {
 	     show_nr_jumps,
 	     show_minmax_cycle,
 	     show_asm_raw,
-	     show_br_cntr,
 	     annotate_src,
 	     full_addr;
 	u8   offset_level;
@@ -106,10 +156,6 @@ struct annotation_line {
 	char			*fileloc;
 	char			*path;
 	struct cycles_info	*cycles;
-	int			 num_aggr;
-	int			 br_cntr_nr;
-	u64			*br_cntr;
-	struct evsel		*evsel;
 	int			 jump_sources;
 	u32			 idx;
 	int			 idx_asm;
@@ -120,15 +166,10 @@ struct annotation_line {
 struct disasm_line {
 	struct ins		 ins;
 	struct ins_operands	 ops;
-	union {
-		u8 bytes[4];
-		u32 raw_insn;
-	} raw;
+
 	/* This needs to be at the end. */
 	struct annotation_line	 al;
 };
-
-void annotation_line__add(struct annotation_line *al, struct list_head *head);
 
 static inline double annotation_data__percent(struct annotation_data *data,
 					      unsigned int which)
@@ -171,6 +212,7 @@ static inline bool disasm_line__has_local_offset(const struct disasm_line *dl)
  */
 bool disasm_line__is_valid_local_jump(struct disasm_line *dl, struct symbol *sym);
 
+void disasm_line__free(struct disasm_line *dl);
 struct annotation_line *
 annotation_line__next(struct annotation_line *pos, struct list_head *head);
 
@@ -193,6 +235,7 @@ int __annotation__scnprintf_samples_period(struct annotation *notes,
 					   struct evsel *evsel,
 					   bool show_freq);
 
+int disasm_line__scnprintf(struct disasm_line *dl, char *bf, size_t size, bool raw, int max_ins_name);
 size_t disasm__fprintf(struct list_head *head, FILE *fp);
 void symbol__calc_percent(struct symbol *sym, struct evsel *evsel);
 
@@ -256,14 +299,12 @@ struct cyc_hist {
  * 		  we have more than a group in a evlist, where we will want
  * 		  to see each group separately, that is why symbol__annotate2()
  * 		  sets src->nr_histograms to evsel->nr_members.
+ * @offsets: Array of annotation_line to be accessed by offset.
  * @samples: Hash map of sym_hist_entry.  Keyed by event index and offset in symbol.
- * @nr_events: Number of events in the current output.
  * @nr_entries: Number of annotated_line in the source list.
  * @nr_asm_entries: Number of annotated_line with actual asm instruction in the
  * 		    source list.
- * @max_jump_sources: Maximum number of jump instructions targeting to the same
- * 		      instruction.
- * @widths: Precalculated width of each column in the TUI output.
+ * @max_line_len: Maximum length of objdump output in an annotated_line.
  *
  * disasm_lines are allocated, percentages calculated and all sorted by percentage
  * when the annotation is about to be presented, so the percentages are for
@@ -274,29 +315,13 @@ struct cyc_hist {
 struct annotated_source {
 	struct list_head	source;
 	struct sym_hist		*histograms;
+	struct annotation_line	**offsets;
 	struct hashmap	   	*samples;
 	int    			nr_histograms;
-	int    			nr_events;
 	int			nr_entries;
 	int			nr_asm_entries;
-	int			max_jump_sources;
-	u64			start;
-	struct {
-		u8		addr;
-		u8		jumps;
-		u8		target;
-		u8		min_addr;
-		u8		max_addr;
-		u8		max_ins_name;
-		u16		max_line_len;
-	} widths;
+	u16			max_line_len;
 };
-
-struct annotation_line *annotated_source__get_line(struct annotated_source *src,
-						   s64 offset);
-
-/* A branch counter once saturated */
-#define ANNOTATION__BR_CNTR_SATURATED_FLAG	(1ULL << 63)
 
 /**
  * struct annotated_branch - basic block and IPC information for a symbol.
@@ -307,7 +332,6 @@ struct annotation_line *annotated_source__get_line(struct annotated_source *src,
  * @cover_insn: Number of distinct, actually executed instructions.
  * @cycles_hist: Array of cyc_hist for each instruction.
  * @max_coverage: Maximum number of covered basic block (used for block-range).
- * @br_cntr: Array of the occurrences of events (branch counters) during a block.
  *
  * This struct is used by two different codes when the sample has branch stack
  * and cycles information.  annotation__compute_ipc() calculates average IPC
@@ -324,10 +348,20 @@ struct annotated_branch {
 	unsigned int		cover_insn;
 	struct cyc_hist		*cycles_hist;
 	u64			max_coverage;
-	u64			*br_cntr;
 };
 
 struct LOCKABLE annotation {
+	u64			start;
+	int			nr_events;
+	int			max_jump_sources;
+	struct {
+		u8		addr;
+		u8		jumps;
+		u8		target;
+		u8		min_addr;
+		u8		max_addr;
+		u8		max_ins_name;
+	} widths;
 	struct annotated_source *src;
 	struct annotated_branch *branch;
 };
@@ -351,7 +385,7 @@ static inline int annotation__cycles_width(struct annotation *notes)
 
 static inline int annotation__pcnt_width(struct annotation *notes)
 {
-	return (symbol_conf.show_total_period ? 12 : 8) * notes->src->nr_events;
+	return (symbol_conf.show_total_period ? 12 : 7) * notes->nr_events;
 }
 
 static inline bool annotation_line__filter(struct annotation_line *al)
@@ -359,12 +393,10 @@ static inline bool annotation_line__filter(struct annotation_line *al)
 	return annotate_opts.hide_src_code && al->offset == -1;
 }
 
-static inline u8 annotation__br_cntr_width(void)
-{
-	return annotate_opts.show_br_cntr ? ANNOTATION__BR_CNTR_WIDTH : 0;
-}
-
+void annotation__set_offsets(struct annotation *notes, s64 size);
+void annotation__mark_jump_targets(struct annotation *notes, struct symbol *sym);
 void annotation__update_column_widths(struct annotation *notes);
+void annotation__init_column_widths(struct annotation *notes, struct symbol *sym);
 void annotation__toggle_full_addr(struct annotation *notes, struct map_symbol *ms);
 
 static inline struct sym_hist *annotated_source__histogram(struct annotated_source *src, int idx)
@@ -400,9 +432,7 @@ struct annotated_branch *annotation__get_branch(struct annotation *notes);
 
 int addr_map_symbol__account_cycles(struct addr_map_symbol *ams,
 				    struct addr_map_symbol *start,
-				    unsigned cycles,
-				    struct evsel *evsel,
-				    u64 br_cntr);
+				    unsigned cycles);
 
 int hist_entry__inc_addr_samples(struct hist_entry *he, struct perf_sample *sample,
 				 struct evsel *evsel, u64 addr);
@@ -481,19 +511,15 @@ int annotate_check_args(void);
  * @reg1: First register in the operand
  * @reg2: Second register in the operand
  * @offset: Memory access offset in the operand
- * @segment: Segment selector register
  * @mem_ref: Whether the operand accesses memory
  * @multi_regs: Whether the second register is used
- * @imm: Whether the operand is an immediate value (in offset)
  */
 struct annotated_op_loc {
 	int reg1;
 	int reg2;
 	int offset;
-	u8 segment;
 	bool mem_ref;
 	bool multi_regs;
-	bool imm;
 };
 
 enum annotated_insn_ops {
@@ -501,17 +527,6 @@ enum annotated_insn_ops {
 	INSN_OP_TARGET = 1,
 
 	INSN_OP_MAX,
-};
-
-enum annotated_x86_segment {
-	INSN_SEG_NONE = 0,
-
-	INSN_SEG_X86_CS,
-	INSN_SEG_X86_DS,
-	INSN_SEG_X86_ES,
-	INSN_SEG_X86_FS,
-	INSN_SEG_X86_GS,
-	INSN_SEG_X86_SS,
 };
 
 /**
@@ -546,25 +561,4 @@ extern struct list_head ann_insn_stat;
 u64 annotate_calc_pcrel(struct map_symbol *ms, u64 ip, int offset,
 			struct disasm_line *dl);
 
-/**
- * struct annotated_basic_block - Basic block of instructions
- * @list: List node
- * @begin: start instruction in the block
- * @end: end instruction in the block
- */
-struct annotated_basic_block {
-	struct list_head list;
-	struct disasm_line *begin;
-	struct disasm_line *end;
-};
-
-/* Get a list of basic blocks from src to dst addresses */
-int annotate_get_basic_blocks(struct symbol *sym, s64 src, s64 dst,
-			      struct list_head *head);
-
-void debuginfo_cache__delete(void);
-
-int annotation_br_cntr_entry(char **str, int br_cntr_nr, u64 *br_cntr,
-			     int num_aggr, struct evsel *evsel);
-int annotation_br_cntr_abbr_list(char **str, struct evsel *evsel, bool header);
 #endif	/* __PERF_ANNOTATE_H */

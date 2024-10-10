@@ -443,14 +443,20 @@ static void cls_copy_data_from_uart_to_queue(struct jsm_channel *ch)
 
 static void cls_copy_data_from_queue_to_uart(struct jsm_channel *ch)
 {
-	struct tty_port *tport;
+	u16 tail;
 	int n;
+	int qlen;
 	u32 len_written = 0;
+	struct circ_buf *circ;
 
 	if (!ch)
 		return;
 
-	tport = &ch->uart_port.state->port;
+	circ = &ch->uart_port.state->xmit;
+
+	/* No data to write to the UART */
+	if (uart_circ_empty(circ))
+		return;
 
 	/* If port is "stopped", don't send any data to the UART */
 	if ((ch->ch_flags & CH_STOP) || (ch->ch_flags & CH_BREAK_SENDING))
@@ -461,22 +467,29 @@ static void cls_copy_data_from_queue_to_uart(struct jsm_channel *ch)
 		return;
 
 	n = 32;
+
+	/* cache tail of queue */
+	tail = circ->tail & (UART_XMIT_SIZE - 1);
+	qlen = uart_circ_chars_pending(circ);
+
+	/* Find minimum of the FIFO space, versus queue length */
+	n = min(n, qlen);
+
 	while (n > 0) {
-		unsigned char c;
-
-		if (!kfifo_get(&tport->xmit_fifo, &c))
-			break;
-
-		writeb(c, &ch->ch_cls_uart->txrx);
+		writeb(circ->buf[tail], &ch->ch_cls_uart->txrx);
+		tail = (tail + 1) & (UART_XMIT_SIZE - 1);
 		n--;
 		ch->ch_txcount++;
 		len_written++;
 	}
 
+	/* Update the final tail */
+	circ->tail = tail & (UART_XMIT_SIZE - 1);
+
 	if (len_written > ch->ch_t_tlevel)
 		ch->ch_flags &= ~(CH_TX_FIFO_EMPTY | CH_TX_FIFO_LWM);
 
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(circ))
 		uart_write_wakeup(&ch->uart_port);
 }
 

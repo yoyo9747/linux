@@ -26,6 +26,8 @@ struct sharp_nt_panel {
 
 	struct regulator *supply;
 	struct gpio_desc *reset_gpio;
+
+	bool prepared;
 };
 
 static inline struct sharp_nt_panel *to_sharp_nt_panel(struct drm_panel *panel)
@@ -97,6 +99,9 @@ static int sharp_nt_panel_unprepare(struct drm_panel *panel)
 	struct sharp_nt_panel *sharp_nt = to_sharp_nt_panel(panel);
 	int ret;
 
+	if (!sharp_nt->prepared)
+		return 0;
+
 	ret = sharp_nt_panel_off(sharp_nt);
 	if (ret < 0) {
 		dev_err(panel->dev, "failed to set panel off: %d\n", ret);
@@ -107,6 +112,8 @@ static int sharp_nt_panel_unprepare(struct drm_panel *panel)
 	if (sharp_nt->reset_gpio)
 		gpiod_set_value(sharp_nt->reset_gpio, 0);
 
+	sharp_nt->prepared = false;
+
 	return 0;
 }
 
@@ -114,6 +121,9 @@ static int sharp_nt_panel_prepare(struct drm_panel *panel)
 {
 	struct sharp_nt_panel *sharp_nt = to_sharp_nt_panel(panel);
 	int ret;
+
+	if (sharp_nt->prepared)
+		return 0;
 
 	ret = regulator_enable(sharp_nt->supply);
 	if (ret < 0)
@@ -141,6 +151,8 @@ static int sharp_nt_panel_prepare(struct drm_panel *panel)
 		dev_err(panel->dev, "failed to set panel on: %d\n", ret);
 		goto poweroff;
 	}
+
+	sharp_nt->prepared = true;
 
 	return 0;
 
@@ -267,11 +279,22 @@ static void sharp_nt_panel_remove(struct mipi_dsi_device *dsi)
 	struct sharp_nt_panel *sharp_nt = mipi_dsi_get_drvdata(dsi);
 	int ret;
 
+	ret = drm_panel_disable(&sharp_nt->base);
+	if (ret < 0)
+		dev_err(&dsi->dev, "failed to disable panel: %d\n", ret);
+
 	ret = mipi_dsi_detach(dsi);
 	if (ret < 0)
 		dev_err(&dsi->dev, "failed to detach from DSI host: %d\n", ret);
 
 	sharp_nt_panel_del(sharp_nt);
+}
+
+static void sharp_nt_panel_shutdown(struct mipi_dsi_device *dsi)
+{
+	struct sharp_nt_panel *sharp_nt = mipi_dsi_get_drvdata(dsi);
+
+	drm_panel_disable(&sharp_nt->base);
 }
 
 static const struct of_device_id sharp_nt_of_match[] = {
@@ -287,6 +310,7 @@ static struct mipi_dsi_driver sharp_nt_panel_driver = {
 	},
 	.probe = sharp_nt_panel_probe,
 	.remove = sharp_nt_panel_remove,
+	.shutdown = sharp_nt_panel_shutdown,
 };
 module_mipi_dsi_driver(sharp_nt_panel_driver);
 

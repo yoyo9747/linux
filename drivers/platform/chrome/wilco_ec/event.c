@@ -403,6 +403,7 @@ static const struct file_operations event_fops = {
 	.poll  = event_poll,
 	.read = event_read,
 	.release = event_release,
+	.llseek = no_llseek,
 	.owner = THIS_MODULE,
 };
 
@@ -522,6 +523,7 @@ static struct acpi_driver event_driver = {
 		.notify = event_device_notify,
 		.remove = event_device_remove,
 	},
+	.owner = THIS_MODULE,
 };
 
 static int __init event_module_init(void)
@@ -573,3 +575,4 @@ module_exit(event_module_exit);
 MODULE_AUTHOR("Nick Crews <ncrews@chromium.org>");
 MODULE_DESCRIPTION("Wilco EC ACPI event driver");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:" DRV_NAME);

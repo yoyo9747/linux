@@ -9,7 +9,7 @@
 #define __SOF_CIRRUS_COMMON_H
 
 #include <sound/soc.h>
-#include <sound/soc-acpi-intel-ssp-common.h>
+#include "sof_ssp_common.h"
 
 /*
  * Cirrus Logic CS35L41/CS35L53

@@ -105,8 +105,6 @@ struct alauda_info {
 	unsigned char sense_key;
 	unsigned long sense_asc;	/* additional sense code */
 	unsigned long sense_ascq;	/* additional sense code qualifier */
-
-	bool media_initialized;
 };
 
 #define short_pack(lsb,msb) ( ((u16)(lsb)) | ( ((u16)(msb))<<8 ) )
@@ -132,7 +130,7 @@ static int init_alauda(struct us_data *us);
 { USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax), \
   .driver_info = (flags) }
 
-static const struct usb_device_id alauda_usb_ids[] = {
+static struct usb_device_id alauda_usb_ids[] = {
 #	include "unusual_alauda.h"
 	{ }		/* Terminating entry */
 };
@@ -154,7 +152,7 @@ MODULE_DEVICE_TABLE(usb, alauda_usb_ids);
 	.initFunction = init_function,	\
 }
 
-static const struct us_unusual_dev alauda_unusual_dev_list[] = {
+static struct us_unusual_dev alauda_unusual_dev_list[] = {
 #	include "unusual_alauda.h"
 	{ }		/* Terminating entry */
 };
@@ -478,12 +476,11 @@ static int alauda_check_media(struct us_data *us)
 	}
 
 	/* Check for media change */
-	if (status[0] & 0x08 || !info->media_initialized) {
+	if (status[0] & 0x08) {
 		usb_stor_dbg(us, "Media change detected\n");
 		alauda_free_maps(&MEDIA_INFO(us));
-		rc = alauda_init_media(us);
-		if (rc == USB_STOR_TRANSPORT_GOOD)
-			info->media_initialized = true;
+		alauda_init_media(us);
+
 		info->sense_key = UNIT_ATTENTION;
 		info->sense_asc = 0x28;
 		info->sense_ascq = 0x00;

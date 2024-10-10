@@ -163,7 +163,6 @@ static kvm_pte_t *kvm_populate_gpa(struct kvm *kvm,
 
 			child = kvm_mmu_memory_cache_alloc(cache);
 			_kvm_pte_init(child, ctx.invalid_ptes[ctx.level - 1]);
-			smp_wmb(); /* Make pte visible before pmd */
 			kvm_set_pte(entry, __pa(child));
 		} else if (kvm_pte_huge(*entry)) {
 			return entry;
@@ -445,17 +444,6 @@ void kvm_arch_commit_memory_region(struct kvm *kvm,
 				   enum kvm_mr_change change)
 {
 	int needs_flush;
-	u32 old_flags = old ? old->flags : 0;
-	u32 new_flags = new ? new->flags : 0;
-	bool log_dirty_pages = new_flags & KVM_MEM_LOG_DIRTY_PAGES;
-
-	/* Only track memslot flags changed */
-	if (change != KVM_MR_FLAGS_ONLY)
-		return;
-
-	/* Discard dirty page tracking on readonly memslot */
-	if ((old_flags & new_flags) & KVM_MEM_READONLY)
-		return;
 
 	/*
 	 * If dirty page logging is enabled, write protect all pages in the slot
@@ -466,14 +454,9 @@ void kvm_arch_commit_memory_region(struct kvm *kvm,
 	 * MOVE/DELETE:	The old mappings will already have been cleaned up by
 	 *		kvm_arch_flush_shadow_memslot()
 	 */
-	if (!(old_flags & KVM_MEM_LOG_DIRTY_PAGES) && log_dirty_pages) {
-		/*
-		 * Initially-all-set does not require write protecting any page
-		 * because they're all assumed to be dirty.
-		 */
-		if (kvm_dirty_log_manual_protect_and_init_set(kvm))
-			return;
-
+	if (change == KVM_MR_FLAGS_ONLY &&
+	    (!(old->flags & KVM_MEM_LOG_DIRTY_PAGES) &&
+	     new->flags & KVM_MEM_LOG_DIRTY_PAGES)) {
 		spin_lock(&kvm->mmu_lock);
 		/* Write protect GPA page table entries */
 		needs_flush = kvm_mkclean_gpa_pt(kvm, new->base_gfn,
@@ -509,6 +492,38 @@ bool kvm_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range)
 
 	return kvm_ptw_top(kvm->arch.pgd, range->start << PAGE_SHIFT,
 			range->end << PAGE_SHIFT, &ctx);
+}
+
+bool kvm_set_spte_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
+{
+	unsigned long prot_bits;
+	kvm_pte_t *ptep;
+	kvm_pfn_t pfn = pte_pfn(range->arg.pte);
+	gpa_t gpa = range->start << PAGE_SHIFT;
+
+	ptep = kvm_populate_gpa(kvm, NULL, gpa, 0);
+	if (!ptep)
+		return false;
+
+	/* Replacing an absent or old page doesn't need flushes */
+	if (!kvm_pte_present(NULL, ptep) || !kvm_pte_young(*ptep)) {
+		kvm_set_pte(ptep, 0);
+		return false;
+	}
+
+	/* Fill new pte if write protected or page migrated */
+	prot_bits = _PAGE_PRESENT | __READABLE;
+	prot_bits |= _CACHE_MASK & pte_val(range->arg.pte);
+
+	/*
+	 * Set _PAGE_WRITE or _PAGE_DIRTY iff old and new pte both support
+	 * _PAGE_WRITE for map_page_fast if next page write fault
+	 * _PAGE_DIRTY since gpa has already recorded as dirty page
+	 */
+	prot_bits |= __WRITEABLE & *ptep & pte_val(range->arg.pte);
+	kvm_set_pte(ptep, kvm_pfn_pte(pfn, __pgprot(prot_bits)));
+
+	return true;
 }
 
 bool kvm_age_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
@@ -557,7 +572,6 @@ static int kvm_map_page_fast(struct kvm_vcpu *vcpu, unsigned long gpa, bool writ
 	gfn_t gfn = gpa >> PAGE_SHIFT;
 	struct kvm *kvm = vcpu->kvm;
 	struct kvm_memory_slot *slot;
-	struct page *page;
 
 	spin_lock(&kvm->mmu_lock);
 
@@ -569,8 +583,10 @@ static int kvm_map_page_fast(struct kvm_vcpu *vcpu, unsigned long gpa, bool writ
 	}
 
 	/* Track access to pages marked old */
-	new = kvm_pte_mkyoung(*ptep);
-	/* call kvm_set_pfn_accessed() after unlock */
+	new = *ptep;
+	if (!kvm_pte_young(new))
+		new = kvm_pte_mkyoung(new);
+		/* call kvm_set_pfn_accessed() after unlock */
 
 	if (write && !kvm_pte_dirty(new)) {
 		if (!kvm_pte_write(new)) {
@@ -598,22 +614,19 @@ static int kvm_map_page_fast(struct kvm_vcpu *vcpu, unsigned long gpa, bool writ
 	if (changed) {
 		kvm_set_pte(ptep, new);
 		pfn = kvm_pte_pfn(new);
-		page = kvm_pfn_to_refcounted_page(pfn);
-		if (page)
-			get_page(page);
 	}
 	spin_unlock(&kvm->mmu_lock);
 
-	if (changed) {
-		if (kvm_pte_young(changed))
-			kvm_set_pfn_accessed(pfn);
+	/*
+	 * Fixme: pfn may be freed after mmu_lock
+	 * kvm_try_get_pfn(pfn)/kvm_release_pfn pair to prevent this?
+	 */
+	if (kvm_pte_young(changed))
+		kvm_set_pfn_accessed(pfn);
 
-		if (kvm_pte_dirty(changed)) {
-			mark_page_dirty(kvm, gfn);
-			kvm_set_pfn_dirty(pfn);
-		}
-		if (page)
-			put_page(page);
+	if (kvm_pte_dirty(changed)) {
+		mark_page_dirty(kvm, gfn);
+		kvm_set_pfn_dirty(pfn);
 	}
 	return ret;
 out:
@@ -714,19 +727,19 @@ static int host_pfn_mapping_level(struct kvm *kvm, gfn_t gfn,
 	 * value) and then p*d_offset() walks into the target huge page instead
 	 * of the old page table (sees the new value).
 	 */
-	pgd = pgdp_get(pgd_offset(kvm->mm, hva));
+	pgd = READ_ONCE(*pgd_offset(kvm->mm, hva));
 	if (pgd_none(pgd))
 		goto out;
 
-	p4d = p4dp_get(p4d_offset(&pgd, hva));
+	p4d = READ_ONCE(*p4d_offset(&pgd, hva));
 	if (p4d_none(p4d) || !p4d_present(p4d))
 		goto out;
 
-	pud = pudp_get(pud_offset(&p4d, hva));
+	pud = READ_ONCE(*pud_offset(&p4d, hva));
 	if (pud_none(pud) || !pud_present(pud))
 		goto out;
 
-	pmd = pmdp_get(pmd_offset(&pud, hva));
+	pmd = READ_ONCE(*pmd_offset(&pud, hva));
 	if (pmd_none(pmd) || !pmd_present(pmd))
 		goto out;
 
@@ -756,7 +769,6 @@ static kvm_pte_t *kvm_split_huge(struct kvm_vcpu *vcpu, kvm_pte_t *ptep, gfn_t g
 		val += PAGE_SIZE;
 	}
 
-	smp_wmb(); /* Make pte visible before pmd */
 	/* The later kvm_flush_tlb_gpa() will flush hugepage tlb */
 	kvm_set_pte(ptep, __pa(child));
 
@@ -878,20 +890,10 @@ retry:
 
 	/* Disable dirty logging on HugePages */
 	level = 0;
-	if (fault_supports_huge_mapping(memslot, hva, write)) {
-		/* Check page level about host mmu*/
+	if (!fault_supports_huge_mapping(memslot, hva, write)) {
+		level = 0;
+	} else {
 		level = host_pfn_mapping_level(kvm, gfn, memslot);
-		if (level == 1) {
-			/*
-			 * Check page level about secondary mmu
-			 * Disable hugepage if it is normal page on
-			 * secondary mmu already
-			 */
-			ptep = kvm_populate_gpa(kvm, NULL, gpa, 0);
-			if (ptep && !kvm_pte_huge(*ptep))
-				level = 0;
-		}
-
 		if (level == 1) {
 			gfn = gfn & ~(PTRS_PER_PTE - 1);
 			pfn = pfn & ~(PTRS_PER_PTE - 1);
@@ -922,6 +924,7 @@ retry:
 		kvm_set_pfn_dirty(pfn);
 	}
 
+	kvm_set_pfn_accessed(pfn);
 	kvm_release_pfn_clean(pfn);
 out:
 	srcu_read_unlock(&kvm->srcu, srcu_idx);
@@ -937,8 +940,7 @@ int kvm_handle_mm_fault(struct kvm_vcpu *vcpu, unsigned long gpa, bool write)
 		return ret;
 
 	/* Invalidate this entry in the TLB */
-	vcpu->arch.flush_gpa = gpa;
-	kvm_make_request(KVM_REQ_TLB_FLUSH_GPA, vcpu);
+	kvm_flush_tlb_gpa(vcpu, gpa);
 
 	return 0;
 }

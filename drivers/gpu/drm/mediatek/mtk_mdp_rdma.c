@@ -301,14 +301,16 @@ static int mtk_mdp_rdma_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	priv->regs = devm_ioremap_resource(dev, res);
-	if (IS_ERR(priv->regs))
-		return dev_err_probe(dev, PTR_ERR(priv->regs),
-				     "failed to ioremap rdma\n");
+	if (IS_ERR(priv->regs)) {
+		dev_err(dev, "failed to ioremap rdma\n");
+		return PTR_ERR(priv->regs);
+	}
 
 	priv->clk = devm_clk_get(dev, NULL);
-	if (IS_ERR(priv->clk))
-		return dev_err_probe(dev, PTR_ERR(priv->clk),
-				     "failed to get rdma clk\n");
+	if (IS_ERR(priv->clk)) {
+		dev_err(dev, "failed to get rdma clk\n");
+		return PTR_ERR(priv->clk);
+	}
 
 #if IS_REACHABLE(CONFIG_MTK_CMDQ)
 	ret = cmdq_dev_get_client_reg(dev, &priv->cmdq_reg, 0);
@@ -322,9 +324,9 @@ static int mtk_mdp_rdma_probe(struct platform_device *pdev)
 	ret = component_add(dev, &mtk_mdp_rdma_component_ops);
 	if (ret != 0) {
 		pm_runtime_disable(dev);
-		return dev_err_probe(dev, ret, "Failed to add component\n");
+		dev_err(dev, "Failed to add component: %d\n", ret);
 	}
-	return 0;
+	return ret;
 }
 
 static void mtk_mdp_rdma_remove(struct platform_device *pdev)
@@ -344,6 +346,7 @@ struct platform_driver mtk_mdp_rdma_driver = {
 	.remove_new = mtk_mdp_rdma_remove,
 	.driver = {
 		.name = "mediatek-mdp-rdma",
+		.owner = THIS_MODULE,
 		.of_match_table = mtk_mdp_rdma_driver_dt_match,
 	},
 };

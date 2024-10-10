@@ -58,11 +58,11 @@ struct efifb_dmi_info {
 
 #ifdef CONFIG_SYSFB
 
-void sysfb_disable(struct device *dev);
+void sysfb_disable(void);
 
 #else /* CONFIG_SYSFB */
 
-static inline void sysfb_disable(struct device *dev)
+static inline void sysfb_disable(void)
 {
 }
 

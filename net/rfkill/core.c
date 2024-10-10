@@ -539,13 +539,17 @@ bool rfkill_get_global_sw_state(const enum rfkill_type type)
 #endif
 
 bool rfkill_set_hw_state_reason(struct rfkill *rfkill,
-				bool blocked,
-				enum rfkill_hard_block_reasons reason)
+				bool blocked, unsigned long reason)
 {
 	unsigned long flags;
 	bool ret, prev;
 
 	BUG_ON(!rfkill);
+
+	if (WARN(reason &
+	    ~(RFKILL_HARD_BLOCK_SIGNAL | RFKILL_HARD_BLOCK_NOT_OWNER),
+	    "hw_state reason not supported: 0x%lx", reason))
+		return blocked;
 
 	spin_lock_irqsave(&rfkill->lock, flags);
 	prev = !!(rfkill->hard_block_reasons & reason);
@@ -1394,6 +1398,7 @@ static const struct file_operations rfkill_fops = {
 	.release	= rfkill_fop_release,
 	.unlocked_ioctl	= rfkill_fop_ioctl,
 	.compat_ioctl	= compat_ptr_ioctl,
+	.llseek		= no_llseek,
 };
 
 #define RFKILL_NAME "rfkill"

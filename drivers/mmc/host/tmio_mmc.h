@@ -21,7 +21,6 @@
 #include <linux/scatterlist.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
-#include <linux/workqueue.h>
 
 #define CTL_SD_CMD 0x00
 #define CTL_ARG_REG 0x04
@@ -140,6 +139,9 @@ struct tmio_mmc_host {
 	struct mmc_host         *mmc;
 	struct mmc_host_ops     ops;
 
+	/* Callbacks for clock / power control */
+	void (*set_pwr)(struct platform_device *host, int state);
+
 	/* pio related stuff */
 	struct scatterlist      *sg_ptr;
 	struct scatterlist      *sg_orig;
@@ -154,7 +156,7 @@ struct tmio_mmc_host {
 	bool			dma_on;
 	struct dma_chan		*chan_rx;
 	struct dma_chan		*chan_tx;
-	struct work_struct	dma_issue;
+	struct tasklet_struct	dma_issue;
 	struct scatterlist	bounce_sg;
 	u8			*bounce_buf;
 

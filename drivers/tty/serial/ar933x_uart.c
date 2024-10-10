@@ -390,7 +390,7 @@ static void ar933x_uart_rx_chars(struct ar933x_uart_port *up)
 
 static void ar933x_uart_tx_chars(struct ar933x_uart_port *up)
 {
-	struct tty_port *tport = &up->port.state->port;
+	struct circ_buf *xmit = &up->port.state->xmit;
 	struct serial_rs485 *rs485conf = &up->port.rs485;
 	int count;
 	bool half_duplex_send = false;
@@ -399,7 +399,7 @@ static void ar933x_uart_tx_chars(struct ar933x_uart_port *up)
 		return;
 
 	if ((rs485conf->flags & SER_RS485_ENABLED) &&
-	    (up->port.x_char || !kfifo_is_empty(&tport->xmit_fifo))) {
+	    (up->port.x_char || !uart_circ_empty(xmit))) {
 		ar933x_uart_stop_rx_interrupt(up);
 		gpiod_set_value(up->rts_gpiod, !!(rs485conf->flags & SER_RS485_RTS_ON_SEND));
 		half_duplex_send = true;
@@ -408,7 +408,6 @@ static void ar933x_uart_tx_chars(struct ar933x_uart_port *up)
 	count = up->port.fifosize;
 	do {
 		unsigned int rdata;
-		unsigned char c;
 
 		rdata = ar933x_uart_read(up, AR933X_UART_DATA_REG);
 		if ((rdata & AR933X_UART_DATA_TX_CSR) == 0)
@@ -421,16 +420,18 @@ static void ar933x_uart_tx_chars(struct ar933x_uart_port *up)
 			continue;
 		}
 
-		if (!uart_fifo_get(&up->port, &c))
+		if (uart_circ_empty(xmit))
 			break;
 
-		ar933x_uart_putc(up, c);
+		ar933x_uart_putc(up, xmit->buf[xmit->tail]);
+
+		uart_xmit_advance(&up->port, 1);
 	} while (--count > 0);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&up->port);
 
-	if (!kfifo_is_empty(&tport->xmit_fifo)) {
+	if (!uart_circ_empty(xmit)) {
 		ar933x_uart_start_tx_interrupt(up);
 	} else if (half_duplex_send) {
 		ar933x_uart_wait_tx_complete(up);
@@ -692,6 +693,7 @@ static struct uart_driver ar933x_uart_driver = {
 	.cons		= NULL, /* filled in runtime */
 };
 
+static const struct serial_rs485 ar933x_no_rs485 = {};
 static const struct serial_rs485 ar933x_rs485_supported = {
 	.flags = SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND | SER_RS485_RTS_AFTER_SEND,
 };
@@ -787,7 +789,7 @@ static int ar933x_uart_probe(struct platform_device *pdev)
 	up->rts_gpiod = mctrl_gpio_to_gpiod(up->gpios, UART_GPIO_RTS);
 
 	if (!up->rts_gpiod) {
-		port->rs485_supported.flags &= ~SER_RS485_ENABLED;
+		port->rs485_supported = ar933x_no_rs485;
 		if (port->rs485.flags & SER_RS485_ENABLED) {
 			dev_err(&pdev->dev, "lacking rts-gpio, disabling RS485\n");
 			port->rs485.flags &= ~SER_RS485_ENABLED;

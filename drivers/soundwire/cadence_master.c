@@ -6,7 +6,6 @@
  * Used by Master driver
  */
 
-#include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/debugfs.h>
@@ -324,11 +323,12 @@ static ssize_t cdns_sprintf(struct sdw_cdns *cdns,
 static int cdns_reg_show(struct seq_file *s, void *data)
 {
 	struct sdw_cdns *cdns = s->private;
+	char *buf;
 	ssize_t ret;
 	int num_ports;
 	int i, j;
 
-	char *buf __free(kfree) = kzalloc(RD_BUF, GFP_KERNEL);
+	buf = kzalloc(RD_BUF, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -389,6 +389,7 @@ static int cdns_reg_show(struct seq_file *s, void *data)
 		ret += cdns_sprintf(cdns, buf, ret, CDNS_PDI_CONFIG(i));
 
 	seq_printf(s, "%s", buf);
+	kfree(buf);
 
 	return 0;
 }
@@ -890,14 +891,8 @@ static int cdns_update_slave_status(struct sdw_cdns *cdns,
 		}
 	}
 
-	if (is_slave) {
-		int ret;
-
-		mutex_lock(&cdns->status_update_lock);
-		ret = sdw_handle_slave_status(&cdns->bus, status);
-		mutex_unlock(&cdns->status_update_lock);
-		return ret;
-	}
+	if (is_slave)
+		return sdw_handle_slave_status(&cdns->bus, status);
 
 	return 0;
 }
@@ -993,31 +988,6 @@ irqreturn_t sdw_cdns_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 EXPORT_SYMBOL(sdw_cdns_irq);
-
-static void cdns_check_attached_status_dwork(struct work_struct *work)
-{
-	struct sdw_cdns *cdns =
-		container_of(work, struct sdw_cdns, attach_dwork.work);
-	enum sdw_slave_status status[SDW_MAX_DEVICES + 1];
-	u32 val;
-	int ret;
-	int i;
-
-	val = cdns_readl(cdns, CDNS_MCP_SLAVE_STAT);
-
-	for (i = 0; i <= SDW_MAX_DEVICES; i++) {
-		status[i] = val & 0x3;
-		if (status[i])
-			dev_dbg(cdns->dev, "Peripheral %d status: %d\n", i, status[i]);
-		val >>= 2;
-	}
-
-	mutex_lock(&cdns->status_update_lock);
-	ret = sdw_handle_slave_status(&cdns->bus, status);
-	mutex_unlock(&cdns->status_update_lock);
-	if (ret < 0)
-		dev_err(cdns->dev, "%s: sdw_handle_slave_status failed: %d\n", __func__, ret);
-}
 
 /**
  * cdns_update_slave_status_work - update slave status in a work since we will need to handle
@@ -1266,7 +1236,7 @@ EXPORT_SYMBOL(sdw_cdns_enable_interrupt);
 
 static int cdns_allocate_pdi(struct sdw_cdns *cdns,
 			     struct sdw_cdns_pdi **stream,
-			     u32 num)
+			     u32 num, u32 pdi_offset)
 {
 	struct sdw_cdns_pdi *pdi;
 	int i;
@@ -1279,7 +1249,7 @@ static int cdns_allocate_pdi(struct sdw_cdns *cdns,
 		return -ENOMEM;
 
 	for (i = 0; i < num; i++) {
-		pdi[i].num = i;
+		pdi[i].num = i + pdi_offset;
 	}
 
 	*stream = pdi;
@@ -1296,6 +1266,7 @@ int sdw_cdns_pdi_init(struct sdw_cdns *cdns,
 		      struct sdw_cdns_stream_config config)
 {
 	struct sdw_cdns_streams *stream;
+	int offset;
 	int ret;
 
 	cdns->pcm.num_bd = config.pcm_bd;
@@ -1306,15 +1277,24 @@ int sdw_cdns_pdi_init(struct sdw_cdns *cdns,
 	stream = &cdns->pcm;
 
 	/* we allocate PDI0 and PDI1 which are used for Bulk */
-	ret = cdns_allocate_pdi(cdns, &stream->bd, stream->num_bd);
+	offset = 0;
+
+	ret = cdns_allocate_pdi(cdns, &stream->bd,
+				stream->num_bd, offset);
 	if (ret)
 		return ret;
 
-	ret = cdns_allocate_pdi(cdns, &stream->in, stream->num_in);
+	offset += stream->num_bd;
+
+	ret = cdns_allocate_pdi(cdns, &stream->in,
+				stream->num_in, offset);
 	if (ret)
 		return ret;
 
-	ret = cdns_allocate_pdi(cdns, &stream->out, stream->num_out);
+	offset += stream->num_in;
+
+	ret = cdns_allocate_pdi(cdns, &stream->out,
+				stream->num_out, offset);
 	if (ret)
 		return ret;
 
@@ -1348,12 +1328,6 @@ static void cdns_init_clock_ctrl(struct sdw_cdns *cdns)
 	u32 val;
 	u32 ssp_interval;
 	int divider;
-
-	dev_dbg(cdns->dev, "mclk %d max %d row %d col %d\n",
-		prop->mclk_freq,
-		prop->max_clk_freq,
-		prop->default_row,
-		prop->default_col);
 
 	/* Set clock divider */
 	divider	= (prop->mclk_freq / prop->max_clk_freq) - 1;
@@ -1771,11 +1745,7 @@ int sdw_cdns_probe(struct sdw_cdns *cdns)
 	init_completion(&cdns->tx_complete);
 	cdns->bus.port_ops = &cdns_port_ops;
 
-	mutex_init(&cdns->status_update_lock);
-
 	INIT_WORK(&cdns->work, cdns_update_slave_status_work);
-	INIT_DELAYED_WORK(&cdns->attach_dwork, cdns_check_attached_status_dwork);
-
 	return 0;
 }
 EXPORT_SYMBOL(sdw_cdns_probe);
@@ -1832,6 +1802,7 @@ EXPORT_SYMBOL(cdns_set_sdw_stream);
  * cdns_find_pdi() - Find a free PDI
  *
  * @cdns: Cadence instance
+ * @offset: Starting offset
  * @num: Number of PDIs
  * @pdi: PDI instances
  * @dai_id: DAI id
@@ -1840,13 +1811,14 @@ EXPORT_SYMBOL(cdns_set_sdw_stream);
  * expected to match, return NULL otherwise.
  */
 static struct sdw_cdns_pdi *cdns_find_pdi(struct sdw_cdns *cdns,
+					  unsigned int offset,
 					  unsigned int num,
 					  struct sdw_cdns_pdi *pdi,
 					  int dai_id)
 {
 	int i;
 
-	for (i = 0; i < num; i++)
+	for (i = offset; i < offset + num; i++)
 		if (pdi[i].num == dai_id)
 			return &pdi[i];
 
@@ -1900,15 +1872,15 @@ struct sdw_cdns_pdi *sdw_cdns_alloc_pdi(struct sdw_cdns *cdns,
 	struct sdw_cdns_pdi *pdi = NULL;
 
 	if (dir == SDW_DATA_DIR_RX)
-		pdi = cdns_find_pdi(cdns, stream->num_in, stream->in,
+		pdi = cdns_find_pdi(cdns, 0, stream->num_in, stream->in,
 				    dai_id);
 	else
-		pdi = cdns_find_pdi(cdns, stream->num_out, stream->out,
+		pdi = cdns_find_pdi(cdns, 0, stream->num_out, stream->out,
 				    dai_id);
 
 	/* check if we found a PDI, else find in bi-directional */
 	if (!pdi)
-		pdi = cdns_find_pdi(cdns, stream->num_bd, stream->bd,
+		pdi = cdns_find_pdi(cdns, 2, stream->num_bd, stream->bd,
 				    dai_id);
 
 	if (pdi) {

@@ -4,6 +4,8 @@
  *
  * Copyright (C) 2020, Google LLC.
  */
+
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdarg.h>
 #include <assert.h>

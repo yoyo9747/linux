@@ -366,10 +366,7 @@ struct bss_mld_tlv {
 	u8 mac_addr[ETH_ALEN];
 	u8 remap_idx;
 	u8 link_id;
-	u8 eml_enable;
-	u8 max_link_num;
-	u8 hybrid_mode;
-	u8 __rsv[3];
+	u8 __rsv[2];
 } __packed;
 
 struct sta_rec_ba_uni {
@@ -443,17 +440,6 @@ struct sta_rec_mld {
 	} __packed link[2];
 } __packed;
 
-struct sta_rec_eht_mld {
-	__le16 tag;
-	__le16 len;
-	u8 nsep;
-	u8 mld_type;
-	u8 __rsv1[1];
-	u8 str_cap[3];
-	u8 eml_cap[3];
-	u8 __rsv2[3];
-} __packed;
-
 struct bss_ifs_time_tlv {
 	__le16 tag;
 	__le16 len;
@@ -468,21 +454,6 @@ struct bss_ifs_time_tlv {
 	u8 eifs_cck_valid;
 	u8 rsv;
 	__le16 eifs_cck_time;
-} __packed;
-
-struct bss_rlm_tlv {
-	__le16 tag;
-	__le16 len;
-	u8 control_channel;
-	u8 center_chan;
-	u8 center_chan2;
-	u8 bw;
-	u8 tx_streams;
-	u8 rx_streams;
-	u8 ht_op_info;
-	u8 sco;
-	u8 band;
-	u8 pad[3];
 } __packed;
 
 #define MT7925_STA_UPDATE_MAX_SIZE	(sizeof(struct sta_req_hdr) +		\
@@ -503,8 +474,7 @@ struct bss_rlm_tlv {
 					 sizeof(struct sta_rec_eht) +		\
 					 sizeof(struct sta_rec_hdr_trans) +	\
 					 sizeof(struct sta_rec_mld) +		\
-					 sizeof(struct tlv) * 2 +		\
-					 sizeof(struct sta_rec_remove))
+					 sizeof(struct tlv))
 
 #define MT7925_BSS_UPDATE_MAX_SIZE	(sizeof(struct bss_req_hdr) +		\
 					 sizeof(struct mt76_connac_bss_basic_tlv) +	\
@@ -514,7 +484,6 @@ struct bss_rlm_tlv {
 					 sizeof(struct bss_info_uni_he) +		\
 					 sizeof(struct bss_info_uni_bss_color) +	\
 					 sizeof(struct bss_ifs_time_tlv) +		\
-					 sizeof(struct bss_rlm_tlv) +		\
 					 sizeof(struct tlv))
 
 #define MT_CONNAC3_SKU_POWER_LIMIT      449
@@ -566,27 +535,7 @@ struct mt7925_wow_pattern_tlv {
 	u8 offset;
 	u8 mask[MT76_CONNAC_WOW_MASK_MAX_LEN];
 	u8 pattern[MT76_CONNAC_WOW_PATTEN_MAX_LEN];
-	u8 rsv[7];
-} __packed;
-
-struct roc_acquire_tlv {
-	__le16 tag;
-	__le16 len;
-	u8 bss_idx;
-	u8 tokenid;
-	u8 control_channel;
-	u8 sco;
-	u8 band;
-	u8 bw;
-	u8 center_chan;
-	u8 center_chan2;
-	u8 bw_from_ap;
-	u8 center_chan_from_ap;
-	u8 center_chan2_from_ap;
-	u8 reqtype;
-	__le32 maxinterval;
-	u8 dbdcband;
-	u8 rsv[3];
+	u8 rsv[4];
 } __packed;
 
 static inline enum connac3_mcu_cipher_type
@@ -629,18 +578,18 @@ int mt7925_mcu_sched_scan_enable(struct mt76_phy *phy,
 				 bool enable);
 int mt7925_mcu_add_bss_info(struct mt792x_phy *phy,
 			    struct ieee80211_chanctx_conf *ctx,
-			    struct ieee80211_bss_conf *link_conf,
-			    struct ieee80211_link_sta *link_sta,
+			    struct ieee80211_vif *vif,
+			    struct ieee80211_sta *sta,
 			    int enable);
 int mt7925_mcu_set_timing(struct mt792x_phy *phy,
-			  struct ieee80211_bss_conf *link_conf);
+			  struct ieee80211_vif *vif);
 int mt7925_mcu_set_deep_sleep(struct mt792x_dev *dev, bool enable);
 int mt7925_mcu_set_channel_domain(struct mt76_phy *phy);
 int mt7925_mcu_set_radio_en(struct mt792x_phy *phy, bool enable);
 int mt7925_mcu_set_chctx(struct mt76_phy *phy, struct mt76_vif *mvif,
-			 struct ieee80211_bss_conf *link_conf,
 			 struct ieee80211_chanctx_conf *ctx);
 int mt7925_mcu_set_rate_txpower(struct mt76_phy *phy);
 int mt7925_mcu_update_arp_filter(struct mt76_dev *dev,
-				 struct ieee80211_bss_conf *link_conf);
+				 struct mt76_vif *vif,
+				 struct ieee80211_bss_conf *info);
 #endif

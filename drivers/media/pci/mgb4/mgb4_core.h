@@ -13,8 +13,6 @@
 #include <linux/dmaengine.h>
 #include "mgb4_regs.h"
 
-#define MGB4_HW_FREQ 125000000
-
 #define MGB4_VIN_DEVICES  2
 #define MGB4_VOUT_DEVICES 2
 

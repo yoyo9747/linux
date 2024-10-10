@@ -8,10 +8,6 @@
 
 struct xe_device;
 
-#ifdef CONFIG_DEBUG_FS
 void xe_debugfs_register(struct xe_device *xe);
-#else
-static inline void xe_debugfs_register(struct xe_device *xe) { }
-#endif
 
 #endif

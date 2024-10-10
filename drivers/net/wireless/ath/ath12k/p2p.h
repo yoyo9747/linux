@@ -12,7 +12,6 @@ struct ath12k_wmi_p2p_noa_info;
 
 struct ath12k_p2p_noa_arg {
 	u32 vdev_id;
-	struct ath12k *ar;
 	const struct ath12k_wmi_p2p_noa_info *noa;
 };
 

@@ -323,7 +323,8 @@ static int qed_init_pci(struct qed_dev *cdev, struct pci_dev *pdev)
 		goto err2;
 	}
 
-	if (IS_PF(cdev) && !pdev->pm_cap)
+	cdev->pci_params.pm_cap = pci_find_capability(pdev, PCI_CAP_ID_PM);
+	if (IS_PF(cdev) && !cdev->pci_params.pm_cap)
 		DP_NOTICE(cdev, "Cannot find power management capability\n");
 
 	rc = dma_set_mask_and_coherent(&cdev->pdev->dev, DMA_BIT_MASK(64));
@@ -1205,6 +1206,7 @@ out:
 static int qed_slowpath_wq_start(struct qed_dev *cdev)
 {
 	struct qed_hwfn *hwfn;
+	char name[NAME_SIZE];
 	int i;
 
 	if (IS_VF(cdev))
@@ -1213,11 +1215,11 @@ static int qed_slowpath_wq_start(struct qed_dev *cdev)
 	for_each_hwfn(cdev, i) {
 		hwfn = &cdev->hwfns[i];
 
-		hwfn->slowpath_wq = alloc_workqueue("slowpath-%02x:%02x.%02x",
-					 0, 0, cdev->pdev->bus->number,
-					 PCI_SLOT(cdev->pdev->devfn),
-					 hwfn->abs_pf_id);
+		snprintf(name, NAME_SIZE, "slowpath-%02x:%02x.%02x",
+			 cdev->pdev->bus->number,
+			 PCI_SLOT(cdev->pdev->devfn), hwfn->abs_pf_id);
 
+		hwfn->slowpath_wq = alloc_workqueue(name, 0, 0);
 		if (!hwfn->slowpath_wq) {
 			DP_NOTICE(hwfn, "Cannot create slowpath workqueue\n");
 			return -ENOMEM;
@@ -1349,7 +1351,7 @@ static int qed_slowpath_start(struct qed_dev *cdev,
 				      (params->drv_rev << 8) |
 				      (params->drv_eng);
 		strscpy(drv_version.name, params->name,
-			sizeof(drv_version.name));
+			MCP_DRV_VER_STR_SIZE - 4);
 		rc = qed_mcp_send_drv_version(hwfn, hwfn->p_main_ptt,
 					      &drv_version);
 		if (rc) {

@@ -6,6 +6,7 @@
 /* UBI NVMEM provider */
 #include "ubi.h"
 #include <linux/nvmem-provider.h>
+#include <asm/div64.h>
 
 /* List of all NVMEM devices */
 static LIST_HEAD(nvmem_devices);
@@ -26,15 +27,14 @@ static int ubi_nvmem_reg_read(void *priv, unsigned int from,
 	struct ubi_nvmem *unv = priv;
 	struct ubi_volume_desc *desc;
 	uint32_t offs;
-	uint32_t lnum;
+	uint64_t lnum = from;
 	int err = 0;
 
 	desc = ubi_open_volume(unv->ubi_num, unv->vol_id, UBI_READONLY);
 	if (IS_ERR(desc))
 		return PTR_ERR(desc);
 
-	offs = from % unv->usable_leb_size;
-	lnum = from / unv->usable_leb_size;
+	offs = do_div(lnum, unv->usable_leb_size);
 	while (bytes_left) {
 		to_read = unv->usable_leb_size - offs;
 

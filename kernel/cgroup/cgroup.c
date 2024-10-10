@@ -1744,11 +1744,8 @@ static int css_populate_dir(struct cgroup_subsys_state *css)
 			if (cgroup_psi_enabled()) {
 				ret = cgroup_addrm_files(css, cgrp,
 							 cgroup_psi_files, true);
-				if (ret < 0) {
-					cgroup_addrm_files(css, cgrp,
-							   cgroup_base_files, false);
+				if (ret < 0)
 					return ret;
-				}
 			}
 		} else {
 			ret = cgroup_addrm_files(css, cgrp,
@@ -1842,9 +1839,9 @@ int rebind_subsystems(struct cgroup_root *dst_root, u16 ss_mask)
 		RCU_INIT_POINTER(scgrp->subsys[ssid], NULL);
 		rcu_assign_pointer(dcgrp->subsys[ssid], css);
 		ss->root = dst_root;
+		css->cgroup = dcgrp;
 
 		spin_lock_irq(&css_set_lock);
-		css->cgroup = dcgrp;
 		WARN_ON(!list_empty(&dcgrp->e_csets[ss->id]));
 		list_for_each_entry_safe(cset, cset_pos, &scgrp->e_csets[ss->id],
 					 e_cset_node[ss->id]) {
@@ -1925,7 +1922,6 @@ enum cgroup2_param {
 	Opt_memory_localevents,
 	Opt_memory_recursiveprot,
 	Opt_memory_hugetlb_accounting,
-	Opt_pids_localevents,
 	nr__cgroup2_params
 };
 
@@ -1935,7 +1931,6 @@ static const struct fs_parameter_spec cgroup2_fs_parameters[] = {
 	fsparam_flag("memory_localevents",	Opt_memory_localevents),
 	fsparam_flag("memory_recursiveprot",	Opt_memory_recursiveprot),
 	fsparam_flag("memory_hugetlb_accounting", Opt_memory_hugetlb_accounting),
-	fsparam_flag("pids_localevents",	Opt_pids_localevents),
 	{}
 };
 
@@ -1965,18 +1960,8 @@ static int cgroup2_parse_param(struct fs_context *fc, struct fs_parameter *param
 	case Opt_memory_hugetlb_accounting:
 		ctx->flags |= CGRP_ROOT_MEMORY_HUGETLB_ACCOUNTING;
 		return 0;
-	case Opt_pids_localevents:
-		ctx->flags |= CGRP_ROOT_PIDS_LOCAL_EVENTS;
-		return 0;
 	}
 	return -EINVAL;
-}
-
-struct cgroup_of_peak *of_peak(struct kernfs_open_file *of)
-{
-	struct cgroup_file_ctx *ctx = of->priv;
-
-	return &ctx->peak;
 }
 
 static void apply_cgroup_root_flags(unsigned int root_flags)
@@ -2004,11 +1989,6 @@ static void apply_cgroup_root_flags(unsigned int root_flags)
 			cgrp_dfl_root.flags |= CGRP_ROOT_MEMORY_HUGETLB_ACCOUNTING;
 		else
 			cgrp_dfl_root.flags &= ~CGRP_ROOT_MEMORY_HUGETLB_ACCOUNTING;
-
-		if (root_flags & CGRP_ROOT_PIDS_LOCAL_EVENTS)
-			cgrp_dfl_root.flags |= CGRP_ROOT_PIDS_LOCAL_EVENTS;
-		else
-			cgrp_dfl_root.flags &= ~CGRP_ROOT_PIDS_LOCAL_EVENTS;
 	}
 }
 
@@ -2024,8 +2004,6 @@ static int cgroup_show_options(struct seq_file *seq, struct kernfs_root *kf_root
 		seq_puts(seq, ",memory_recursiveprot");
 	if (cgrp_dfl_root.flags & CGRP_ROOT_MEMORY_HUGETLB_ACCOUNTING)
 		seq_puts(seq, ",memory_hugetlb_accounting");
-	if (cgrp_dfl_root.flags & CGRP_ROOT_PIDS_LOCAL_EVENTS)
-		seq_puts(seq, ",pids_localevents");
 	return 0;
 }
 
@@ -2338,7 +2316,7 @@ static struct file_system_type cgroup2_fs_type = {
 	.fs_flags		= FS_USERNS_MOUNT,
 };
 
-#ifdef CONFIG_CPUSETS_V1
+#ifdef CONFIG_CPUSETS
 static const struct fs_context_operations cpuset_fs_context_ops = {
 	.get_tree	= cgroup1_get_tree,
 	.free		= cgroup_fs_context_free,
@@ -3676,40 +3654,12 @@ static int cgroup_events_show(struct seq_file *seq, void *v)
 static int cgroup_stat_show(struct seq_file *seq, void *v)
 {
 	struct cgroup *cgroup = seq_css(seq)->cgroup;
-	struct cgroup_subsys_state *css;
-	int dying_cnt[CGROUP_SUBSYS_COUNT];
-	int ssid;
 
 	seq_printf(seq, "nr_descendants %d\n",
 		   cgroup->nr_descendants);
-
-	/*
-	 * Show the number of live and dying csses associated with each of
-	 * non-inhibited cgroup subsystems that is bound to cgroup v2.
-	 *
-	 * Without proper lock protection, racing is possible. So the
-	 * numbers may not be consistent when that happens.
-	 */
-	rcu_read_lock();
-	for (ssid = 0; ssid < CGROUP_SUBSYS_COUNT; ssid++) {
-		dying_cnt[ssid] = -1;
-		if ((BIT(ssid) & cgrp_dfl_inhibit_ss_mask) ||
-		    (cgroup_subsys[ssid]->root !=  &cgrp_dfl_root))
-			continue;
-		css = rcu_dereference_raw(cgroup->subsys[ssid]);
-		dying_cnt[ssid] = cgroup->nr_dying_subsys[ssid];
-		seq_printf(seq, "nr_subsys_%s %d\n", cgroup_subsys[ssid]->name,
-			   css ? (css->nr_descendants + 1) : 0);
-	}
-
 	seq_printf(seq, "nr_dying_descendants %d\n",
 		   cgroup->nr_dying_descendants);
-	for (ssid = 0; ssid < CGROUP_SUBSYS_COUNT; ssid++) {
-		if (dying_cnt[ssid] >= 0)
-			seq_printf(seq, "nr_dying_subsys_%s %d\n",
-				   cgroup_subsys[ssid]->name, dying_cnt[ssid]);
-	}
-	rcu_read_unlock();
+
 	return 0;
 }
 
@@ -4131,7 +4081,7 @@ static ssize_t cgroup_file_write(struct kernfs_open_file *of, char *buf,
 	 * If namespaces are delegation boundaries, disallow writes to
 	 * files in an non-init namespace root from inside the namespace
 	 * except for the files explicitly marked delegatable -
-	 * eg. cgroup.procs, cgroup.threads and cgroup.subtree_control.
+	 * cgroup.procs and cgroup.subtree_control.
 	 */
 	if ((cgrp->root->flags & CGRP_ROOT_NS_DELEGATE) &&
 	    !(cft->flags & CFTYPE_NS_DELEGATABLE) &&
@@ -4630,9 +4580,8 @@ struct cgroup_subsys_state *css_next_child(struct cgroup_subsys_state *pos,
  *
  * While this function requires cgroup_mutex or RCU read locking, it
  * doesn't require the whole traversal to be contained in a single critical
- * section. Additionally, it isn't necessary to hold onto a reference to @pos.
- * This function will return the correct next descendant as long as both @pos
- * and @root are accessible and @pos is a descendant of @root.
+ * section.  This function will return the correct next descendant as long
+ * as both @pos and @root are accessible and @pos is a descendant of @root.
  *
  * If a subsystem synchronizes ->css_online() and the start of iteration, a
  * css which finished ->css_online() is guaranteed to be visible in the
@@ -4680,9 +4629,8 @@ EXPORT_SYMBOL_GPL(css_next_descendant_pre);
  *
  * While this function requires cgroup_mutex or RCU read locking, it
  * doesn't require the whole traversal to be contained in a single critical
- * section. Additionally, it isn't necessary to hold onto a reference to @pos.
- * This function will return the correct rightmost descendant as long as @pos
- * is accessible.
+ * section.  This function will return the correct rightmost descendant as
+ * long as @pos is accessible.
  */
 struct cgroup_subsys_state *
 css_rightmost_descendant(struct cgroup_subsys_state *pos)
@@ -4726,9 +4674,9 @@ css_leftmost_descendant(struct cgroup_subsys_state *pos)
  *
  * While this function requires cgroup_mutex or RCU read locking, it
  * doesn't require the whole traversal to be contained in a single critical
- * section. Additionally, it isn't necessary to hold onto a reference to @pos.
- * This function will return the correct next descendant as long as both @pos
- * and @cgroup are accessible and @pos is a descendant of @cgroup.
+ * section.  This function will return the correct next descendant as long
+ * as both @pos and @cgroup are accessible and @pos is a descendant of
+ * @cgroup.
  *
  * If a subsystem synchronizes ->css_online() and the start of iteration, a
  * css which finished ->css_online() is guaranteed to be visible in the
@@ -5420,8 +5368,7 @@ static void css_free_rwork_fn(struct work_struct *work)
 	} else {
 		/* cgroup free path */
 		atomic_dec(&cgrp->root->nr_cgrps);
-		if (!cgroup_on_dfl(cgrp))
-			cgroup1_pidlist_destroy_all(cgrp);
+		cgroup1_pidlist_destroy_all(cgrp);
 		cancel_work_sync(&cgrp->release_agent_work);
 		bpf_cgrp_storage_free(cgrp);
 
@@ -5461,8 +5408,6 @@ static void css_release_work_fn(struct work_struct *work)
 	list_del_rcu(&css->sibling);
 
 	if (ss) {
-		struct cgroup *parent_cgrp;
-
 		/* css release path */
 		if (!list_empty(&css->rstat_css_node)) {
 			cgroup_rstat_flush(cgrp);
@@ -5472,21 +5417,6 @@ static void css_release_work_fn(struct work_struct *work)
 		cgroup_idr_replace(&ss->css_idr, NULL, css->id);
 		if (ss->css_released)
 			ss->css_released(css);
-
-		cgrp->nr_dying_subsys[ss->id]--;
-		/*
-		 * When a css is released and ready to be freed, its
-		 * nr_descendants must be zero. However, the corresponding
-		 * cgrp->nr_dying_subsys[ss->id] may not be 0 if a subsystem
-		 * is activated and deactivated multiple times with one or
-		 * more of its previous activation leaving behind dying csses.
-		 */
-		WARN_ON_ONCE(css->nr_descendants);
-		parent_cgrp = cgroup_parent(cgrp);
-		while (parent_cgrp) {
-			parent_cgrp->nr_dying_subsys[ss->id]--;
-			parent_cgrp = cgroup_parent(parent_cgrp);
-		}
 	} else {
 		struct cgroup *tcgrp;
 
@@ -5571,11 +5501,8 @@ static int online_css(struct cgroup_subsys_state *css)
 		rcu_assign_pointer(css->cgroup->subsys[ss->id], css);
 
 		atomic_inc(&css->online_cnt);
-		if (css->parent) {
+		if (css->parent)
 			atomic_inc(&css->parent->online_cnt);
-			while ((css = css->parent))
-				css->nr_descendants++;
-		}
 	}
 	return ret;
 }
@@ -5597,16 +5524,6 @@ static void offline_css(struct cgroup_subsys_state *css)
 	RCU_INIT_POINTER(css->cgroup->subsys[ss->id], NULL);
 
 	wake_up_all(&css->cgroup->offline_waitq);
-
-	css->cgroup->nr_dying_subsys[ss->id]++;
-	/*
-	 * Parent css and cgroup cannot be freed until after the freeing
-	 * of child css, see css_free_rwork_fn().
-	 */
-	while ((css = css->parent)) {
-		css->nr_descendants--;
-		css->cgroup->nr_dying_subsys[ss->id]++;
-	}
 }
 
 /**
@@ -6245,7 +6162,7 @@ int __init cgroup_init(void)
 	WARN_ON(register_filesystem(&cgroup_fs_type));
 	WARN_ON(register_filesystem(&cgroup2_fs_type));
 	WARN_ON(!proc_create_single("cgroups", 0, NULL, proc_cgroupstats_show));
-#ifdef CONFIG_CPUSETS_V1
+#ifdef CONFIG_CPUSETS
 	WARN_ON(register_filesystem(&cpuset_fs_type));
 #endif
 
@@ -6768,10 +6685,8 @@ void cgroup_exit(struct task_struct *tsk)
 	WARN_ON_ONCE(list_empty(&tsk->cg_list));
 	cset = task_css_set(tsk);
 	css_set_move_task(tsk, cset, NULL, false);
+	list_add_tail(&tsk->cg_list, &cset->dying_tasks);
 	cset->nr_tasks--;
-	/* matches the signal->live check in css_task_iter_advance() */
-	if (thread_group_leader(tsk) && atomic_read(&tsk->signal->live))
-		list_add_tail(&tsk->cg_list, &cset->dying_tasks);
 
 	if (dl_task(tsk))
 		dec_dl_tasks_cs(tsk);
@@ -6798,12 +6713,10 @@ void cgroup_release(struct task_struct *task)
 		ss->release(task);
 	} while_each_subsys_mask();
 
-	if (!list_empty(&task->cg_list)) {
-		spin_lock_irq(&css_set_lock);
-		css_set_skip_task_iters(task_css_set(task), task);
-		list_del_init(&task->cg_list);
-		spin_unlock_irq(&css_set_lock);
-	}
+	spin_lock_irq(&css_set_lock);
+	css_set_skip_task_iters(task_css_set(task), task);
+	list_del_init(&task->cg_list);
+	spin_unlock_irq(&css_set_lock);
 }
 
 void cgroup_free(struct task_struct *task)
@@ -6968,10 +6881,10 @@ struct cgroup *cgroup_v1v2_get_from_fd(int fd)
 {
 	struct cgroup *cgrp;
 	struct fd f = fdget_raw(fd);
-	if (!fd_file(f))
+	if (!f.file)
 		return ERR_PTR(-EBADF);
 
-	cgrp = cgroup_v1v2_get_from_file(fd_file(f));
+	cgrp = cgroup_v1v2_get_from_file(f.file);
 	fdput(f);
 	return cgrp;
 }
@@ -7148,8 +7061,7 @@ static ssize_t features_show(struct kobject *kobj, struct kobj_attribute *attr,
 			"favordynmods\n"
 			"memory_localevents\n"
 			"memory_recursiveprot\n"
-			"memory_hugetlb_accounting\n"
-			"pids_localevents\n");
+			"memory_hugetlb_accounting\n");
 }
 static struct kobj_attribute cgroup_features_attr = __ATTR_RO(features);
 

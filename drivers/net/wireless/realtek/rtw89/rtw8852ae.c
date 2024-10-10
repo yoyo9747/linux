@@ -46,7 +46,6 @@ static const struct rtw89_pci_info rtw8852a_pci_info = {
 	.rpwm_addr		= R_AX_PCIE_HRPWM,
 	.cpwm_addr		= R_AX_CPWM,
 	.mit_addr		= R_AX_INT_MIT_RX,
-	.wp_sel_addr		= 0,
 	.tx_dma_ch_mask		= 0,
 	.bd_idx_addr_low_power	= NULL,
 	.dma_addr_set		= &rtw89_pci_ch_dma_addr_set,
@@ -62,7 +61,6 @@ static const struct rtw89_pci_info rtw8852a_pci_info = {
 
 static const struct rtw89_driver_info rtw89_8852ae_info = {
 	.chip = &rtw8852a_chip_info,
-	.quirks = NULL,
 	.bus = {
 		.pci = &rtw8852a_pci_info,
 	},

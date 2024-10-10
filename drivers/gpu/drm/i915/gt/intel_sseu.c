@@ -214,8 +214,13 @@ static void xehp_sseu_info_init(struct intel_gt *gt)
 	int num_compute_regs, num_geometry_regs;
 	int eu;
 
-	num_geometry_regs = 1;
-	num_compute_regs = 1;
+	if (IS_PONTEVECCHIO(gt->i915)) {
+		num_geometry_regs = 0;
+		num_compute_regs = 2;
+	} else {
+		num_geometry_regs = 1;
+		num_compute_regs = 1;
+	}
 
 	/*
 	 * The concept of slice has been removed in Xe_HP.  To be compatible
@@ -637,7 +642,7 @@ void intel_sseu_info_init(struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
 
-	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 55))
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
 		xehp_sseu_info_init(gt);
 	else if (GRAPHICS_VER(i915) >= 12)
 		gen12_sseu_info_init(gt);
@@ -846,7 +851,7 @@ void intel_sseu_print_topology(struct drm_i915_private *i915,
 {
 	if (sseu->max_slices == 0)
 		drm_printf(p, "Unavailable\n");
-	else if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 55))
+	else if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
 		sseu_print_xehp_topology(sseu, p);
 	else
 		sseu_print_hsw_topology(sseu, p);

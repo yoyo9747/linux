@@ -22,7 +22,3 @@
 &clint {
 	compatible = "sophgo,cv1812h-clint", "thead,c900-clint";
 };
-
-&clk {
-	compatible = "sophgo,cv1810-clk";
-};

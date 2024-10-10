@@ -439,7 +439,7 @@ static void sccnxp_handle_rx(struct uart_port *port)
 static void sccnxp_handle_tx(struct uart_port *port)
 {
 	u8 sr;
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	struct sccnxp_port *s = dev_get_drvdata(port->dev);
 
 	if (unlikely(port->x_char)) {
@@ -449,7 +449,7 @@ static void sccnxp_handle_tx(struct uart_port *port)
 		return;
 	}
 
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
 		/* Disable TX if FIFO is empty */
 		if (sccnxp_port_read(port, SCCNXP_SR_REG) & SR_TXEMT) {
 			sccnxp_disable_irq(port, IMR_TXRDY);
@@ -461,20 +461,16 @@ static void sccnxp_handle_tx(struct uart_port *port)
 		return;
 	}
 
-	while (1) {
-		unsigned char ch;
-
+	while (!uart_circ_empty(xmit)) {
 		sr = sccnxp_port_read(port, SCCNXP_SR_REG);
 		if (!(sr & SR_TXRDY))
 			break;
 
-		if (!uart_fifo_get(port, &ch))
-			break;
-
-		sccnxp_port_write(port, SCCNXP_THR_REG, ch);
+		sccnxp_port_write(port, SCCNXP_THR_REG, xmit->buf[xmit->tail]);
+		uart_xmit_advance(port, 1);
 	}
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 }
 

@@ -12,20 +12,6 @@
 
 extern bool hang_debug;
 
-/**
- * struct a6xx_info - a6xx specific information from device table
- *
- * @hwcg: hw clock gating register sequence
- * @protect: CP_PROTECT settings
- */
-struct a6xx_info {
-	const struct adreno_reglist *hwcg;
-	const struct adreno_protect *protect;
-	u32 gmu_chipid;
-	u32 gmu_cgc_mode;
-	u32 prim_fifo_threshold;
-};
-
 struct a6xx_gpu {
 	struct adreno_gpu base;
 
@@ -83,12 +69,12 @@ static inline void a6xx_llc_rmw(struct a6xx_gpu *a6xx_gpu, u32 reg, u32 mask, u3
 
 static inline u32 a6xx_llc_read(struct a6xx_gpu *a6xx_gpu, u32 reg)
 {
-	return readl(a6xx_gpu->llc_mmio + (reg << 2));
+	return msm_readl(a6xx_gpu->llc_mmio + (reg << 2));
 }
 
 static inline void a6xx_llc_write(struct a6xx_gpu *a6xx_gpu, u32 reg, u32 value)
 {
-	writel(value, a6xx_gpu->llc_mmio + (reg << 2));
+	msm_writel(value, a6xx_gpu->llc_mmio + (reg << 2));
 }
 
 #define shadowptr(_a6xx_gpu, _ring) ((_a6xx_gpu)->shadow_iova + \

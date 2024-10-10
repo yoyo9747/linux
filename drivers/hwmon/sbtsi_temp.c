@@ -218,7 +218,7 @@ static int sbtsi_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id sbtsi_id[] = {
-	{"sbtsi"},
+	{"sbtsi", 0},
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, sbtsi_id);

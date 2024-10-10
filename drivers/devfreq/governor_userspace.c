@@ -153,5 +153,4 @@ static void __exit devfreq_userspace_exit(void)
 	return;
 }
 module_exit(devfreq_userspace_exit);
-MODULE_DESCRIPTION("DEVFREQ Userspace governor");
 MODULE_LICENSE("GPL");

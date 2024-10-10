@@ -53,7 +53,6 @@
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 #include <net/dst_metadata.h>
-#include <net/inet_dscp.h>
 
 MODULE_AUTHOR("Ville Nuorvala");
 MODULE_DESCRIPTION("IPv6 tunneling device");
@@ -609,8 +608,7 @@ ip4ip6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
 
 	/* Try to guess incoming interface */
 	rt = ip_route_output_ports(dev_net(skb->dev), &fl4, NULL, eiph->saddr,
-				   0, 0, 0, IPPROTO_IPIP,
-				   eiph->tos & INET_DSCP_MASK, 0);
+				   0, 0, 0, IPPROTO_IPIP, RT_TOS(eiph->tos), 0);
 	if (IS_ERR(rt))
 		goto out;
 
@@ -621,8 +619,7 @@ ip4ip6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
 	if (rt->rt_flags & RTCF_LOCAL) {
 		rt = ip_route_output_ports(dev_net(skb->dev), &fl4, NULL,
 					   eiph->daddr, eiph->saddr, 0, 0,
-					   IPPROTO_IPIP,
-					   eiph->tos & INET_DSCP_MASK, 0);
+					   IPPROTO_IPIP, RT_TOS(eiph->tos), 0);
 		if (IS_ERR(rt) || rt->dst.dev->type != ARPHRD_TUNNEL6) {
 			if (!IS_ERR(rt))
 				ip_rt_put(rt);
@@ -801,15 +798,17 @@ static int __ip6_tnl_rcv(struct ip6_tnl *tunnel, struct sk_buff *skb,
 	const struct ipv6hdr *ipv6h;
 	int nh, err;
 
-	if (test_bit(IP_TUNNEL_CSUM_BIT, tunnel->parms.i_flags) !=
-	    test_bit(IP_TUNNEL_CSUM_BIT, tpi->flags)) {
+	if ((!(tpi->flags & TUNNEL_CSUM) &&
+	     (tunnel->parms.i_flags & TUNNEL_CSUM)) ||
+	    ((tpi->flags & TUNNEL_CSUM) &&
+	     !(tunnel->parms.i_flags & TUNNEL_CSUM))) {
 		DEV_STATS_INC(tunnel->dev, rx_crc_errors);
 		DEV_STATS_INC(tunnel->dev, rx_errors);
 		goto drop;
 	}
 
-	if (test_bit(IP_TUNNEL_SEQ_BIT, tunnel->parms.i_flags)) {
-		if (!test_bit(IP_TUNNEL_SEQ_BIT, tpi->flags) ||
+	if (tunnel->parms.i_flags & TUNNEL_SEQ) {
+		if (!(tpi->flags & TUNNEL_SEQ) ||
 		    (tunnel->i_seqno &&
 		     (s32)(ntohl(tpi->seq) - tunnel->i_seqno) < 0)) {
 			DEV_STATS_INC(tunnel->dev, rx_fifo_errors);
@@ -947,9 +946,7 @@ static int ipxip6_rcv(struct sk_buff *skb, u8 ipproto,
 		if (iptunnel_pull_header(skb, 0, tpi->proto, false))
 			goto drop;
 		if (t->parms.collect_md) {
-			IP_TUNNEL_DECLARE_FLAGS(flags) = { };
-
-			tun_dst = ipv6_tun_rx_dst(skb, flags, 0, 0);
+			tun_dst = ipv6_tun_rx_dst(skb, 0, 0, 0);
 			if (!tun_dst)
 				goto drop;
 		}
@@ -1510,8 +1507,7 @@ static void ip6_tnl_link_config(struct ip6_tnl *t)
 			tdev = __dev_get_by_index(t->net, p->link);
 
 		if (tdev) {
-			dev->needed_headroom = tdev->hard_header_len +
-				tdev->needed_headroom + t_hlen;
+			dev->hard_header_len = tdev->hard_header_len + t_hlen;
 			mtu = min_t(unsigned int, tdev->mtu, IP6_MAX_MTU);
 
 			mtu = mtu - t_hlen;
@@ -1735,9 +1731,7 @@ ip6_tnl_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
 int ip6_tnl_change_mtu(struct net_device *dev, int new_mtu)
 {
 	struct ip6_tnl *tnl = netdev_priv(dev);
-	int t_hlen;
 
-	t_hlen = tnl->hlen + sizeof(struct ipv6hdr);
 	if (tnl->parms.proto == IPPROTO_IPV6) {
 		if (new_mtu < IPV6_MIN_MTU)
 			return -EINVAL;
@@ -1746,13 +1740,13 @@ int ip6_tnl_change_mtu(struct net_device *dev, int new_mtu)
 			return -EINVAL;
 	}
 	if (tnl->parms.proto == IPPROTO_IPV6 || tnl->parms.proto == 0) {
-		if (new_mtu > IP6_MAX_MTU - dev->hard_header_len - t_hlen)
+		if (new_mtu > IP6_MAX_MTU - dev->hard_header_len)
 			return -EINVAL;
 	} else {
-		if (new_mtu > IP_MAX_MTU - dev->hard_header_len - t_hlen)
+		if (new_mtu > IP_MAX_MTU - dev->hard_header_len)
 			return -EINVAL;
 	}
-	WRITE_ONCE(dev->mtu, new_mtu);
+	dev->mtu = new_mtu;
 	return 0;
 }
 EXPORT_SYMBOL(ip6_tnl_change_mtu);
@@ -1852,7 +1846,7 @@ static void ip6_tnl_dev_setup(struct net_device *dev)
 	dev->type = ARPHRD_TUNNEL6;
 	dev->flags |= IFF_NOARP;
 	dev->addr_len = sizeof(struct in6_addr);
-	dev->lltx = true;
+	dev->features |= NETIF_F_LLTX;
 	dev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
 	netif_keep_dst(dev);
 
@@ -1893,11 +1887,12 @@ ip6_tnl_dev_init_gen(struct net_device *dev)
 	t_hlen = t->hlen + sizeof(struct ipv6hdr);
 
 	dev->type = ARPHRD_TUNNEL6;
+	dev->hard_header_len = LL_MAX_HEADER + t_hlen;
 	dev->mtu = ETH_DATA_LEN - t_hlen;
 	if (!(t->parms.flags & IP6_TNL_F_IGN_ENCAP_LIMIT))
 		dev->mtu -= 8;
 	dev->min_mtu = ETH_MIN_MTU;
-	dev->max_mtu = IP6_MAX_MTU - dev->hard_header_len - t_hlen;
+	dev->max_mtu = IP6_MAX_MTU - dev->hard_header_len;
 
 	netdev_hold(dev, &t->dev_tracker, GFP_KERNEL);
 	netdev_lockdep_set_classes(dev);
@@ -2151,7 +2146,7 @@ struct net *ip6_tnl_get_link_net(const struct net_device *dev)
 {
 	struct ip6_tnl *tunnel = netdev_priv(dev);
 
-	return READ_ONCE(tunnel->net);
+	return tunnel->net;
 }
 EXPORT_SYMBOL(ip6_tnl_get_link_net);
 
@@ -2261,7 +2256,7 @@ static int __net_init ip6_tnl_init_net(struct net *net)
 	/* FB netdevice is special: we have one, and only one per netns.
 	 * Allowing to move it to another netns is clearly unsafe.
 	 */
-	ip6n->fb_tnl_dev->netns_local = true;
+	ip6n->fb_tnl_dev->features |= NETIF_F_NETNS_LOCAL;
 
 	err = ip6_fb_tnl_dev_init(ip6n->fb_tnl_dev);
 	if (err < 0)

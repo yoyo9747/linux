@@ -161,16 +161,11 @@ enum {
 struct msm_dma {
 	struct dma_chan		*chan;
 	enum dma_data_direction dir;
-	union {
-		struct {
-			dma_addr_t		phys;
-			unsigned char		*virt;
-			unsigned int		count;
-		} rx;
-		struct scatterlist tx_sg;
-	};
+	dma_addr_t		phys;
+	unsigned char		*virt;
 	dma_cookie_t		cookie;
 	u32			enable_bit;
+	unsigned int		count;
 	struct dma_async_tx_descriptor	*desc;
 };
 
@@ -254,12 +249,8 @@ static void msm_stop_dma(struct uart_port *port, struct msm_dma *dma)
 	unsigned int mapped;
 	u32 val;
 
-	if (dma->dir == DMA_TO_DEVICE) {
-		mapped = sg_dma_len(&dma->tx_sg);
-	} else {
-		mapped = dma->rx.count;
-		dma->rx.count = 0;
-	}
+	mapped = dma->count;
+	dma->count = 0;
 
 	dmaengine_terminate_all(dma->chan);
 
@@ -274,13 +265,8 @@ static void msm_stop_dma(struct uart_port *port, struct msm_dma *dma)
 	val &= ~dma->enable_bit;
 	msm_write(port, val, UARTDM_DMEN);
 
-	if (mapped) {
-		if (dma->dir == DMA_TO_DEVICE) {
-			dma_unmap_sg(dev, &dma->tx_sg, 1, dma->dir);
-			sg_init_table(&dma->tx_sg, 1);
-		} else
-			dma_unmap_single(dev, dma->rx.phys, mapped, dma->dir);
-	}
+	if (mapped)
+		dma_unmap_single(dev, dma->phys, mapped, dma->dir);
 }
 
 static void msm_release_dma(struct msm_port *msm_port)
@@ -299,7 +285,7 @@ static void msm_release_dma(struct msm_port *msm_port)
 	if (dma->chan) {
 		msm_stop_dma(&msm_port->uart, dma);
 		dma_release_channel(dma->chan);
-		kfree(dma->rx.virt);
+		kfree(dma->virt);
 	}
 
 	memset(dma, 0, sizeof(*dma));
@@ -371,8 +357,8 @@ static void msm_request_rx_dma(struct msm_port *msm_port, resource_size_t base)
 
 	of_property_read_u32(dev->of_node, "qcom,rx-crci", &crci);
 
-	dma->rx.virt = kzalloc(UARTDM_RX_SIZE, GFP_KERNEL);
-	if (!dma->rx.virt)
+	dma->virt = kzalloc(UARTDM_RX_SIZE, GFP_KERNEL);
+	if (!dma->virt)
 		goto rel_rx;
 
 	memset(&conf, 0, sizeof(conf));
@@ -399,7 +385,7 @@ static void msm_request_rx_dma(struct msm_port *msm_port, resource_size_t base)
 
 	return;
 err:
-	kfree(dma->rx.virt);
+	kfree(dma->virt);
 rel_rx:
 	dma_release_channel(dma->chan);
 no_rx:
@@ -434,7 +420,7 @@ static void msm_start_tx(struct uart_port *port)
 	struct msm_dma *dma = &msm_port->tx_dma;
 
 	/* Already started in DMA mode */
-	if (sg_dma_len(&dma->tx_sg))
+	if (dma->count)
 		return;
 
 	msm_port->imr |= MSM_UART_IMR_TXLEV;
@@ -452,7 +438,7 @@ static void msm_complete_tx_dma(void *args)
 {
 	struct msm_port *msm_port = args;
 	struct uart_port *port = &msm_port->uart;
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	struct msm_dma *dma = &msm_port->tx_dma;
 	struct dma_tx_state state;
 	unsigned long flags;
@@ -462,12 +448,12 @@ static void msm_complete_tx_dma(void *args)
 	uart_port_lock_irqsave(port, &flags);
 
 	/* Already stopped */
-	if (!sg_dma_len(&dma->tx_sg))
+	if (!dma->count)
 		goto done;
 
 	dmaengine_tx_status(dma->chan, dma->cookie, &state);
 
-	dma_unmap_sg(port->dev, &dma->tx_sg, 1, dma->dir);
+	dma_unmap_single(port->dev, dma->phys, dma->count, dma->dir);
 
 	val = msm_read(port, UARTDM_DMEN);
 	val &= ~dma->enable_bit;
@@ -478,15 +464,15 @@ static void msm_complete_tx_dma(void *args)
 		msm_write(port, MSM_UART_CR_TX_ENABLE, MSM_UART_CR);
 	}
 
-	count = sg_dma_len(&dma->tx_sg) - state.residue;
+	count = dma->count - state.residue;
 	uart_xmit_advance(port, count);
-	sg_init_table(&dma->tx_sg, 1);
+	dma->count = 0;
 
 	/* Restore "Tx FIFO below watermark" interrupt */
 	msm_port->imr |= MSM_UART_IMR_TXLEV;
 	msm_write(port, msm_port->imr, MSM_UART_IMR);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 
 	msm_handle_tx(port);
@@ -496,24 +482,22 @@ done:
 
 static int msm_handle_tx_dma(struct msm_port *msm_port, unsigned int count)
 {
+	struct circ_buf *xmit = &msm_port->uart.state->xmit;
 	struct uart_port *port = &msm_port->uart;
-	struct tty_port *tport = &port->state->port;
 	struct msm_dma *dma = &msm_port->tx_dma;
-	unsigned int mapped;
+	void *cpu_addr;
 	int ret;
 	u32 val;
 
-	sg_init_table(&dma->tx_sg, 1);
-	kfifo_dma_out_prepare(&tport->xmit_fifo, &dma->tx_sg, 1, count);
+	cpu_addr = &xmit->buf[xmit->tail];
 
-	mapped = dma_map_sg(port->dev, &dma->tx_sg, 1, dma->dir);
-	if (!mapped) {
-		ret = -EIO;
-		goto zero_sg;
-	}
+	dma->phys = dma_map_single(port->dev, cpu_addr, count, dma->dir);
+	ret = dma_mapping_error(port->dev, dma->phys);
+	if (ret)
+		return ret;
 
-	dma->desc = dmaengine_prep_slave_sg(dma->chan, &dma->tx_sg, 1,
-						DMA_MEM_TO_DEV,
+	dma->desc = dmaengine_prep_slave_single(dma->chan, dma->phys,
+						count, DMA_MEM_TO_DEV,
 						DMA_PREP_INTERRUPT |
 						DMA_PREP_FENCE);
 	if (!dma->desc) {
@@ -536,6 +520,8 @@ static int msm_handle_tx_dma(struct msm_port *msm_port, unsigned int count)
 	msm_port->imr &= ~MSM_UART_IMR_TXLEV;
 	msm_write(port, msm_port->imr, MSM_UART_IMR);
 
+	dma->count = count;
+
 	val = msm_read(port, UARTDM_DMEN);
 	val |= dma->enable_bit;
 
@@ -550,9 +536,7 @@ static int msm_handle_tx_dma(struct msm_port *msm_port, unsigned int count)
 	dma_async_issue_pending(dma->chan);
 	return 0;
 unmap:
-	dma_unmap_sg(port->dev, &dma->tx_sg, 1, dma->dir);
-zero_sg:
-	sg_init_table(&dma->tx_sg, 1);
+	dma_unmap_single(port->dev, dma->phys, count, dma->dir);
 	return ret;
 }
 
@@ -569,7 +553,7 @@ static void msm_complete_rx_dma(void *args)
 	uart_port_lock_irqsave(port, &flags);
 
 	/* Already stopped */
-	if (!dma->rx.count)
+	if (!dma->count)
 		goto done;
 
 	val = msm_read(port, UARTDM_DMEN);
@@ -586,14 +570,14 @@ static void msm_complete_rx_dma(void *args)
 
 	port->icount.rx += count;
 
-	dma->rx.count = 0;
+	dma->count = 0;
 
-	dma_unmap_single(port->dev, dma->rx.phys, UARTDM_RX_SIZE, dma->dir);
+	dma_unmap_single(port->dev, dma->phys, UARTDM_RX_SIZE, dma->dir);
 
 	for (i = 0; i < count; i++) {
 		char flag = TTY_NORMAL;
 
-		if (msm_port->break_detected && dma->rx.virt[i] == 0) {
+		if (msm_port->break_detected && dma->virt[i] == 0) {
 			port->icount.brk++;
 			flag = TTY_BREAK;
 			msm_port->break_detected = false;
@@ -604,9 +588,9 @@ static void msm_complete_rx_dma(void *args)
 		if (!(port->read_status_mask & MSM_UART_SR_RX_BREAK))
 			flag = TTY_NORMAL;
 
-		sysrq = uart_prepare_sysrq_char(port, dma->rx.virt[i]);
+		sysrq = uart_prepare_sysrq_char(port, dma->virt[i]);
 		if (!sysrq)
-			tty_insert_flip_char(tport, dma->rx.virt[i], flag);
+			tty_insert_flip_char(tport, dma->virt[i], flag);
 	}
 
 	msm_start_rx_dma(msm_port);
@@ -630,13 +614,13 @@ static void msm_start_rx_dma(struct msm_port *msm_port)
 	if (!dma->chan)
 		return;
 
-	dma->rx.phys = dma_map_single(uart->dev, dma->rx.virt,
+	dma->phys = dma_map_single(uart->dev, dma->virt,
 				   UARTDM_RX_SIZE, dma->dir);
-	ret = dma_mapping_error(uart->dev, dma->rx.phys);
+	ret = dma_mapping_error(uart->dev, dma->phys);
 	if (ret)
 		goto sw_mode;
 
-	dma->desc = dmaengine_prep_slave_single(dma->chan, dma->rx.phys,
+	dma->desc = dmaengine_prep_slave_single(dma->chan, dma->phys,
 						UARTDM_RX_SIZE, DMA_DEV_TO_MEM,
 						DMA_PREP_INTERRUPT);
 	if (!dma->desc)
@@ -664,7 +648,7 @@ static void msm_start_rx_dma(struct msm_port *msm_port)
 
 	msm_write(uart, msm_port->imr, MSM_UART_IMR);
 
-	dma->rx.count = UARTDM_RX_SIZE;
+	dma->count = UARTDM_RX_SIZE;
 
 	dma_async_issue_pending(dma->chan);
 
@@ -684,7 +668,7 @@ static void msm_start_rx_dma(struct msm_port *msm_port)
 
 	return;
 unmap:
-	dma_unmap_single(uart->dev, dma->rx.phys, UARTDM_RX_SIZE, dma->dir);
+	dma_unmap_single(uart->dev, dma->phys, UARTDM_RX_SIZE, dma->dir);
 
 sw_mode:
 	/*
@@ -847,8 +831,8 @@ static void msm_handle_rx(struct uart_port *port)
 
 static void msm_handle_tx_pio(struct uart_port *port, unsigned int tx_count)
 {
+	struct circ_buf *xmit = &port->state->xmit;
 	struct msm_port *msm_port = to_msm_port(port);
-	struct tty_port *tport = &port->state->port;
 	unsigned int num_chars;
 	unsigned int tf_pointer = 0;
 	void __iomem *tf;
@@ -862,7 +846,8 @@ static void msm_handle_tx_pio(struct uart_port *port, unsigned int tx_count)
 		msm_reset_dm_count(port, tx_count);
 
 	while (tf_pointer < tx_count) {
-		unsigned char buf[4] = { 0 };
+		int i;
+		char buf[4] = { 0 };
 
 		if (!(msm_read(port, MSM_UART_SR) & MSM_UART_SR_TX_READY))
 			break;
@@ -873,23 +858,26 @@ static void msm_handle_tx_pio(struct uart_port *port, unsigned int tx_count)
 		else
 			num_chars = 1;
 
-		num_chars = uart_fifo_out(port, buf, num_chars);
+		for (i = 0; i < num_chars; i++)
+			buf[i] = xmit->buf[xmit->tail + i];
+
 		iowrite32_rep(tf, buf, 1);
+		uart_xmit_advance(port, num_chars);
 		tf_pointer += num_chars;
 	}
 
 	/* disable tx interrupts if nothing more to send */
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		msm_stop_tx(port);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 }
 
 static void msm_handle_tx(struct uart_port *port)
 {
 	struct msm_port *msm_port = to_msm_port(port);
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &msm_port->uart.state->xmit;
 	struct msm_dma *dma = &msm_port->tx_dma;
 	unsigned int pio_count, dma_count, dma_min;
 	char buf[4] = { 0 };
@@ -913,13 +901,13 @@ static void msm_handle_tx(struct uart_port *port)
 		return;
 	}
 
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
 		msm_stop_tx(port);
 		return;
 	}
 
-	dma_count = pio_count = kfifo_out_linear(&tport->xmit_fifo, NULL,
-			UART_XMIT_SIZE);
+	pio_count = CIRC_CNT_TO_END(xmit->head, xmit->tail, UART_XMIT_SIZE);
+	dma_count = CIRC_CNT_TO_END(xmit->head, xmit->tail, UART_XMIT_SIZE);
 
 	dma_min = 1;	/* Always DMA */
 	if (msm_port->is_uartdm > UARTDM_1P3) {
@@ -967,7 +955,7 @@ static irqreturn_t msm_uart_irq(int irq, void *dev_id)
 	}
 
 	if (misr & (MSM_UART_IMR_RXLEV | MSM_UART_IMR_RXSTALE)) {
-		if (dma->rx.count) {
+		if (dma->count) {
 			val = MSM_UART_CR_CMD_STALE_EVENT_DISABLE;
 			msm_write(port, val, MSM_UART_CR);
 			val = MSM_UART_CR_CMD_RESET_STALE_INT;

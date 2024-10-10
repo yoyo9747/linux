@@ -22,7 +22,6 @@
 #define ISAR_REV	"2.1"
 
 MODULE_AUTHOR("Karsten Keil");
-MODULE_DESCRIPTION("mISDN driver for ISAR (Siemens PSB 7110) specific functions");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(ISAR_REV);
 

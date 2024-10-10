@@ -51,6 +51,9 @@
 
 	thermal-zones {
 		xo_thermal: xo-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+
 			thermal-sensors = <&pm8998_adc_tm 1>;
 
 			trips {
@@ -63,6 +66,9 @@
 		};
 
 		msm_thermal: msm-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+
 			thermal-sensors = <&pm8998_adc_tm 2>;
 
 			trips {
@@ -75,6 +81,9 @@
 		};
 
 		pa_thermal: pa-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+
 			thermal-sensors = <&pm8998_adc_tm 3>;
 
 			trips {
@@ -87,6 +96,9 @@
 		};
 
 		quiet_thermal: quiet-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+
 			thermal-sensors = <&pm8998_adc_tm 4>;
 
 			trips {

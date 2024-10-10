@@ -65,7 +65,7 @@ struct dw_axi_dma {
 
 struct axi_dma_chip {
 	struct device		*dev;
-	int			irq[DMAC_MAX_CHANNELS];
+	int			irq;
 	void __iomem		*regs;
 	void __iomem		*apb_regs;
 	struct clk		*core_clk;
@@ -104,7 +104,6 @@ struct axi_dma_desc {
 	u32				completed_blocks;
 	u32				length;
 	u32				period_len;
-	u32				nr_hw_descs;
 };
 
 struct axi_dma_chan_config {

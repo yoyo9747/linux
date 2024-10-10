@@ -466,40 +466,40 @@ TRACE_EVENT(rcu_stall_warning,
 /*
  * Tracepoint for dyntick-idle entry/exit events.  These take 2 strings
  * as argument:
- * polarity: "Start", "End", "StillWatching" for entering, exiting or still not
- *            being in EQS mode.
+ * polarity: "Start", "End", "StillNonIdle" for entering, exiting or still not
+ *            being in dyntick-idle mode.
  * context: "USER" or "IDLE" or "IRQ".
- * NMIs nested in IRQs are inferred with nesting > 1 in IRQ context.
+ * NMIs nested in IRQs are inferred with dynticks_nesting > 1 in IRQ context.
  *
  * These events also take a pair of numbers, which indicate the nesting
  * depth before and after the event of interest, and a third number that is
- * the RCU_WATCHING counter.  Note that task-related and interrupt-related
+ * the ->dynticks counter.  Note that task-related and interrupt-related
  * events use two separate counters, and that the "++=" and "--=" events
  * for irq/NMI will change the counter by two, otherwise by one.
  */
-TRACE_EVENT_RCU(rcu_watching,
+TRACE_EVENT_RCU(rcu_dyntick,
 
-	TP_PROTO(const char *polarity, long oldnesting, long newnesting, int counter),
+	TP_PROTO(const char *polarity, long oldnesting, long newnesting, int dynticks),
 
-	TP_ARGS(polarity, oldnesting, newnesting, counter),
+	TP_ARGS(polarity, oldnesting, newnesting, dynticks),
 
 	TP_STRUCT__entry(
 		__field(const char *, polarity)
 		__field(long, oldnesting)
 		__field(long, newnesting)
-		__field(int, counter)
+		__field(int, dynticks)
 	),
 
 	TP_fast_assign(
 		__entry->polarity = polarity;
 		__entry->oldnesting = oldnesting;
 		__entry->newnesting = newnesting;
-		__entry->counter = counter;
+		__entry->dynticks = dynticks;
 	),
 
 	TP_printk("%s %lx %lx %#3x", __entry->polarity,
 		  __entry->oldnesting, __entry->newnesting,
-		  __entry->counter & 0xfff)
+		  __entry->dynticks & 0xfff)
 );
 
 /*
@@ -705,33 +705,6 @@ TRACE_EVENT_RCU(rcu_invoke_kfree_bulk_callback,
 
 	TP_printk("%s bulk=0x%p nr_records=%lu",
 		__entry->rcuname, __entry->p, __entry->nr_records)
-);
-
-/*
- * Tracepoint for a normal synchronize_rcu() states. The first argument
- * is the RCU flavor, the second argument is a pointer to rcu_head the
- * last one is an event.
- */
-TRACE_EVENT_RCU(rcu_sr_normal,
-
-	TP_PROTO(const char *rcuname, struct rcu_head *rhp, const char *srevent),
-
-	TP_ARGS(rcuname, rhp, srevent),
-
-	TP_STRUCT__entry(
-		__field(const char *, rcuname)
-		__field(void *, rhp)
-		__field(const char *, srevent)
-	),
-
-	TP_fast_assign(
-		__entry->rcuname = rcuname;
-		__entry->rhp = rhp;
-		__entry->srevent = srevent;
-	),
-
-	TP_printk("%s rhp=0x%p event=%s",
-		__entry->rcuname, __entry->rhp, __entry->srevent)
 );
 
 /*

@@ -108,23 +108,9 @@ struct cpuinfo_topology {
 };
 
 struct cpuinfo_x86 {
-	union {
-		/*
-		 * The particular ordering (low-to-high) of (vendor,
-		 * family, model) is done in case range of models, like
-		 * it is usually done on AMD, need to be compared.
-		 */
-		struct {
-			__u8	x86_model;
-			/* CPU family */
-			__u8	x86;
-			/* CPU vendor */
-			__u8	x86_vendor;
-			__u8	x86_reserved;
-		};
-		/* combined vendor, family, model */
-		__u32		x86_vfm;
-	};
+	__u8			x86;		/* CPU family */
+	__u8			x86_vendor;	/* CPU vendor */
+	__u8			x86_model;
 	__u8			x86_stepping;
 #ifdef CONFIG_X86_64
 	/* Number of 4K pages in DTLB/ITLB combined(in pages): */
@@ -582,8 +568,7 @@ extern void switch_gdt_and_percpu_base(int);
 extern void load_direct_gdt(int);
 extern void load_fixmap_gdt(int);
 extern void cpu_init(void);
-extern void cpu_init_exception_handling(bool boot_cpu);
-extern void cpu_init_replace_early_idt(void);
+extern void cpu_init_exception_handling(void);
 extern void cr4_init(void);
 
 extern void set_task_blockstep(struct task_struct *task, bool on);
@@ -601,7 +586,7 @@ extern char			ignore_fpu_irq;
 # define BASE_PREFETCH		""
 # define ARCH_HAS_PREFETCH
 #else
-# define BASE_PREFETCH		"prefetcht0 %1"
+# define BASE_PREFETCH		"prefetcht0 %P1"
 #endif
 
 /*
@@ -612,7 +597,7 @@ extern char			ignore_fpu_irq;
  */
 static inline void prefetch(const void *x)
 {
-	alternative_input(BASE_PREFETCH, "prefetchnta %1",
+	alternative_input(BASE_PREFETCH, "prefetchnta %P1",
 			  X86_FEATURE_XMM,
 			  "m" (*(const char *)x));
 }
@@ -624,7 +609,7 @@ static inline void prefetch(const void *x)
  */
 static __always_inline void prefetchw(const void *x)
 {
-	alternative_input(BASE_PREFETCH, "prefetchw %1",
+	alternative_input(BASE_PREFETCH, "prefetchw %P1",
 			  X86_FEATURE_3DNOWPREFETCH,
 			  "m" (*(const char *)x));
 }
@@ -650,10 +635,12 @@ static __always_inline void prefetchw(const void *x)
 #define KSTK_ESP(task)		(task_pt_regs(task)->sp)
 
 #else
-extern unsigned long __top_init_kernel_stack[];
+extern unsigned long __end_init_task[];
 
 #define INIT_THREAD {							\
-	.sp	= (unsigned long)&__top_init_kernel_stack,		\
+	.sp	= (unsigned long)&__end_init_task -			\
+		  TOP_OF_KERNEL_STACK_PADDING -				\
+		  sizeof(struct pt_regs),				\
 }
 
 extern unsigned long KSTK_ESP(struct task_struct *task);
@@ -692,18 +679,11 @@ static inline u32 per_cpu_l2c_id(unsigned int cpu)
 }
 
 #ifdef CONFIG_CPU_SUP_AMD
-/*
- * Issue a DIV 0/1 insn to clear any division data from previous DIV
- * operations.
- */
-static __always_inline void amd_clear_divider(void)
-{
-	asm volatile(ALTERNATIVE("", "div %2\n\t", X86_BUG_DIV0)
-		     :: "a" (0), "d" (0), "r" (1));
-}
-
+extern u32 amd_get_highest_perf(void);
+extern void amd_clear_divider(void);
 extern void amd_check_microcode(void);
 #else
+static inline u32 amd_get_highest_perf(void)		{ return 0; }
 static inline void amd_clear_divider(void)		{ }
 static inline void amd_check_microcode(void)		{ }
 #endif

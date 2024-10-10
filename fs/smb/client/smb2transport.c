@@ -23,7 +23,7 @@
 #include "cifsproto.h"
 #include "smb2proto.h"
 #include "cifs_debug.h"
-#include "../common/smb2status.h"
+#include "smb2status.h"
 #include "smb2glob.h"
 
 static int
@@ -216,8 +216,8 @@ smb2_find_smb_tcon(struct TCP_Server_Info *server, __u64 ses_id, __u32  tid)
 	}
 	tcon = smb2_find_smb_sess_tcon_unlocked(ses, tid);
 	if (!tcon) {
-		spin_unlock(&cifs_tcp_ses_lock);
 		cifs_put_smb_ses(ses);
+		spin_unlock(&cifs_tcp_ses_lock);
 		return NULL;
 	}
 	spin_unlock(&cifs_tcp_ses_lock);
@@ -242,7 +242,7 @@ smb2_calc_signature(struct smb_rqst *rqst, struct TCP_Server_Info *server,
 
 	ses = smb2_find_smb_ses(server, le64_to_cpu(shdr->SessionId));
 	if (unlikely(!ses)) {
-		cifs_server_dbg(FYI, "%s: Could not find session\n", __func__);
+		cifs_server_dbg(VFS, "%s: Could not find session\n", __func__);
 		return -ENOENT;
 	}
 
@@ -696,7 +696,7 @@ smb2_verify_signature(struct smb_rqst *rqst, struct TCP_Server_Info *server)
 			 shdr->Command);
 
 	/*
-	 * Save off the original signature so we can modify the smb and check
+	 * Save off the origiginal signature so we can modify the smb and check
 	 * our calculated signature against what the server sent.
 	 */
 	memcpy(server_response_sig, shdr->Signature, SMB2_SIGNATURE_SIZE);

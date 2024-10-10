@@ -20,7 +20,6 @@ struct bch_write_bio {
 
 	u64			submit_time;
 	u64			inode_offset;
-	u64			nocow_bucket;
 
 	struct bch_devs_list	failed;
 	u8			dev;

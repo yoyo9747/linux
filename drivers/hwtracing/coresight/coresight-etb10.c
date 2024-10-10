@@ -652,6 +652,7 @@ static const struct file_operations etb_fops = {
 	.open		= etb_open,
 	.read		= etb_read,
 	.release	= etb_release,
+	.llseek		= no_llseek,
 };
 
 static struct attribute *coresight_etb_mgmt_attrs[] = {
@@ -843,6 +844,7 @@ MODULE_DEVICE_TABLE(amba, etb_ids);
 static struct amba_driver etb_driver = {
 	.drv = {
 		.name	= "coresight-etb10",
+		.owner	= THIS_MODULE,
 		.pm	= &etb_dev_pm_ops,
 		.suppress_bind_attrs = true,
 

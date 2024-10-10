@@ -81,6 +81,7 @@ struct dp_catalog_private {
 	struct dss_io_data io;
 	u32 (*audio_map)[DP_AUDIO_SDP_HEADER_MAX];
 	struct dp_catalog dp_catalog;
+	u8 aux_lut_cfg_index[PHY_AUX_CFG_MAX];
 };
 
 void dp_catalog_snapshot(struct dp_catalog *dp_catalog, struct msm_disp_state *disp_state)
@@ -169,21 +170,21 @@ u32 dp_catalog_aux_read_data(struct dp_catalog *dp_catalog)
 	return dp_read_aux(catalog, REG_DP_AUX_DATA);
 }
 
-int dp_catalog_aux_write_data(struct dp_catalog *dp_catalog, u32 data)
+int dp_catalog_aux_write_data(struct dp_catalog *dp_catalog)
 {
 	struct dp_catalog_private *catalog = container_of(dp_catalog,
 				struct dp_catalog_private, dp_catalog);
 
-	dp_write_aux(catalog, REG_DP_AUX_DATA, data);
+	dp_write_aux(catalog, REG_DP_AUX_DATA, dp_catalog->aux_data);
 	return 0;
 }
 
-int dp_catalog_aux_write_trans(struct dp_catalog *dp_catalog, u32 data)
+int dp_catalog_aux_write_trans(struct dp_catalog *dp_catalog)
 {
 	struct dp_catalog_private *catalog = container_of(dp_catalog,
 				struct dp_catalog_private, dp_catalog);
 
-	dp_write_aux(catalog, REG_DP_AUX_TRANS_CTRL, data);
+	dp_write_aux(catalog, REG_DP_AUX_TRANS_CTRL, dp_catalog->aux_data);
 	return 0;
 }
 
@@ -262,18 +263,17 @@ void dp_catalog_aux_enable(struct dp_catalog *dp_catalog, bool enable)
 	dp_write_aux(catalog, REG_DP_AUX_CTRL, aux_ctrl);
 }
 
-int dp_catalog_aux_wait_for_hpd_connect_state(struct dp_catalog *dp_catalog,
-					      unsigned long wait_us)
+int dp_catalog_aux_wait_for_hpd_connect_state(struct dp_catalog *dp_catalog)
 {
 	u32 state;
 	struct dp_catalog_private *catalog = container_of(dp_catalog,
 				struct dp_catalog_private, dp_catalog);
 
-	/* poll for hpd connected status every 2ms and timeout after wait_us */
+	/* poll for hpd connected status every 2ms and timeout after 500ms */
 	return readl_poll_timeout(catalog->io.aux.base +
 				REG_DP_DP_HPD_INT_STATUS,
 				state, state & DP_DP_HPD_STATE_STATUS_CONNECTED,
-				min(wait_us, 2000), wait_us);
+				2000, 500000);
 }
 
 static void dump_regs(void __iomem *base, int len)
@@ -469,7 +469,7 @@ void dp_catalog_setup_peripheral_flush(struct dp_catalog *dp_catalog)
 
 void dp_catalog_ctrl_config_msa(struct dp_catalog *dp_catalog,
 					u32 rate, u32 stream_rate_khz,
-					bool is_ycbcr_420)
+					bool fixed_nvid, bool is_ycbcr_420)
 {
 	u32 pixel_m, pixel_n;
 	u32 mvid, nvid, pixel_div = 0, dispcc_input_rate;
@@ -881,17 +881,19 @@ u32 dp_catalog_ctrl_read_phy_pattern(struct dp_catalog *dp_catalog)
 }
 
 /* panel related catalog functions */
-int dp_catalog_panel_timing_cfg(struct dp_catalog *dp_catalog, u32 total,
-				u32 sync_start, u32 width_blanking, u32 dp_active)
+int dp_catalog_panel_timing_cfg(struct dp_catalog *dp_catalog)
 {
 	struct dp_catalog_private *catalog = container_of(dp_catalog,
 				struct dp_catalog_private, dp_catalog);
 	u32 reg;
 
-	dp_write_link(catalog, REG_DP_TOTAL_HOR_VER, total);
-	dp_write_link(catalog, REG_DP_START_HOR_VER_FROM_SYNC, sync_start);
-	dp_write_link(catalog, REG_DP_HSYNC_VSYNC_WIDTH_POLARITY, width_blanking);
-	dp_write_link(catalog, REG_DP_ACTIVE_HOR_VER, dp_active);
+	dp_write_link(catalog, REG_DP_TOTAL_HOR_VER,
+				dp_catalog->total);
+	dp_write_link(catalog, REG_DP_START_HOR_VER_FROM_SYNC,
+				dp_catalog->sync_start);
+	dp_write_link(catalog, REG_DP_HSYNC_VSYNC_WIDTH_POLARITY,
+				dp_catalog->width_blanking);
+	dp_write_link(catalog, REG_DP_ACTIVE_HOR_VER, dp_catalog->dp_active);
 
 	reg = dp_read_p0(catalog, MMSS_DP_INTF_CONFIG);
 
@@ -1160,28 +1162,12 @@ struct dp_catalog *dp_catalog_get(struct device *dev)
 	return &catalog->dp_catalog;
 }
 
-u32 dp_catalog_audio_get_header(struct dp_catalog *dp_catalog,
-				enum dp_catalog_audio_sdp_type sdp,
-				enum dp_catalog_audio_header_type header)
+void dp_catalog_audio_get_header(struct dp_catalog *dp_catalog)
 {
 	struct dp_catalog_private *catalog;
 	u32 (*sdp_map)[DP_AUDIO_SDP_HEADER_MAX];
-
-	catalog = container_of(dp_catalog,
-		struct dp_catalog_private, dp_catalog);
-
-	sdp_map = catalog->audio_map;
-
-	return dp_read_link(catalog, sdp_map[sdp][header]);
-}
-
-void dp_catalog_audio_set_header(struct dp_catalog *dp_catalog,
-				 enum dp_catalog_audio_sdp_type sdp,
-				 enum dp_catalog_audio_header_type header,
-				 u32 data)
-{
-	struct dp_catalog_private *catalog;
-	u32 (*sdp_map)[DP_AUDIO_SDP_HEADER_MAX];
+	enum dp_catalog_audio_sdp_type sdp;
+	enum dp_catalog_audio_header_type header;
 
 	if (!dp_catalog)
 		return;
@@ -1190,14 +1176,39 @@ void dp_catalog_audio_set_header(struct dp_catalog *dp_catalog,
 		struct dp_catalog_private, dp_catalog);
 
 	sdp_map = catalog->audio_map;
+	sdp     = dp_catalog->sdp_type;
+	header  = dp_catalog->sdp_header;
+
+	dp_catalog->audio_data = dp_read_link(catalog,
+			sdp_map[sdp][header]);
+}
+
+void dp_catalog_audio_set_header(struct dp_catalog *dp_catalog)
+{
+	struct dp_catalog_private *catalog;
+	u32 (*sdp_map)[DP_AUDIO_SDP_HEADER_MAX];
+	enum dp_catalog_audio_sdp_type sdp;
+	enum dp_catalog_audio_header_type header;
+	u32 data;
+
+	if (!dp_catalog)
+		return;
+
+	catalog = container_of(dp_catalog,
+		struct dp_catalog_private, dp_catalog);
+
+	sdp_map = catalog->audio_map;
+	sdp     = dp_catalog->sdp_type;
+	header  = dp_catalog->sdp_header;
+	data    = dp_catalog->audio_data;
 
 	dp_write_link(catalog, sdp_map[sdp][header], data);
 }
 
-void dp_catalog_audio_config_acr(struct dp_catalog *dp_catalog, u32 select)
+void dp_catalog_audio_config_acr(struct dp_catalog *dp_catalog)
 {
 	struct dp_catalog_private *catalog;
-	u32 acr_ctrl;
+	u32 acr_ctrl, select;
 
 	if (!dp_catalog)
 		return;
@@ -1205,6 +1216,7 @@ void dp_catalog_audio_config_acr(struct dp_catalog *dp_catalog, u32 select)
 	catalog = container_of(dp_catalog,
 		struct dp_catalog_private, dp_catalog);
 
+	select = dp_catalog->audio_data;
 	acr_ctrl = select << 4 | BIT(31) | BIT(8) | BIT(14);
 
 	drm_dbg_dp(catalog->drm_dev, "select: %#x, acr_ctrl: %#x\n",
@@ -1213,9 +1225,10 @@ void dp_catalog_audio_config_acr(struct dp_catalog *dp_catalog, u32 select)
 	dp_write_link(catalog, MMSS_DP_AUDIO_ACR_CTRL, acr_ctrl);
 }
 
-void dp_catalog_audio_enable(struct dp_catalog *dp_catalog, bool enable)
+void dp_catalog_audio_enable(struct dp_catalog *dp_catalog)
 {
 	struct dp_catalog_private *catalog;
+	bool enable;
 	u32 audio_ctrl;
 
 	if (!dp_catalog)
@@ -1224,6 +1237,7 @@ void dp_catalog_audio_enable(struct dp_catalog *dp_catalog, bool enable)
 	catalog = container_of(dp_catalog,
 		struct dp_catalog_private, dp_catalog);
 
+	enable = !!dp_catalog->audio_data;
 	audio_ctrl = dp_read_link(catalog, MMSS_DP_AUDIO_CFG);
 
 	if (enable)
@@ -1318,10 +1332,10 @@ void dp_catalog_audio_init(struct dp_catalog *dp_catalog)
 	catalog->audio_map = sdp_map;
 }
 
-void dp_catalog_audio_sfe_level(struct dp_catalog *dp_catalog, u32 safe_to_exit_level)
+void dp_catalog_audio_sfe_level(struct dp_catalog *dp_catalog)
 {
 	struct dp_catalog_private *catalog;
-	u32 mainlink_levels;
+	u32 mainlink_levels, safe_to_exit_level;
 
 	if (!dp_catalog)
 		return;
@@ -1329,6 +1343,7 @@ void dp_catalog_audio_sfe_level(struct dp_catalog *dp_catalog, u32 safe_to_exit_
 	catalog = container_of(dp_catalog,
 		struct dp_catalog_private, dp_catalog);
 
+	safe_to_exit_level = dp_catalog->audio_data;
 	mainlink_levels = dp_read_link(catalog, REG_DP_MAINLINK_LEVELS);
 	mainlink_levels &= 0xFE0;
 	mainlink_levels |= safe_to_exit_level;

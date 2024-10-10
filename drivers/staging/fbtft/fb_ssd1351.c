@@ -72,6 +72,9 @@ static int set_var(struct fbtft_par *par)
 
 	if (par->fbtftops.init_display != init_display) {
 		/* don't risk messing up register A0h */
+		fbtft_par_dbg(DEBUG_INIT_DISPLAY, par,
+			      "%s: skipping since custom init_display() is used\n",
+			       __func__);
 		return 0;
 	}
 
@@ -191,7 +194,9 @@ static int update_onboard_backlight(struct backlight_device *bd)
 	struct fbtft_par *par = bl_get_data(bd);
 	bool on;
 
-	fbtft_par_dbg(DEBUG_BACKLIGHT, par, "%s: power=%d\n", __func__, bd->props.power);
+	fbtft_par_dbg(DEBUG_BACKLIGHT, par,
+		      "%s: power=%d, fb_blank=%d\n",
+		      __func__, bd->props.power, bd->props.fb_blank);
 
 	on = !backlight_is_blank(bd);
 	/* Onboard backlight connected to GPIO0 on SSD1351, GPIO1 unused */
@@ -210,7 +215,7 @@ static void register_onboard_backlight(struct fbtft_par *par)
 	struct backlight_properties bl_props = { 0, };
 
 	bl_props.type = BACKLIGHT_RAW;
-	bl_props.power = BACKLIGHT_POWER_OFF;
+	bl_props.power = FB_BLANK_POWERDOWN;
 
 	bd = backlight_device_register(dev_driver_string(par->info->device),
 				       par->info->device, par, &bl_ops,

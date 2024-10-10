@@ -219,7 +219,7 @@ int acp_dsp_pre_fw_run(struct snd_sof_dev *sdev)
 			dev_err(sdev->dev, "acp dma transfer status: %d\n", ret);
 	}
 
-	if (adata->pci_rev > ACP_RN_PCI_ID) {
+	if (desc->rev > 3) {
 		/* Cache Window enable */
 		snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACP_DSP0_CACHE_OFFSET0, desc->sram_pte_offset);
 		snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACP_DSP0_CACHE_SIZE0, SRAM1_SIZE | BIT(31));
@@ -289,8 +289,6 @@ int acp_sof_load_signed_firmware(struct snd_sof_dev *sdev)
 	ret = snd_sof_dsp_block_write(sdev, SOF_FW_BLK_TYPE_IRAM, 0,
 				      (void *)sdev->basefw.fw->data,
 				      sdev->basefw.fw->size);
-	if (ret < 0)
-		return ret;
 
 	fw_filename = kasprintf(GFP_KERNEL, "%s/%s",
 				plat_data->fw_filename_prefix,

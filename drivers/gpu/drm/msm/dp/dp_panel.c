@@ -90,22 +90,44 @@ static int dp_panel_read_dpcd(struct dp_panel *dp_panel)
 static u32 dp_panel_get_supported_bpp(struct dp_panel *dp_panel,
 		u32 mode_edid_bpp, u32 mode_pclk_khz)
 {
-	const struct dp_link_info *link_info;
+	struct dp_link_info *link_info;
 	const u32 max_supported_bpp = 30, min_supported_bpp = 18;
-	u32 bpp, data_rate_khz;
+	u32 bpp = 0, data_rate_khz = 0;
 
-	bpp = min(mode_edid_bpp, max_supported_bpp);
+	bpp = min_t(u32, mode_edid_bpp, max_supported_bpp);
 
 	link_info = &dp_panel->link_info;
 	data_rate_khz = link_info->num_lanes * link_info->rate * 8;
 
-	do {
+	while (bpp > min_supported_bpp) {
 		if (mode_pclk_khz * bpp <= data_rate_khz)
-			return bpp;
+			break;
 		bpp -= 6;
-	} while (bpp > min_supported_bpp);
+	}
 
-	return min_supported_bpp;
+	return bpp;
+}
+
+static int dp_panel_update_modes(struct drm_connector *connector,
+	struct edid *edid)
+{
+	int rc = 0;
+
+	if (edid) {
+		rc = drm_connector_update_edid_property(connector, edid);
+		if (rc) {
+			DRM_ERROR("failed to update edid property %d\n", rc);
+			return rc;
+		}
+		rc = drm_add_edid_modes(connector, edid);
+		return rc;
+	}
+
+	rc = drm_connector_update_edid_property(connector, NULL);
+	if (rc)
+		DRM_ERROR("failed to update edid property %d\n", rc);
+
+	return rc;
 }
 
 int dp_panel_read_sink_caps(struct dp_panel *dp_panel,
@@ -153,13 +175,12 @@ int dp_panel_read_sink_caps(struct dp_panel *dp_panel,
 	if (rc)
 		return rc;
 
-	drm_edid_free(dp_panel->drm_edid);
+	kfree(dp_panel->edid);
+	dp_panel->edid = NULL;
 
-	dp_panel->drm_edid = drm_edid_read_ddc(connector, &panel->aux->ddc);
-
-	drm_edid_connector_update(connector, dp_panel->drm_edid);
-
-	if (!dp_panel->drm_edid) {
+	dp_panel->edid = drm_get_edid(connector,
+					      &panel->aux->ddc);
+	if (!dp_panel->edid) {
 		DRM_ERROR("panel edid read failed\n");
 		/* check edid read fail is due to unplug */
 		if (!dp_catalog_link_is_connected(panel->catalog)) {
@@ -203,13 +224,13 @@ int dp_panel_get_modes(struct dp_panel *dp_panel,
 		return -EINVAL;
 	}
 
-	if (dp_panel->drm_edid)
-		return drm_edid_connector_add_modes(connector);
+	if (dp_panel->edid)
+		return dp_panel_update_modes(connector, dp_panel->edid);
 
 	return 0;
 }
 
-static u8 dp_panel_get_edid_checksum(const struct edid *edid)
+static u8 dp_panel_get_edid_checksum(struct edid *edid)
 {
 	edid += edid->extensions;
 
@@ -228,12 +249,10 @@ void dp_panel_handle_sink_request(struct dp_panel *dp_panel)
 	panel = container_of(dp_panel, struct dp_panel_private, dp_panel);
 
 	if (panel->link->sink_request & DP_TEST_LINK_EDID_READ) {
-		/* FIXME: get rid of drm_edid_raw() */
-		const struct edid *edid = drm_edid_raw(dp_panel->drm_edid);
 		u8 checksum;
 
-		if (edid)
-			checksum = dp_panel_get_edid_checksum(edid);
+		if (dp_panel->edid)
+			checksum = dp_panel_get_edid_checksum(dp_panel->edid);
 		else
 			checksum = dp_panel->connector->real_edid_checksum;
 
@@ -334,10 +353,6 @@ int dp_panel_timing_cfg(struct dp_panel *dp_panel)
 	struct dp_catalog *catalog;
 	struct dp_panel_private *panel;
 	struct drm_display_mode *drm_mode;
-	u32 width_blanking;
-	u32 sync_start;
-	u32 dp_active;
-	u32 total;
 
 	panel = container_of(dp_panel, struct dp_panel_private, dp_panel);
 	catalog = panel->catalog;
@@ -361,13 +376,13 @@ int dp_panel_timing_cfg(struct dp_panel *dp_panel)
 	data <<= 16;
 	data |= total_hor;
 
-	total = data;
+	catalog->total = data;
 
 	data = (drm_mode->vtotal - drm_mode->vsync_start);
 	data <<= 16;
 	data |= (drm_mode->htotal - drm_mode->hsync_start);
 
-	sync_start = data;
+	catalog->sync_start = data;
 
 	data = drm_mode->vsync_end - drm_mode->vsync_start;
 	data <<= 16;
@@ -375,15 +390,15 @@ int dp_panel_timing_cfg(struct dp_panel *dp_panel)
 	data |= drm_mode->hsync_end - drm_mode->hsync_start;
 	data |= (panel->dp_panel.dp_mode.h_active_low << 15);
 
-	width_blanking = data;
+	catalog->width_blanking = data;
 
 	data = drm_mode->vdisplay;
 	data <<= 16;
 	data |= drm_mode->hdisplay;
 
-	dp_active = data;
+	catalog->dp_active = data;
 
-	dp_catalog_panel_timing_cfg(catalog, total, sync_start, width_blanking, dp_active);
+	dp_catalog_panel_timing_cfg(catalog);
 
 	if (dp_panel->dp_mode.out_fmt_is_yuv_420)
 		dp_panel_setup_vsc_sdp_yuv_420(dp_panel);
@@ -423,9 +438,8 @@ int dp_panel_init_panel_info(struct dp_panel *dp_panel)
 				drm_mode->clock);
 	drm_dbg_dp(panel->drm_dev, "bpp = %d\n", dp_panel->dp_mode.bpp);
 
-	dp_panel->dp_mode.bpp = dp_panel_get_mode_bpp(dp_panel, dp_panel->dp_mode.bpp,
-						      dp_panel->dp_mode.drm_mode.clock);
-
+	dp_panel->dp_mode.bpp = max_t(u32, 18,
+				min_t(u32, dp_panel->dp_mode.bpp, 30));
 	drm_dbg_dp(panel->drm_dev, "updated bpp = %d\n",
 				dp_panel->dp_mode.bpp);
 
@@ -521,5 +535,5 @@ void dp_panel_put(struct dp_panel *dp_panel)
 	if (!dp_panel)
 		return;
 
-	drm_edid_free(dp_panel->drm_edid);
+	kfree(dp_panel->edid);
 }

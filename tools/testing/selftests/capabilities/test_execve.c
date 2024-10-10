@@ -82,7 +82,7 @@ static bool create_and_enter_ns(uid_t inner_uid)
 {
 	uid_t outer_uid;
 	gid_t outer_gid;
-	int i, ret;
+	int i;
 	bool have_outer_privilege;
 
 	outer_uid = getuid();
@@ -97,10 +97,7 @@ static bool create_and_enter_ns(uid_t inner_uid)
 			ksft_exit_fail_msg("setresuid - %s\n", strerror(errno));
 
 		// Re-enable effective caps
-		ret = capng_get_caps_process();
-		if (ret == -1)
-			ksft_exit_fail_msg("capng_get_caps_process failed\n");
-
+		capng_get_caps_process();
 		for (i = 0; i < CAP_LAST_CAP; i++)
 			if (capng_have_capability(CAPNG_PERMITTED, i))
 				capng_update(CAPNG_ADD, CAPNG_EFFECTIVE, i);
@@ -210,7 +207,6 @@ static void exec_validate_cap(bool eff, bool perm, bool inh, bool ambient)
 
 static int do_tests(int uid, const char *our_path)
 {
-	int ret;
 	bool have_outer_privilege = create_and_enter_ns(uid);
 
 	int ourpath_fd = open(our_path, O_RDONLY | O_DIRECTORY);
@@ -254,9 +250,7 @@ static int do_tests(int uid, const char *our_path)
 			ksft_exit_fail_msg("chmod - %s\n", strerror(errno));
 	}
 
-	ret = capng_get_caps_process();
-	if (ret == -1)
-		ksft_exit_fail_msg("capng_get_caps_process failed\n");
+	capng_get_caps_process();
 
 	/* Make sure that i starts out clear */
 	capng_update(CAPNG_DROP, CAPNG_INHERITABLE, CAP_NET_BIND_SERVICE);

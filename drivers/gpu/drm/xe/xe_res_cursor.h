@@ -26,6 +26,7 @@
 
 #include <linux/scatterlist.h>
 
+#include <drm/drm_mm.h>
 #include <drm/ttm/ttm_placement.h>
 #include <drm/ttm/ttm_range_manager.h>
 #include <drm/ttm/ttm_resource.h>
@@ -156,6 +157,8 @@ static inline void xe_res_first_sg(const struct sg_table *sg,
 				   struct xe_res_cursor *cur)
 {
 	XE_WARN_ON(!sg);
+	XE_WARN_ON(!IS_ALIGNED(start, PAGE_SIZE) ||
+		   !IS_ALIGNED(size, PAGE_SIZE));
 	cur->node = NULL;
 	cur->start = start;
 	cur->remaining = size;

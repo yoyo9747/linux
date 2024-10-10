@@ -11,7 +11,7 @@
  * Copyright (c) 2014 Red Hat Inc.
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <crypto/sha256_base.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -165,5 +165,4 @@ void sha256(const u8 *data, unsigned int len, u8 *out)
 }
 EXPORT_SYMBOL(sha256);
 
-MODULE_DESCRIPTION("SHA-256 Algorithm");
 MODULE_LICENSE("GPL");

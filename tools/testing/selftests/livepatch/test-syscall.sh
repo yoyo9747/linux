@@ -15,10 +15,7 @@ setup_config
 
 start_test "patch getpid syscall while being heavily hammered"
 
-NPROC=$(getconf _NPROCESSORS_ONLN)
-MAXPROC=128
-
-for i in $(seq 1 $(($NPROC < $MAXPROC ? $NPROC : $MAXPROC))); do
+for i in $(seq 1 $(getconf _NPROCESSORS_ONLN)); do
 	./test_klp-call_getpid &
 	pids[$i]="$!"
 done

@@ -37,15 +37,11 @@ static const int jack_switch_types[SND_JACK_SWITCH_TYPES] = {
 };
 #endif /* CONFIG_SND_JACK_INPUT_DEV */
 
-static void snd_jack_remove_debugfs(struct snd_jack *jack);
-
 static int snd_jack_dev_disconnect(struct snd_device *device)
 {
+#ifdef CONFIG_SND_JACK_INPUT_DEV
 	struct snd_jack *jack = device->device_data;
 
-	snd_jack_remove_debugfs(jack);
-
-#ifdef CONFIG_SND_JACK_INPUT_DEV
 	guard(mutex)(&jack->input_dev_lock);
 	if (!jack->input_dev)
 		return 0;
@@ -385,14 +381,10 @@ static int snd_jack_debugfs_add_inject_node(struct snd_jack *jack,
 	return 0;
 }
 
-static void snd_jack_remove_debugfs(struct snd_jack *jack)
+static void snd_jack_debugfs_clear_inject_node(struct snd_jack_kctl *jack_kctl)
 {
-	struct snd_jack_kctl *jack_kctl;
-
-	list_for_each_entry(jack_kctl, &jack->kctl_list, list) {
-		debugfs_remove(jack_kctl->jack_debugfs_root);
-		jack_kctl->jack_debugfs_root = NULL;
-	}
+	debugfs_remove(jack_kctl->jack_debugfs_root);
+	jack_kctl->jack_debugfs_root = NULL;
 }
 #else /* CONFIG_SND_JACK_INJECTION_DEBUG */
 static int snd_jack_debugfs_add_inject_node(struct snd_jack *jack,
@@ -401,7 +393,7 @@ static int snd_jack_debugfs_add_inject_node(struct snd_jack *jack,
 	return 0;
 }
 
-static void snd_jack_remove_debugfs(struct snd_jack *jack)
+static void snd_jack_debugfs_clear_inject_node(struct snd_jack_kctl *jack_kctl)
 {
 }
 #endif /* CONFIG_SND_JACK_INJECTION_DEBUG */
@@ -412,6 +404,7 @@ static void snd_jack_kctl_private_free(struct snd_kcontrol *kctl)
 
 	jack_kctl = kctl->private_data;
 	if (jack_kctl) {
+		snd_jack_debugfs_clear_inject_node(jack_kctl);
 		list_del(&jack_kctl->list);
 		kfree(jack_kctl);
 	}
@@ -504,8 +497,8 @@ int snd_jack_new(struct snd_card *card, const char *id, int type,
 		.dev_free = snd_jack_dev_free,
 #ifdef CONFIG_SND_JACK_INPUT_DEV
 		.dev_register = snd_jack_dev_register,
-#endif /* CONFIG_SND_JACK_INPUT_DEV */
 		.dev_disconnect = snd_jack_dev_disconnect,
+#endif /* CONFIG_SND_JACK_INPUT_DEV */
 	};
 
 	if (initial_kctl) {

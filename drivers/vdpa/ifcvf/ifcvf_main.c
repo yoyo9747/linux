@@ -894,5 +894,4 @@ static struct pci_driver ifcvf_driver = {
 
 module_pci_driver(ifcvf_driver);
 
-MODULE_DESCRIPTION("Intel IFC VF NIC driver for virtio dataplane offloading");
 MODULE_LICENSE("GPL v2");

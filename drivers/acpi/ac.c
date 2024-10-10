@@ -112,7 +112,7 @@ static int get_ac_property(struct power_supply *psy,
 	return 0;
 }
 
-static const enum power_supply_property ac_props[] = {
+static enum power_supply_property ac_props[] = {
 	POWER_SUPPLY_PROP_ONLINE,
 };
 
@@ -145,7 +145,7 @@ static void acpi_ac_notify(acpi_handle handle, u32 event, void *data)
 						  dev_name(&adev->dev), event,
 						  (u32) ac->state);
 		acpi_notifier_call_chain(adev, event, (u32) ac->state);
-		power_supply_changed(ac->charger);
+		kobject_uevent(&ac->charger->dev.kobj, KOBJ_CHANGE);
 	}
 }
 
@@ -213,8 +213,8 @@ static int acpi_ac_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	ac->device = adev;
-	strscpy(acpi_device_name(adev), ACPI_AC_DEVICE_NAME);
-	strscpy(acpi_device_class(adev), ACPI_AC_CLASS);
+	strcpy(acpi_device_name(adev), ACPI_AC_DEVICE_NAME);
+	strcpy(acpi_device_class(adev), ACPI_AC_CLASS);
 
 	platform_set_drvdata(pdev, ac);
 
@@ -268,7 +268,7 @@ static int acpi_ac_resume(struct device *dev)
 	if (acpi_ac_get_state(ac))
 		return 0;
 	if (old_state != ac->state)
-		power_supply_changed(ac->charger);
+		kobject_uevent(&ac->charger->dev.kobj, KOBJ_CHANGE);
 
 	return 0;
 }

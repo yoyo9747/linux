@@ -196,7 +196,8 @@ static int rzv2m_map_add_config(struct pinctrl_map *map,
 {
 	unsigned long *cfgs;
 
-	cfgs = kmemdup_array(configs, num_configs, sizeof(*cfgs), GFP_KERNEL);
+	cfgs = kmemdup(configs, num_configs * sizeof(*cfgs),
+		       GFP_KERNEL);
 	if (!cfgs)
 		return -ENOMEM;
 
@@ -387,6 +388,7 @@ static int rzv2m_dt_node_to_map(struct pinctrl_dev *pctldev,
 				unsigned int *num_maps)
 {
 	struct rzv2m_pinctrl *pctrl = pinctrl_dev_get_drvdata(pctldev);
+	struct device_node *child;
 	unsigned int index;
 	int ret;
 
@@ -394,11 +396,13 @@ static int rzv2m_dt_node_to_map(struct pinctrl_dev *pctldev,
 	*num_maps = 0;
 	index = 0;
 
-	for_each_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		ret = rzv2m_dt_subnode_to_map(pctldev, child, np, map,
 					      num_maps, &index);
-		if (ret < 0)
+		if (ret < 0) {
+			of_node_put(child);
 			goto done;
+		}
 	}
 
 	if (*num_maps == 0) {

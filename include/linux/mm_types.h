@@ -46,7 +46,9 @@ struct mem_cgroup;
  * which is guaranteed to be aligned.  If you use the same storage as
  * page->mapping, you must restore it to NULL before freeing the page.
  *
- * The mapcount field must not be used for own purposes.
+ * If your page will not be mapped to userspace, you can also use the four
+ * bytes in the mapcount union, but you must call page_mapcount_reset()
+ * before freeing it.
  *
  * If you want to use the refcount field, it must be used in such a way
  * that other CPUs temporarily incrementing and then decrementing the
@@ -109,7 +111,7 @@ struct page {
 			/**
 			 * @private: Mapping-private opaque data.
 			 * Usually used for buffer_heads if PagePrivate.
-			 * Used for swp_entry_t if swapcache flag set.
+			 * Used for swp_entry_t if PageSwapCache.
 			 * Indicates order in the buddy system if PageBuddy.
 			 */
 			unsigned long private;
@@ -150,31 +152,18 @@ struct page {
 
 	union {		/* This union is 4 bytes in size. */
 		/*
-		 * For head pages of typed folios, the value stored here
-		 * allows for determining what this page is used for. The
-		 * tail pages of typed folios will not store a type
-		 * (page_type == _mapcount == -1).
-		 *
-		 * See page-flags.h for a list of page types which are currently
-		 * stored here.
-		 *
-		 * Owners of typed folios may reuse the lower 16 bit of the
-		 * head page page_type field after setting the page type,
-		 * but must reset these 16 bit to -1 before clearing the
-		 * page type.
-		 */
-		unsigned int page_type;
-
-		/*
-		 * For pages that are part of non-typed folios for which mappings
-		 * are tracked via the RMAP, encodes the number of times this page
-		 * is directly referenced by a page table.
-		 *
-		 * Note that the mapcount is always initialized to -1, so that
-		 * transitions both from it and to it can be tracked, using
-		 * atomic_inc_and_test() and atomic_add_negative(-1).
+		 * If the page can be mapped to userspace, encodes the number
+		 * of times this page is referenced by a page table.
 		 */
 		atomic_t _mapcount;
+
+		/*
+		 * If the page is neither PageSlab nor mappable to userspace,
+		 * the value stored here may help determine what this page
+		 * is used for.  See page-flags.h for a list of page types
+		 * which are currently stored here.
+		 */
+		unsigned int page_type;
 	};
 
 	/* Usage count. *DO NOT USE DIRECTLY*. See page_ref.h */
@@ -182,8 +171,6 @@ struct page {
 
 #ifdef CONFIG_MEMCG
 	unsigned long memcg_data;
-#elif defined(CONFIG_SLAB_OBJ_EXT)
-	unsigned long _unused_slab_obj_exts;
 #endif
 
 	/*
@@ -302,8 +289,7 @@ typedef struct {
  * @virtual: Virtual address in the kernel direct map.
  * @_last_cpupid: IDs of last CPU and last process that accessed the folio.
  * @_entire_mapcount: Do not use directly, call folio_entire_mapcount().
- * @_large_mapcount: Do not use directly, call folio_mapcount().
- * @_nr_pages_mapped: Do not use outside of rmap and debug code.
+ * @_nr_pages_mapped: Do not use directly, call folio_mapcount().
  * @_pincount: Do not use directly, call folio_maybe_dma_pinned().
  * @_folio_nr_pages: Do not use directly, call folio_nr_pages().
  * @_hugetlb_subpool: Do not use directly, use accessor in hugetlb.h.
@@ -311,7 +297,6 @@ typedef struct {
  * @_hugetlb_cgroup_rsvd: Do not use directly, use accessor in hugetlb_cgroup.h.
  * @_hugetlb_hwpoison: Do not use directly, call raw_hwp_list_head().
  * @_deferred_list: Folios to be split under memory pressure.
- * @_unused_slab_obj_exts: Placeholder to match obj_exts in struct slab.
  *
  * A folio is a physically, virtually and logically contiguous set
  * of bytes.  It is a power-of-two in size, and it is aligned to that
@@ -348,8 +333,6 @@ struct folio {
 			atomic_t _refcount;
 #ifdef CONFIG_MEMCG
 			unsigned long memcg_data;
-#elif defined(CONFIG_SLAB_OBJ_EXT)
-			unsigned long _unused_slab_obj_exts;
 #endif
 #if defined(WANT_PAGE_VIRTUAL)
 			void *virtual;
@@ -365,8 +348,8 @@ struct folio {
 		struct {
 			unsigned long _flags_1;
 			unsigned long _head_1;
+			unsigned long _folio_avail;
 	/* public: */
-			atomic_t _large_mapcount;
 			atomic_t _entire_mapcount;
 			atomic_t _nr_pages_mapped;
 			atomic_t _pincount;
@@ -660,9 +643,6 @@ struct vma_numab_state {
  * per VM-area/task. A VM area is any part of the process virtual memory
  * space that has a special rule for the page-fault handlers (ie a shared
  * library, the executable area etc).
- *
- * Only explicitly marked struct members may be accessed by RCU readers before
- * getting a stable reference.
  */
 struct vm_area_struct {
 	/* The first cache line has the info for VMA tree walking. */
@@ -678,11 +658,7 @@ struct vm_area_struct {
 #endif
 	};
 
-	/*
-	 * The address space we belong to.
-	 * Unstable RCU readers are allowed to read this.
-	 */
-	struct mm_struct *vm_mm;
+	struct mm_struct *vm_mm;	/* The address space we belong to. */
 	pgprot_t vm_page_prot;          /* Access permissions of this VMA. */
 
 	/*
@@ -695,12 +671,6 @@ struct vm_area_struct {
 	};
 
 #ifdef CONFIG_PER_VMA_LOCK
-	/*
-	 * Flag to indicate areas detached from the mm->mm_mt tree.
-	 * Unstable RCU readers are allowed to read this.
-	 */
-	bool detached;
-
 	/*
 	 * Can only be written (using WRITE_ONCE()) while holding both:
 	 *  - mmap_lock (in write mode)
@@ -716,8 +686,10 @@ struct vm_area_struct {
 	 * slowpath.
 	 */
 	int vm_lock_seq;
-	/* Unstable RCU readers are allowed to read this. */
 	struct vma_lock *vm_lock;
+
+	/* Flag to indicate areas detached from the mm->mm_mt tree */
+	bool detached;
 #endif
 
 	/*
@@ -805,7 +777,11 @@ struct mm_struct {
 		} ____cacheline_aligned_in_smp;
 
 		struct maple_tree mm_mt;
-
+#ifdef CONFIG_MMU
+		unsigned long (*get_unmapped_area) (struct file *filp,
+				unsigned long addr, unsigned long len,
+				unsigned long pgoff, unsigned long flags);
+#endif
 		unsigned long mmap_base;	/* base of mmap area */
 		unsigned long mmap_legacy_base;	/* base of mmap area in bottom-up allocations */
 #ifdef CONFIG_HAVE_ARCH_COMPAT_MMAP_BASES
@@ -958,7 +934,7 @@ struct mm_struct {
 #ifdef CONFIG_MMU_NOTIFIER
 		struct mmu_notifier_subscriptions *notifier_subscriptions;
 #endif
-#if defined(CONFIG_TRANSPARENT_HUGEPAGE) && !defined(CONFIG_SPLIT_PMD_PTLOCKS)
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE) && !USE_SPLIT_PMD_PTLOCKS
 		pgtable_t pmd_huge_pte; /* protected by page_table_lock */
 #endif
 #ifdef CONFIG_NUMA_BALANCING
@@ -1012,7 +988,7 @@ struct mm_struct {
 		 * Represent how many empty pages are merged with kernel zero
 		 * pages when enabling KSM use_zero_pages.
 		 */
-		atomic_long_t ksm_zero_pages;
+		unsigned long ksm_zero_pages;
 #endif /* CONFIG_KSM */
 #ifdef CONFIG_LRU_GEN_WALKS_MMU
 		struct {
@@ -1194,15 +1170,14 @@ static inline void mm_init_cid(struct mm_struct *mm)
 	cpumask_clear(mm_cidmask(mm));
 }
 
-static inline int mm_alloc_cid_noprof(struct mm_struct *mm)
+static inline int mm_alloc_cid(struct mm_struct *mm)
 {
-	mm->pcpu_cid = alloc_percpu_noprof(struct mm_cid);
+	mm->pcpu_cid = alloc_percpu(struct mm_cid);
 	if (!mm->pcpu_cid)
 		return -ENOMEM;
 	mm_init_cid(mm);
 	return 0;
 }
-#define mm_alloc_cid(...)	alloc_hooks(mm_alloc_cid_noprof(__VA_ARGS__))
 
 static inline void mm_destroy_cid(struct mm_struct *mm)
 {
@@ -1324,9 +1299,6 @@ struct vm_special_mapping {
 
 	int (*mremap)(const struct vm_special_mapping *sm,
 		     struct vm_area_struct *new_vma);
-
-	void (*close)(const struct vm_special_mapping *sm,
-		      struct vm_area_struct *vma);
 };
 
 enum tlb_flush_reason {
@@ -1397,15 +1369,6 @@ enum fault_flag {
 };
 
 typedef unsigned int __bitwise zap_flags_t;
-
-/* Flags for clear_young_dirty_ptes(). */
-typedef int __bitwise cydp_t;
-
-/* Clear the access bit */
-#define CYDP_CLEAR_YOUNG		((__force cydp_t)BIT(0))
-
-/* Clear the dirty bit */
-#define CYDP_CLEAR_DIRTY		((__force cydp_t)BIT(1))
 
 /*
  * FOLL_PIN and FOLL_LONGTERM may be used in various combinations with each

@@ -12,6 +12,7 @@
 
 /dts-v1/;
 #include "rk3399.dtsi"
+#include "rk3399-opp.dtsi"
 
 / {
 	model = "Kobol Helios64";

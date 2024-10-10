@@ -123,6 +123,12 @@ extern int xfs_qm_newmount(struct xfs_mount *, uint *, uint *);
 extern void xfs_qm_mount_quotas(struct xfs_mount *);
 extern void xfs_qm_unmount(struct xfs_mount *);
 extern void xfs_qm_unmount_quotas(struct xfs_mount *);
+
+static inline int
+xfs_quota_reserve_blkres(struct xfs_inode *ip, int64_t blocks)
+{
+	return xfs_trans_reserve_quota_nblks(NULL, ip, blocks, 0, false);
+}
 bool xfs_inode_near_dquot_enforcement(struct xfs_inode *ip, xfs_dqtype_t type);
 
 # ifdef CONFIG_XFS_LIVE_HOOKS
@@ -182,6 +188,12 @@ static inline int xfs_trans_reserve_quota_bydquots(struct xfs_trans *tp,
 }
 
 static inline int
+xfs_quota_reserve_blkres(struct xfs_inode *ip, int64_t blocks)
+{
+	return 0;
+}
+
+static inline int
 xfs_trans_reserve_quota_icreate(struct xfs_trans *tp, struct xfs_dquot *udqp,
 		struct xfs_dquot *gdqp, struct xfs_dquot *pdqp, int64_t dblocks)
 {
@@ -210,16 +222,9 @@ xfs_trans_reserve_quota_icreate(struct xfs_trans *tp, struct xfs_dquot *udqp,
 #endif /* CONFIG_XFS_QUOTA */
 
 static inline int
-xfs_quota_reserve_blkres(struct xfs_inode *ip, int64_t blocks)
+xfs_quota_unreserve_blkres(struct xfs_inode *ip, int64_t blocks)
 {
-	return xfs_trans_reserve_quota_nblks(NULL, ip, blocks, 0, false);
-}
-
-static inline void
-xfs_quota_unreserve_blkres(struct xfs_inode *ip, uint64_t blocks)
-{
-	/* don't return an error as unreserving quotas can't fail */
-	xfs_quota_reserve_blkres(ip, -(int64_t)blocks);
+	return xfs_quota_reserve_blkres(ip, -blocks);
 }
 
 extern int xfs_mount_reset_sbqflags(struct xfs_mount *);

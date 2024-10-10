@@ -581,9 +581,12 @@ static int qib_create_workqueues(struct qib_devdata *dd)
 	for (pidx = 0; pidx < dd->num_pports; ++pidx) {
 		ppd = dd->pport + pidx;
 		if (!ppd->qib_wq) {
-			ppd->qib_wq = alloc_ordered_workqueue("qib%d_%d",
-							      WQ_MEM_RECLAIM,
-							      dd->unit, pidx);
+			char wq_name[8]; /* 3 + 2 + 1 + 1 + 1 */
+
+			snprintf(wq_name, sizeof(wq_name), "qib%d_%d",
+				dd->unit, pidx);
+			ppd->qib_wq = alloc_ordered_workqueue(wq_name,
+							      WQ_MEM_RECLAIM);
 			if (!ppd->qib_wq)
 				goto wq_error;
 		}

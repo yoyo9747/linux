@@ -14,7 +14,6 @@
 #include <fcntl.h>
 #include <linux/landlock.h>
 #include <linux/prctl.h>
-#include <linux/socket.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +22,6 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-#include <stdbool.h>
 
 #ifndef landlock_create_ruleset
 static inline int
@@ -57,7 +55,6 @@ static inline int landlock_restrict_self(const int ruleset_fd,
 #define ENV_FS_RW_NAME "LL_FS_RW"
 #define ENV_TCP_BIND_NAME "LL_TCP_BIND"
 #define ENV_TCP_CONNECT_NAME "LL_TCP_CONNECT"
-#define ENV_SCOPED_NAME "LL_SCOPED"
 #define ENV_DELIMITER ":"
 
 static int parse_path(char *env_path, const char ***const path_list)
@@ -84,8 +81,7 @@ static int parse_path(char *env_path, const char ***const path_list)
 	LANDLOCK_ACCESS_FS_EXECUTE | \
 	LANDLOCK_ACCESS_FS_WRITE_FILE | \
 	LANDLOCK_ACCESS_FS_READ_FILE | \
-	LANDLOCK_ACCESS_FS_TRUNCATE | \
-	LANDLOCK_ACCESS_FS_IOCTL_DEV)
+	LANDLOCK_ACCESS_FS_TRUNCATE)
 
 /* clang-format on */
 
@@ -157,7 +153,7 @@ static int populate_ruleset_net(const char *const env_var, const int ruleset_fd,
 				const __u64 allowed_access)
 {
 	int ret = 1;
-	char *env_port_name, *env_port_name_next, *strport;
+	char *env_port_name, *strport;
 	struct landlock_net_port_attr net_port = {
 		.allowed_access = allowed_access,
 		.port = 0,
@@ -169,8 +165,7 @@ static int populate_ruleset_net(const char *const env_var, const int ruleset_fd,
 	env_port_name = strdup(env_port_name);
 	unsetenv(env_var);
 
-	env_port_name_next = env_port_name;
-	while ((strport = strsep(&env_port_name_next, ENV_DELIMITER))) {
+	while ((strport = strsep(&env_port_name, ENV_DELIMITER))) {
 		net_port.port = atoi(strport);
 		if (landlock_add_rule(ruleset_fd, LANDLOCK_RULE_NET_PORT,
 				      &net_port, 0)) {
@@ -185,55 +180,6 @@ static int populate_ruleset_net(const char *const env_var, const int ruleset_fd,
 out_free_name:
 	free(env_port_name);
 	return ret;
-}
-
-/* Returns true on error, false otherwise. */
-static bool check_ruleset_scope(const char *const env_var,
-				struct landlock_ruleset_attr *ruleset_attr)
-{
-	char *env_type_scope, *env_type_scope_next, *ipc_scoping_name;
-	bool error = false;
-	bool abstract_scoping = false;
-	bool signal_scoping = false;
-
-	/* Scoping is not supported by Landlock ABI */
-	if (!(ruleset_attr->scoped &
-	      (LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET | LANDLOCK_SCOPE_SIGNAL)))
-		goto out_unset;
-
-	env_type_scope = getenv(env_var);
-	/* Scoping is not supported by the user */
-	if (!env_type_scope || strcmp("", env_type_scope) == 0)
-		goto out_unset;
-
-	env_type_scope = strdup(env_type_scope);
-	env_type_scope_next = env_type_scope;
-	while ((ipc_scoping_name =
-			strsep(&env_type_scope_next, ENV_DELIMITER))) {
-		if (strcmp("a", ipc_scoping_name) == 0 && !abstract_scoping) {
-			abstract_scoping = true;
-		} else if (strcmp("s", ipc_scoping_name) == 0 &&
-			   !signal_scoping) {
-			signal_scoping = true;
-		} else {
-			fprintf(stderr, "Unknown or duplicate scope \"%s\"\n",
-				ipc_scoping_name);
-			error = true;
-			goto out_free_name;
-		}
-	}
-
-out_free_name:
-	free(env_type_scope);
-
-out_unset:
-	if (!abstract_scoping)
-		ruleset_attr->scoped &= ~LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET;
-	if (!signal_scoping)
-		ruleset_attr->scoped &= ~LANDLOCK_SCOPE_SIGNAL;
-
-	unsetenv(env_var);
-	return error;
 }
 
 /* clang-format off */
@@ -255,12 +201,11 @@ out_unset:
 	LANDLOCK_ACCESS_FS_MAKE_BLOCK | \
 	LANDLOCK_ACCESS_FS_MAKE_SYM | \
 	LANDLOCK_ACCESS_FS_REFER | \
-	LANDLOCK_ACCESS_FS_TRUNCATE | \
-	LANDLOCK_ACCESS_FS_IOCTL_DEV)
+	LANDLOCK_ACCESS_FS_TRUNCATE)
 
 /* clang-format on */
 
-#define LANDLOCK_ABI_LAST 6
+#define LANDLOCK_ABI_LAST 4
 
 int main(const int argc, char *const argv[], char *const *const envp)
 {
@@ -275,16 +220,14 @@ int main(const int argc, char *const argv[], char *const *const envp)
 		.handled_access_fs = access_fs_rw,
 		.handled_access_net = LANDLOCK_ACCESS_NET_BIND_TCP |
 				      LANDLOCK_ACCESS_NET_CONNECT_TCP,
-		.scoped = LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET |
-			  LANDLOCK_SCOPE_SIGNAL,
 	};
 
 	if (argc < 2) {
 		fprintf(stderr,
-			"usage: %s=\"...\" %s=\"...\" %s=\"...\" %s=\"...\" %s=\"...\" %s "
+			"usage: %s=\"...\" %s=\"...\" %s=\"...\" %s=\"...\"%s "
 			"<cmd> [args]...\n\n",
 			ENV_FS_RO_NAME, ENV_FS_RW_NAME, ENV_TCP_BIND_NAME,
-			ENV_TCP_CONNECT_NAME, ENV_SCOPED_NAME, argv[0]);
+			ENV_TCP_CONNECT_NAME, argv[0]);
 		fprintf(stderr,
 			"Execute a command in a restricted environment.\n\n");
 		fprintf(stderr,
@@ -305,18 +248,15 @@ int main(const int argc, char *const argv[], char *const *const envp)
 		fprintf(stderr,
 			"* %s: list of ports allowed to connect (client).\n",
 			ENV_TCP_CONNECT_NAME);
-		fprintf(stderr, "* %s: list of scoped IPCs.\n",
-			ENV_SCOPED_NAME);
 		fprintf(stderr,
 			"\nexample:\n"
 			"%s=\"${PATH}:/lib:/usr:/proc:/etc:/dev/urandom\" "
 			"%s=\"/dev/null:/dev/full:/dev/zero:/dev/pts:/tmp\" "
 			"%s=\"9418\" "
 			"%s=\"80:443\" "
-			"%s=\"a:s\" "
 			"%s bash -i\n\n",
 			ENV_FS_RO_NAME, ENV_FS_RW_NAME, ENV_TCP_BIND_NAME,
-			ENV_TCP_CONNECT_NAME, ENV_SCOPED_NAME, argv[0]);
+			ENV_TCP_CONNECT_NAME, argv[0]);
 		fprintf(stderr,
 			"This sandboxer can use Landlock features "
 			"up to ABI version %d.\n",
@@ -379,16 +319,6 @@ int main(const int argc, char *const argv[], char *const *const envp)
 		ruleset_attr.handled_access_net &=
 			~(LANDLOCK_ACCESS_NET_BIND_TCP |
 			  LANDLOCK_ACCESS_NET_CONNECT_TCP);
-		__attribute__((fallthrough));
-	case 4:
-		/* Removes LANDLOCK_ACCESS_FS_IOCTL_DEV for ABI < 5 */
-		ruleset_attr.handled_access_fs &= ~LANDLOCK_ACCESS_FS_IOCTL_DEV;
-
-		__attribute__((fallthrough));
-	case 5:
-		/* Removes LANDLOCK_SCOPE_* for ABI < 6 */
-		ruleset_attr.scoped &= ~(LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET |
-					 LANDLOCK_SCOPE_SIGNAL);
 		fprintf(stderr,
 			"Hint: You should update the running kernel "
 			"to leverage Landlock features "
@@ -419,9 +349,6 @@ int main(const int argc, char *const argv[], char *const *const envp)
 		ruleset_attr.handled_access_net &=
 			~LANDLOCK_ACCESS_NET_CONNECT_TCP;
 	}
-
-	if (check_ruleset_scope(ENV_SCOPED_NAME, &ruleset_attr))
-		return 1;
 
 	ruleset_fd =
 		landlock_create_ruleset(&ruleset_attr, sizeof(ruleset_attr), 0);

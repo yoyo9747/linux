@@ -89,12 +89,9 @@
 #define USB_HYBRID_CANLIN_PRODUCT_ID 0x0115
 #define USB_HYBRID_PRO_CANLIN_PRODUCT_ID 0x0116
 #define USB_LEAF_V3_PRODUCT_ID 0x0117
-#define USB_VINING_800_PRODUCT_ID 0x0119
-#define USB_USBCAN_PRO_5XCAN_PRODUCT_ID 0x011A
-#define USB_MINI_PCIE_1XCAN_PRODUCT_ID 0x011B
 
 static const struct kvaser_usb_driver_info kvaser_usb_driver_info_hydra = {
-	.quirks = 0,
+	.quirks = KVASER_USB_QUIRK_HAS_HARDWARE_TIMESTAMP,
 	.ops = &kvaser_usb_hydra_dev_ops,
 };
 
@@ -128,7 +125,6 @@ static const struct kvaser_usb_driver_info kvaser_usb_driver_info_leaf_err_liste
 
 static const struct kvaser_usb_driver_info kvaser_usb_driver_info_leafimx = {
 	.quirks = 0,
-	.family = KVASER_LEAF,
 	.ops = &kvaser_usb_leaf_dev_ops,
 };
 
@@ -242,12 +238,6 @@ static const struct usb_device_id kvaser_usb_table[] = {
 		.driver_info = (kernel_ulong_t)&kvaser_usb_driver_info_hydra },
 	{ USB_DEVICE(KVASER_VENDOR_ID, USB_LEAF_V3_PRODUCT_ID),
 		.driver_info = (kernel_ulong_t)&kvaser_usb_driver_info_hydra },
-	{ USB_DEVICE(KVASER_VENDOR_ID, USB_VINING_800_PRODUCT_ID),
-		.driver_info = (kernel_ulong_t)&kvaser_usb_driver_info_hydra },
-	{ USB_DEVICE(KVASER_VENDOR_ID, USB_USBCAN_PRO_5XCAN_PRODUCT_ID),
-		.driver_info = (kernel_ulong_t)&kvaser_usb_driver_info_hydra },
-	{ USB_DEVICE(KVASER_VENDOR_ID, USB_MINI_PCIE_1XCAN_PRODUCT_ID),
-		.driver_info = (kernel_ulong_t)&kvaser_usb_driver_info_hydra },
 	{ }
 };
 MODULE_DEVICE_TABLE(usb, kvaser_usb_table);
@@ -304,7 +294,7 @@ int kvaser_usb_send_cmd_async(struct kvaser_usb_net_priv *priv, void *cmd,
 	}
 	usb_free_urb(urb);
 
-	return err;
+	return 0;
 }
 
 int kvaser_usb_can_rx_over_error(struct net_device *netdev)
@@ -756,12 +746,23 @@ freeurb:
 static const struct net_device_ops kvaser_usb_netdev_ops = {
 	.ndo_open = kvaser_usb_open,
 	.ndo_stop = kvaser_usb_close,
+	.ndo_start_xmit = kvaser_usb_start_xmit,
+	.ndo_change_mtu = can_change_mtu,
+};
+
+static const struct net_device_ops kvaser_usb_netdev_ops_hwts = {
+	.ndo_open = kvaser_usb_open,
+	.ndo_stop = kvaser_usb_close,
 	.ndo_eth_ioctl = can_eth_ioctl_hwts,
 	.ndo_start_xmit = kvaser_usb_start_xmit,
 	.ndo_change_mtu = can_change_mtu,
 };
 
 static const struct ethtool_ops kvaser_usb_ethtool_ops = {
+	.get_ts_info = ethtool_op_get_ts_info,
+};
+
+static const struct ethtool_ops kvaser_usb_ethtool_ops_hwts = {
 	.get_ts_info = can_ethtool_op_get_ts_info_hwts,
 };
 
@@ -848,7 +849,13 @@ static int kvaser_usb_init_one(struct kvaser_usb *dev, int channel)
 	netdev->flags |= IFF_ECHO;
 
 	netdev->netdev_ops = &kvaser_usb_netdev_ops;
-	netdev->ethtool_ops = &kvaser_usb_ethtool_ops;
+	if (driver_info->quirks & KVASER_USB_QUIRK_HAS_HARDWARE_TIMESTAMP) {
+		netdev->netdev_ops = &kvaser_usb_netdev_ops_hwts;
+		netdev->ethtool_ops = &kvaser_usb_ethtool_ops_hwts;
+	} else {
+		netdev->netdev_ops = &kvaser_usb_netdev_ops;
+		netdev->ethtool_ops = &kvaser_usb_ethtool_ops;
+	}
 	SET_NETDEV_DEV(netdev, &dev->intf->dev);
 	netdev->dev_id = channel;
 
@@ -898,8 +905,10 @@ static int kvaser_usb_probe(struct usb_interface *intf,
 	ops = driver_info->ops;
 
 	err = ops->dev_setup_endpoints(dev);
-	if (err)
-		return dev_err_probe(&intf->dev, err, "Cannot get usb endpoint(s)");
+	if (err) {
+		dev_err(&intf->dev, "Cannot get usb endpoint(s)");
+		return err;
+	}
 
 	dev->udev = interface_to_usbdev(intf);
 
@@ -910,20 +919,26 @@ static int kvaser_usb_probe(struct usb_interface *intf,
 	dev->card_data.ctrlmode_supported = 0;
 	dev->card_data.capabilities = 0;
 	err = ops->dev_init_card(dev);
-	if (err)
-		return dev_err_probe(&intf->dev, err,
-				     "Failed to initialize card\n");
+	if (err) {
+		dev_err(&intf->dev,
+			"Failed to initialize card, error %d\n", err);
+		return err;
+	}
 
 	err = ops->dev_get_software_info(dev);
-	if (err)
-		return dev_err_probe(&intf->dev, err,
-				     "Cannot get software info\n");
+	if (err) {
+		dev_err(&intf->dev,
+			"Cannot get software info, error %d\n", err);
+		return err;
+	}
 
 	if (ops->dev_get_software_details) {
 		err = ops->dev_get_software_details(dev);
-		if (err)
-			return dev_err_probe(&intf->dev, err,
-					     "Cannot get software details\n");
+		if (err) {
+			dev_err(&intf->dev,
+				"Cannot get software details, error %d\n", err);
+			return err;
+		}
 	}
 
 	if (WARN_ON(!dev->cfg))
@@ -937,16 +952,18 @@ static int kvaser_usb_probe(struct usb_interface *intf,
 	dev_dbg(&intf->dev, "Max outstanding tx = %d URBs\n", dev->max_tx_urbs);
 
 	err = ops->dev_get_card_info(dev);
-	if (err)
-		return dev_err_probe(&intf->dev, err,
-				     "Cannot get card info\n");
+	if (err) {
+		dev_err(&intf->dev, "Cannot get card info, error %d\n", err);
+		return err;
+	}
 
 	if (ops->dev_get_capabilities) {
 		err = ops->dev_get_capabilities(dev);
 		if (err) {
+			dev_err(&intf->dev,
+				"Cannot get capabilities, error %d\n", err);
 			kvaser_usb_remove_interfaces(dev);
-			return dev_err_probe(&intf->dev, err,
-					     "Cannot get capabilities\n");
+			return err;
 		}
 	}
 

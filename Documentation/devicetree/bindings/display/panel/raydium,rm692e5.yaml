@@ -22,9 +22,6 @@ properties:
       - const: fairphone,fp5-rm692e5-boe
       - const: raydium,rm692e5
 
-  reg:
-    maxItems: 1
-
   dvdd-supply:
     description: Digital voltage rail
 
@@ -34,6 +31,7 @@ properties:
   vddio-supply:
     description: I/O voltage rail
 
+  reg: true
   port: true
 
 required:

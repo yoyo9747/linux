@@ -639,7 +639,6 @@ static const struct of_device_id bdc_of_match[] = {
 	{ .compatible = "brcm,bdc" },
 	{ /* sentinel */ }
 };
-MODULE_DEVICE_TABLE(of, bdc_of_match);
 
 static struct platform_driver bdc_driver = {
 	.driver		= {

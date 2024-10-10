@@ -69,12 +69,12 @@ static void free_list_evsel(struct list_head* list_evsel)
 %type <num> PE_VALUE_SYM_HW
 %type <num> PE_VALUE_SYM_SW
 %type <num> PE_VALUE_SYM_TOOL
-%type <mod> PE_MODIFIER_EVENT
 %type <term_type> PE_TERM
 %type <num> value_sym
 %type <str> PE_RAW
 %type <str> PE_NAME
 %type <str> PE_LEGACY_CACHE
+%type <str> PE_MODIFIER_EVENT
 %type <str> PE_MODIFIER_BP
 %type <str> PE_EVENT_NAME
 %type <str> PE_DRV_CFG_TERM
@@ -111,7 +111,6 @@ static void free_list_evsel(struct list_head* list_evsel)
 {
 	char *str;
 	u64 num;
-	struct parse_events_modifier mod;
 	enum parse_events__term_type term_type;
 	struct list_head *list_evsel;
 	struct parse_events_terms *list_terms;
@@ -127,10 +126,6 @@ static void free_list_evsel(struct list_head* list_evsel)
 }
 %%
 
- /*
-  * Entry points. We are either parsing events or terminals. Just terminal
-  * parsing is used for parsing events in sysfs.
-  */
 start:
 PE_START_EVENTS start_events
 |
@@ -138,36 +133,31 @@ PE_START_TERMS  start_terms
 
 start_events: groups
 {
-	/* Take the parsed events, groups.. and place into parse_state. */
-	struct list_head *groups  = $1;
 	struct parse_events_state *parse_state = _parse_state;
 
-	list_splice_tail(groups, &parse_state->list);
-	free(groups);
+	/* frees $1 */
+	parse_events_update_lists($1, &parse_state->list);
 }
 
-groups: /* A list of groups or events. */
+groups:
 groups ',' group
 {
-	/* Merge group into the list of events/groups. */
-	struct list_head *groups  = $1;
-	struct list_head *group  = $3;
+	struct list_head *list  = $1;
+	struct list_head *group = $3;
 
-	list_splice_tail(group, groups);
-	free(group);
-	$$ = groups;
+	/* frees $3 */
+	parse_events_update_lists(group, list);
+	$$ = list;
 }
 |
 groups ',' event
 {
-	/* Merge event into the list of events/groups. */
-	struct list_head *groups  = $1;
+	struct list_head *list  = $1;
 	struct list_head *event = $3;
 
-
-	list_splice_tail(event, groups);
-	free(event);
-	$$ = groups;
+	/* frees $3 */
+	parse_events_update_lists(event, list);
+	$$ = list;
 }
 |
 group
@@ -177,13 +167,20 @@ event
 group:
 group_def ':' PE_MODIFIER_EVENT
 {
-	/* Apply the modifier to the events in the group_def. */
 	struct list_head *list = $1;
 	int err;
 
-	err = parse_events__modifier_group(_parse_state, &@3, list, $3);
-	if (err)
+	err = parse_events__modifier_group(list, $3);
+	free($3);
+	if (err) {
+		struct parse_events_state *parse_state = _parse_state;
+		struct parse_events_error *error = parse_state->error;
+
+		parse_events_error__handle(error, @3.first_column,
+					   strdup("Bad modifier"), NULL);
+		free_list_evsel(list);
 		YYABORT;
+	}
 	$$ = list;
 }
 |
@@ -194,10 +191,7 @@ PE_NAME '{' events '}'
 {
 	struct list_head *list = $3;
 
-	/*
-	 * Set the first entry of list to be the leader. Set the group name on
-	 * the leader to $1 taking ownership.
-	 */
+	/* Takes ownership of $1. */
 	parse_events__set_leader($1, list);
 	$$ = list;
 }
@@ -206,7 +200,6 @@ PE_NAME '{' events '}'
 {
 	struct list_head *list = $2;
 
-	/* Set the first entry of list to be the leader clearing the group name. */
 	parse_events__set_leader(NULL, list);
 	$$ = list;
 }
@@ -214,12 +207,12 @@ PE_NAME '{' events '}'
 events:
 events ',' event
 {
-	struct list_head *events  = $1;
 	struct list_head *event = $3;
+	struct list_head *list  = $1;
 
-	list_splice_tail(event, events);
-	free(event);
-	$$ = events;
+	/* frees $3 */
+	parse_events_update_lists(event, list);
+	$$ = list;
 }
 |
 event
@@ -237,9 +230,17 @@ event_name PE_MODIFIER_EVENT
 	 * (there could be more events added for multiple tracepoint
 	 * definitions via '*?'.
 	 */
-	err = parse_events__modifier_event(_parse_state, &@2, list, $2);
-	if (err)
+	err = parse_events__modifier_event(list, $2, false);
+	free($2);
+	if (err) {
+		struct parse_events_state *parse_state = _parse_state;
+		struct parse_events_error *error = parse_state->error;
+
+		parse_events_error__handle(error, @2.first_column,
+					   strdup("Bad modifier"), NULL);
+		free_list_evsel(list);
 		YYABORT;
+	}
 	$$ = list;
 }
 |
@@ -248,14 +249,10 @@ event_name
 event_name:
 PE_EVENT_NAME event_def
 {
-	/*
-	 * When an event is parsed the text is rewound and the entire text of
-	 * the event is set to the str of PE_EVENT_NAME token matched here. If
-	 * no name was on an event via a term, set the name to the entire text
-	 * taking ownership of the allocation.
-	 */
-	int err = parse_events__set_default_name($2, $1);
+	int err;
 
+	err = parse_events_name($2, $1);
+	free($1);
 	if (err) {
 		free_list_evsel($2);
 		YYNOMEM;
@@ -276,15 +273,78 @@ event_def: event_pmu |
 event_pmu:
 PE_NAME opt_pmu_config
 {
+	struct parse_events_state *parse_state = _parse_state;
 	/* List of created evsels. */
 	struct list_head *list = NULL;
-	int err = parse_events_multi_pmu_add_or_add_pmu(_parse_state, $1, $2, &list, &@1);
+	char *pattern = NULL;
 
-	parse_events_terms__delete($2);
-	free($1);
-	if (err)
-		PE_ABORT(err);
+#define CLEANUP						\
+	do {						\
+		parse_events_terms__delete($2);		\
+		free(list);				\
+		free($1);				\
+		free(pattern);				\
+	} while(0)
+
+	list = alloc_list();
+	if (!list) {
+		CLEANUP;
+		YYNOMEM;
+	}
+	/* Attempt to add to list assuming $1 is a PMU name. */
+	if (parse_events_add_pmu(parse_state, list, $1, $2, /*auto_merge_stats=*/false, &@1)) {
+		struct perf_pmu *pmu = NULL;
+		int ok = 0;
+
+		/* Failure to add, try wildcard expansion of $1 as a PMU name. */
+		if (asprintf(&pattern, "%s*", $1) < 0) {
+			CLEANUP;
+			YYNOMEM;
+		}
+
+		while ((pmu = perf_pmus__scan(pmu)) != NULL) {
+			const char *name = pmu->name;
+
+			if (parse_events__filter_pmu(parse_state, pmu))
+				continue;
+
+			if (!strncmp(name, "uncore_", 7) &&
+			    strncmp($1, "uncore_", 7))
+				name += 7;
+			if (!perf_pmu__match(pattern, name, $1) ||
+			    !perf_pmu__match(pattern, pmu->alias_name, $1)) {
+				bool auto_merge_stats = perf_pmu__auto_merge_stats(pmu);
+
+				if (!parse_events_add_pmu(parse_state, list, pmu->name, $2,
+							  auto_merge_stats, &@1)) {
+					ok++;
+					parse_state->wild_card_pmus = true;
+				}
+			}
+		}
+
+		if (!ok) {
+			/* Failure to add, assume $1 is an event name. */
+			zfree(&list);
+			ok = !parse_events_multi_pmu_add(parse_state, $1, $2, &list, &@1);
+		}
+		if (!ok) {
+			struct parse_events_error *error = parse_state->error;
+			char *help;
+
+			if (asprintf(&help, "Unable to find PMU or event on a PMU of '%s'", $1) < 0)
+				help = NULL;
+			parse_events_error__handle(error, @1.first_column,
+						   strdup("Bad event or PMU"),
+						   help);
+			CLEANUP;
+			YYABORT;
+		}
+	}
 	$$ = list;
+	list = NULL;
+	CLEANUP;
+#undef CLEANUP
 }
 |
 PE_NAME sep_dc
@@ -477,7 +537,7 @@ tracepoint_name opt_event_config
 	if (!list)
 		YYNOMEM;
 
-	err = parse_events_add_tracepoint(parse_state, list, $1.sys, $1.event,
+	err = parse_events_add_tracepoint(list, &parse_state->idx, $1.sys, $1.event,
 					error, $2, &@1);
 
 	parse_events_terms__delete($2);
@@ -606,11 +666,6 @@ event_term
 }
 
 name_or_raw: PE_RAW | PE_NAME | PE_LEGACY_CACHE
-|
-PE_TERM_HW
-{
-	$$ = $1.str;
-}
 
 event_term:
 PE_RAW
@@ -647,6 +702,20 @@ name_or_raw '=' PE_VALUE
 
 	if (err) {
 		free($1);
+		PE_ABORT(err);
+	}
+	$$ = term;
+}
+|
+name_or_raw '=' PE_TERM_HW
+{
+	struct parse_events_term *term;
+	int err = parse_events_term__str(&term, PARSE_EVENTS__TERM_TYPE_USER,
+					 $1, $3.str, &@1, &@3);
+
+	if (err) {
+		free($1);
+		free($3.str);
 		PE_ABORT(err);
 	}
 	$$ = term;
@@ -699,6 +768,18 @@ PE_TERM '=' name_or_raw
 
 	if (err) {
 		free($3);
+		PE_ABORT(err);
+	}
+	$$ = term;
+}
+|
+PE_TERM '=' PE_TERM_HW
+{
+	struct parse_events_term *term;
+	int err = parse_events_term__str(&term, $1, /*config=*/NULL, $3.str, &@1, &@3);
+
+	if (err) {
+		free($3.str);
 		PE_ABORT(err);
 	}
 	$$ = term;
@@ -764,15 +845,9 @@ sep_slash_slash_dc: '/' '/' | ':' |
 
 %%
 
-void parse_events_error(YYLTYPE *loc, void *_parse_state,
+void parse_events_error(YYLTYPE *loc, void *parse_state,
 			void *scanner __maybe_unused,
 			char const *msg __maybe_unused)
 {
-	struct parse_events_state *parse_state = _parse_state;
-
-	if (!parse_state->error || !list_empty(&parse_state->error->list))
-		return;
-
-	parse_events_error__handle(parse_state->error, loc->last_column,
-				   strdup("Unrecognized input"), NULL);
+	parse_events_evlist_error(parse_state, loc->last_column, "parser error");
 }

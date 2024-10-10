@@ -244,100 +244,28 @@ int open_obj_pinned_any(const char *path, enum bpf_obj_type exp_type)
 	return fd;
 }
 
-int create_and_mount_bpffs_dir(const char *dir_name)
+int mount_bpffs_for_pin(const char *name, bool is_dir)
 {
 	char err_str[ERR_MAX_LEN];
-	bool dir_exists;
-	int err = 0;
-
-	if (is_bpffs(dir_name))
-		return err;
-
-	dir_exists = access(dir_name, F_OK) == 0;
-
-	if (!dir_exists) {
-		char *temp_name;
-		char *parent_name;
-
-		temp_name = strdup(dir_name);
-		if (!temp_name) {
-			p_err("mem alloc failed");
-			return -1;
-		}
-
-		parent_name = dirname(temp_name);
-
-		if (is_bpffs(parent_name)) {
-			/* nothing to do if already mounted */
-			free(temp_name);
-			return err;
-		}
-
-		if (access(parent_name, F_OK) == -1) {
-			p_err("can't create dir '%s' to pin BPF object: parent dir '%s' doesn't exist",
-			      dir_name, parent_name);
-			free(temp_name);
-			return -1;
-		}
-
-		free(temp_name);
-	}
-
-	if (block_mount) {
-		p_err("no BPF file system found, not mounting it due to --nomount option");
-		return -1;
-	}
-
-	if (!dir_exists) {
-		err = mkdir(dir_name, S_IRWXU);
-		if (err) {
-			p_err("failed to create dir '%s': %s", dir_name, strerror(errno));
-			return err;
-		}
-	}
-
-	err = mnt_fs(dir_name, "bpf", err_str, ERR_MAX_LEN);
-	if (err) {
-		err_str[ERR_MAX_LEN - 1] = '\0';
-		p_err("can't mount BPF file system on given dir '%s': %s",
-		      dir_name, err_str);
-
-		if (!dir_exists)
-			rmdir(dir_name);
-	}
-
-	return err;
-}
-
-int mount_bpffs_for_file(const char *file_name)
-{
-	char err_str[ERR_MAX_LEN];
-	char *temp_name;
+	char *file;
 	char *dir;
 	int err = 0;
 
-	if (access(file_name, F_OK) != -1) {
-		p_err("can't pin BPF object: path '%s' already exists", file_name);
-		return -1;
-	}
+	if (is_dir && is_bpffs(name))
+		return err;
 
-	temp_name = strdup(file_name);
-	if (!temp_name) {
+	file = malloc(strlen(name) + 1);
+	if (!file) {
 		p_err("mem alloc failed");
 		return -1;
 	}
 
-	dir = dirname(temp_name);
+	strcpy(file, name);
+	dir = dirname(file);
 
 	if (is_bpffs(dir))
 		/* nothing to do if already mounted */
 		goto out_free;
-
-	if (access(dir, F_OK) == -1) {
-		p_err("can't pin BPF object: dir '%s' doesn't exist", dir);
-		err = -1;
-		goto out_free;
-	}
 
 	if (block_mount) {
 		p_err("no BPF file system found, not mounting it due to --nomount option");
@@ -348,12 +276,12 @@ int mount_bpffs_for_file(const char *file_name)
 	err = mnt_fs(dir, "bpf", err_str, ERR_MAX_LEN);
 	if (err) {
 		err_str[ERR_MAX_LEN - 1] = '\0';
-		p_err("can't mount BPF file system to pin the object '%s': %s",
-		      file_name, err_str);
+		p_err("can't mount BPF file system to pin the object (%s): %s",
+		      name, err_str);
 	}
 
 out_free:
-	free(temp_name);
+	free(file);
 	return err;
 }
 
@@ -361,7 +289,7 @@ int do_pin_fd(int fd, const char *name)
 {
 	int err;
 
-	err = mount_bpffs_for_file(name);
+	err = mount_bpffs_for_pin(name, false);
 	if (err)
 		return err;
 
@@ -410,7 +338,7 @@ void get_prog_full_name(const struct bpf_prog_info *prog_info, int prog_fd,
 {
 	const char *prog_name = prog_info->name;
 	const struct btf_type *func_type;
-	struct bpf_func_info finfo = {};
+	const struct bpf_func_info finfo = {};
 	struct bpf_prog_info info = {};
 	__u32 info_len = sizeof(info);
 	struct btf *prog_btf = NULL;

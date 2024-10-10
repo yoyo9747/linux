@@ -218,20 +218,21 @@ static void irq_validate_effective_affinity(struct irq_data *data)
 static inline void irq_validate_effective_affinity(struct irq_data *data) { }
 #endif
 
-static DEFINE_PER_CPU(struct cpumask, __tmp_mask);
-
 int irq_do_set_affinity(struct irq_data *data, const struct cpumask *mask,
 			bool force)
 {
-	struct cpumask *tmp_mask = this_cpu_ptr(&__tmp_mask);
 	struct irq_desc *desc = irq_data_to_desc(data);
 	struct irq_chip *chip = irq_data_get_irq_chip(data);
 	const struct cpumask  *prog_mask;
 	int ret;
 
+	static DEFINE_RAW_SPINLOCK(tmp_mask_lock);
+	static struct cpumask tmp_mask;
+
 	if (!chip || !chip->irq_set_affinity)
 		return -EINVAL;
 
+	raw_spin_lock(&tmp_mask_lock);
 	/*
 	 * If this is a managed interrupt and housekeeping is enabled on
 	 * it check whether the requested affinity mask intersects with
@@ -257,11 +258,11 @@ int irq_do_set_affinity(struct irq_data *data, const struct cpumask *mask,
 
 		hk_mask = housekeeping_cpumask(HK_TYPE_MANAGED_IRQ);
 
-		cpumask_and(tmp_mask, mask, hk_mask);
-		if (!cpumask_intersects(tmp_mask, cpu_online_mask))
+		cpumask_and(&tmp_mask, mask, hk_mask);
+		if (!cpumask_intersects(&tmp_mask, cpu_online_mask))
 			prog_mask = mask;
 		else
-			prog_mask = tmp_mask;
+			prog_mask = &tmp_mask;
 	} else {
 		prog_mask = mask;
 	}
@@ -271,13 +272,15 @@ int irq_do_set_affinity(struct irq_data *data, const struct cpumask *mask,
 	 * unless we are being asked to force the affinity (in which
 	 * case we do as we are told).
 	 */
-	cpumask_and(tmp_mask, prog_mask, cpu_online_mask);
-	if (!force && !cpumask_empty(tmp_mask))
-		ret = chip->irq_set_affinity(data, tmp_mask, force);
+	cpumask_and(&tmp_mask, prog_mask, cpu_online_mask);
+	if (!force && !cpumask_empty(&tmp_mask))
+		ret = chip->irq_set_affinity(data, &tmp_mask, force);
 	else if (force)
 		ret = chip->irq_set_affinity(data, mask, force);
 	else
 		ret = -EINVAL;
+
+	raw_spin_unlock(&tmp_mask_lock);
 
 	switch (ret) {
 	case IRQ_SET_MASK_OK:
@@ -561,7 +564,7 @@ irq_set_affinity_notifier(unsigned int irq, struct irq_affinity_notify *notify)
 	/* The release function is promised process context */
 	might_sleep();
 
-	if (!desc || irq_is_nmi(desc))
+	if (!desc || desc->istate & IRQS_NMI)
 		return -EINVAL;
 
 	/* Complete initialisation of *notify */
@@ -797,14 +800,10 @@ void __enable_irq(struct irq_desc *desc)
 		irq_settings_set_noprobe(desc);
 		/*
 		 * Call irq_startup() not irq_enable() here because the
-		 * interrupt might be marked NOAUTOEN so irq_startup()
-		 * needs to be invoked when it gets enabled the first time.
-		 * This is also required when __enable_irq() is invoked for
-		 * a managed and shutdown interrupt from the S3 resume
-		 * path.
-		 *
-		 * If it was already started up, then irq_startup() will
-		 * invoke irq_enable() under the hood.
+		 * interrupt might be marked NOAUTOEN. So irq_startup()
+		 * needs to be invoked when it gets enabled the first
+		 * time. If it was already started up, then irq_startup()
+		 * will invoke irq_enable() under the hood.
 		 */
 		irq_startup(desc, IRQ_RESEND, IRQ_START_FORCE);
 		break;
@@ -899,7 +898,7 @@ int irq_set_irq_wake(unsigned int irq, unsigned int on)
 		return -EINVAL;
 
 	/* Don't use NMIs as wake up interrupts please */
-	if (irq_is_nmi(desc)) {
+	if (desc->istate & IRQS_NMI) {
 		ret = -EINVAL;
 		goto out_unlock;
 	}
@@ -1334,7 +1333,7 @@ static int irq_thread(void *data)
 	 * synchronize_hardirq(). So neither IRQTF_RUNTHREAD nor the
 	 * oneshot mask bit can be set.
 	 */
-	task_work_cancel_func(current, irq_thread_dtor);
+	task_work_cancel(current, irq_thread_dtor);
 	return 0;
 }
 
@@ -1625,7 +1624,7 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 		 */
 		unsigned int oldtype;
 
-		if (irq_is_nmi(desc)) {
+		if (desc->istate & IRQS_NMI) {
 			pr_err("Invalid attempt to share NMI for %s (irq %d) on irqchip %s.\n",
 				new->name, irq, desc->irq_data.chip->name);
 			ret = -EINVAL;
@@ -2083,7 +2082,7 @@ const void *free_nmi(unsigned int irq, void *dev_id)
 	unsigned long flags;
 	const void *devname;
 
-	if (!desc || WARN_ON(!irq_is_nmi(desc)))
+	if (!desc || WARN_ON(!(desc->istate & IRQS_NMI)))
 		return NULL;
 
 	if (WARN_ON(irq_settings_is_per_cpu_devid(desc)))
@@ -2549,7 +2548,7 @@ void free_percpu_nmi(unsigned int irq, void __percpu *dev_id)
 	if (!desc || !irq_settings_is_per_cpu_devid(desc))
 		return;
 
-	if (WARN_ON(!irq_is_nmi(desc)))
+	if (WARN_ON(!(desc->istate & IRQS_NMI)))
 		return;
 
 	kfree(__free_percpu_irq(irq, dev_id));
@@ -2685,7 +2684,7 @@ int request_percpu_nmi(unsigned int irq, irq_handler_t handler,
 		return -EINVAL;
 
 	/* The line cannot already be NMI */
-	if (irq_is_nmi(desc))
+	if (desc->istate & IRQS_NMI)
 		return -EINVAL;
 
 	action = kzalloc(sizeof(struct irqaction), GFP_KERNEL);
@@ -2746,7 +2745,7 @@ int prepare_percpu_nmi(unsigned int irq)
 	if (!desc)
 		return -EINVAL;
 
-	if (WARN(!irq_is_nmi(desc),
+	if (WARN(!(desc->istate & IRQS_NMI),
 		 KERN_ERR "prepare_percpu_nmi called for a non-NMI interrupt: irq %u\n",
 		 irq)) {
 		ret = -EINVAL;
@@ -2788,7 +2787,7 @@ void teardown_percpu_nmi(unsigned int irq)
 	if (!desc)
 		return;
 
-	if (WARN_ON(!irq_is_nmi(desc)))
+	if (WARN_ON(!(desc->istate & IRQS_NMI)))
 		goto out;
 
 	irq_nmi_teardown(desc);

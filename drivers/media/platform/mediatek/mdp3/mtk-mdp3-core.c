@@ -21,9 +21,6 @@ static const struct of_device_id mdp_of_ids[] = {
 	{ .compatible = "mediatek,mt8183-mdp3-rdma",
 	  .data = &mt8183_mdp_driver_data,
 	},
-	{ .compatible = "mediatek,mt8188-mdp3-rdma",
-	  .data = &mt8188_mdp_driver_data,
-	},
 	{ .compatible = "mediatek,mt8195-mdp3-rdma",
 	  .data = &mt8195_mdp_driver_data,
 	},
@@ -383,14 +380,14 @@ static int __maybe_unused mdp_suspend(struct device *dev)
 
 	atomic_set(&mdp->suspended, 1);
 
-	if (refcount_read(&mdp->job_count)) {
+	if (atomic_read(&mdp->job_count)) {
 		ret = wait_event_timeout(mdp->callback_wq,
-					 !refcount_read(&mdp->job_count),
+					 !atomic_read(&mdp->job_count),
 					 2 * HZ);
 		if (ret == 0) {
 			dev_err(dev,
 				"%s:flushed cmdq task incomplete, count=%d\n",
-				__func__, refcount_read(&mdp->job_count));
+				__func__, atomic_read(&mdp->job_count));
 			return -EBUSY;
 		}
 	}
