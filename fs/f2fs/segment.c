@@ -2160,7 +2160,7 @@ void f2fs_clear_prefree_segments(struct f2fs_sb_info *sbi,
 
 	if (f2fs_lfs_mode(sbi) && __is_large_section(sbi))
 		section_alignment = true;
-	printk("zone cleaning?\n");
+	printk("segments.c - f2fs_clear_prefree_segments\n");
 	mutex_lock(&dirty_i->seglist_lock);
 
 	while (1) {
@@ -2196,6 +2196,7 @@ void f2fs_clear_prefree_segments(struct f2fs_sb_info *sbi,
 		    (!f2fs_lfs_mode(sbi) || !__is_large_section(sbi))) {
 			f2fs_issue_discard(sbi, START_BLOCK(sbi, start),
 				SEGS_TO_BLKS(sbi, end - start));
+			printk("f2fs_clear_prefree_segments: zone reset command to %u\n",START_BLOCK(sbi,start));
 			continue;
 		}
 next:
