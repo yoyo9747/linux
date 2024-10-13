@@ -2160,7 +2160,7 @@ void f2fs_clear_prefree_segments(struct f2fs_sb_info *sbi,
 
 	if (f2fs_lfs_mode(sbi) && __is_large_section(sbi))
 		section_alignment = true;
-
+	printk("zone cleaning?\n");
 	mutex_lock(&dirty_i->seglist_lock);
 
 	while (1) {
