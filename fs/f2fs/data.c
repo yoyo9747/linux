@@ -510,7 +510,7 @@ void f2fs_submit_read_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	trace_f2fs_submit_read_bio(sbi->sb, type, bio);
 
 	iostat_update_submit_ctx(bio, type);
-	submit_bio(bio);
+	submit_bio(bio);//for read
 }
 
 static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
@@ -518,12 +518,14 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 {
 	WARN_ON_ONCE(is_read_io(bio_op(bio)));
 
-	if (f2fs_lfs_mode(sbi) && current->plug && PAGE_TYPE_ON_MAIN(type))
+	if (f2fs_lfs_mode(sbi) && current->plug && PAGE_TYPE_ON_MAIN(type)){
 		blk_finish_plug(current->plug);
+//		printk("fs/f2fs/data.c - f2fs_submit_write_bio\n");
+	}
 
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
-	submit_bio(bio);
+	submit_bio(bio);//for write
 }
 
 static void __submit_merged_bio(struct f2fs_bio_info *io)
@@ -957,6 +959,7 @@ next:
 #ifdef CONFIG_BLK_DEV_ZONED
 	if (f2fs_sb_has_blkzoned(sbi) && btype < META && io->zone_pending_bio) {
 		wait_for_completion_io(&io->zone_wait);
+		printk("f2fs_submit_page_write: bio write submitted?\n");
 		bio_put(io->zone_pending_bio);
 		io->zone_pending_bio = NULL;
 		io->bi_private = NULL;
@@ -1016,8 +1019,12 @@ alloc_new:
 
 	trace_f2fs_submit_page_write(fio->page, fio);
 #ifdef CONFIG_BLK_DEV_ZONED
+	//if (f2fs_sb_has_blkzoned(sbi) && btype < META ) {
+	//	printk("f2fs_submit_page_write: zoned device check\n");
+	//}
 	if (f2fs_sb_has_blkzoned(sbi) && btype < META &&
 			is_end_zone_blkaddr(sbi, fio->new_blkaddr)) {
+		printk("f2fs_submit_page_write: merged bio write submitted?\n");
 		bio_get(io->bio);
 		reinit_completion(&io->zone_wait);
 		io->bi_private = io->bio->bi_private;

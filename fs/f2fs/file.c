@@ -4682,6 +4682,7 @@ static ssize_t f2fs_buffered_write_iter(struct kiocb *iocb,
 	struct inode *inode = file_inode(file);
 	ssize_t ret;
 
+//	printk("file.c - f2fs_buffered_write_iter\n");
 	if (iocb->ki_flags & IOCB_NOWAIT)
 		return -EOPNOTSUPP;
 
@@ -4716,7 +4717,7 @@ static void f2fs_dio_write_submit_io(const struct iomap_iter *iter,
 	enum temp_type temp = f2fs_get_segment_temp(seg_type);
 
 	bio->bi_write_hint = f2fs_io_type_to_rw_hint(sbi, DATA, temp);
-	submit_bio(bio);
+	submit_bio(bio);//for dio
 }
 
 static const struct iomap_dio_ops f2fs_iomap_dio_write_ops = {
@@ -4751,6 +4752,7 @@ static ssize_t f2fs_dio_write_iter(struct kiocb *iocb, struct iov_iter *from,
 	struct iomap_dio *dio;
 	ssize_t ret;
 
+//	printk("file.c - f2fs_dio_write_iter\n");
 	trace_f2fs_direct_IO_enter(inode, iocb, count, WRITE);
 
 	if (iocb->ki_flags & IOCB_NOWAIT) {
@@ -4861,7 +4863,6 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	const loff_t pos = iocb->ki_pos;
 	const ssize_t count = iov_iter_count(from);
 	ssize_t ret;
-
 	if (unlikely(f2fs_cp_error(F2FS_I_SB(inode)))) {
 		ret = -EIO;
 		goto out;

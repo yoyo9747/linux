@@ -1223,7 +1223,7 @@ static void __submit_zone_reset_cmd(struct f2fs_sb_info *sbi,
 	unsigned long flags;
 
 	trace_f2fs_issue_reset_zone(bdev, dc->di.start);
-	printk("fs/f2fs/segment.c - submit_zone_reset_cmd");
+
 	spin_lock_irqsave(&dc->lock, flags);
 	dc->state = D_SUBMIT;
 	dc->bio_ref++;
@@ -1238,7 +1238,7 @@ static void __submit_zone_reset_cmd(struct f2fs_sb_info *sbi,
 
 	/* sanity check on discard range */
 	__check_sit_bitmap(sbi, dc->di.lstart, dc->di.lstart + dc->di.len);
-	printk("ZONE RESET TO %u\n",dc->di.start);
+
 	bio->bi_iter.bi_sector = SECTOR_FROM_BLOCK(dc->di.start);
 	bio->bi_private = dc;
 	bio->bi_end_io = f2fs_submit_discard_endio;
@@ -3574,12 +3574,13 @@ int f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
 	struct seg_entry *se = NULL;
 	bool segment_full = false;
-	int ret = 0,i;
+	int ret = 0;
 
 	f2fs_down_read(&SM_I(sbi)->curseg_lock);
 
 	mutex_lock(&curseg->curseg_mutex);
 	down_write(&sit_i->sentry_lock);
+
 	if (curseg->segno == NULL_SEGNO) {
 		ret = -ENOSPC;
 		goto out_err;
@@ -3647,16 +3648,6 @@ int f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 				ret = change_curseg(sbi, type);
 			stat_inc_seg_type(sbi, curseg);
 		}
-			//printk("segment.c - f2fs_allocate_data_block: check=%u\n",
-			//	GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)));	
-				printk("segment.c - f2fs_allocate_data_block: segment full=%u, current=%u, CURZONE=%u\n",
-				GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)),
-				curseg->segno-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)),GET_ZONE_FROM_SEG(sbi,curseg->segno));
-			for(i=CURSEG_HOT_DATA;i<NR_PERSISTENT_LOG;i++)
-				printk("CURSEC [%d] : \n",CURSEG_I(sbi,i)->segno/sbi->segs_per_sec);
-			if(curseg->segno==GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)+1)-1){
-				printk("ZONE FULL?????????????\n");
-			}
 
 		if (ret)
 			goto out_err;
@@ -3751,7 +3742,6 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 	}
 	if (GET_SEGNO(fio->sbi, fio->old_blkaddr) != NULL_SEGNO)
 		f2fs_invalidate_internal_cache(fio->sbi, fio->old_blkaddr);
-	//printk("segment.c - do_write_page: ZONE NO %u\n",GET_SEGNO(fio->sbi, fio->new_blkaddr));
 
 	/* writeout dirty page into bdev */
 	f2fs_submit_page_write(fio);
@@ -5311,7 +5301,7 @@ static inline unsigned int f2fs_usable_zone_blks_in_seg(
 			struct f2fs_sb_info *sbi, unsigned int segno)
 {
 	block_t seg_start, sec_start_blkaddr, sec_cap_blkaddr;
-	unsigned int secno,i;
+	unsigned int secno;
 
 	if (!sbi->unusable_blocks_per_sec)
 		return BLKS_PER_SEG(sbi);
@@ -5320,13 +5310,7 @@ static inline unsigned int f2fs_usable_zone_blks_in_seg(
 	seg_start = START_BLOCK(sbi, segno);
 	sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
 	sec_cap_blkaddr = sec_start_blkaddr + CAP_BLKS_PER_SEC(sbi);
-	printk("segment.c - f2fs_usable_zone_blks_in_seg\n");
-	printk("SECNO: %u / SEG_START: %u / SEC_START: %u / SEC_CAP: %u\n",secno,seg_start/BLKS_PER_SEG(sbi),sec_start_blkaddr/BLKS_PER_SEG(sbi),sec_cap_blkaddr/BLKS_PER_SEG(sbi));
-	printk("segment.c - f2fs_allocate_data_block: segment full=%u, current=%u, CURZONE=%u\n",
-	GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),
-	segno-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),GET_ZONE_FROM_SEG(sbi,segno));
-	for(i=CURSEG_HOT_DATA;i<NR_PERSISTENT_LOG;i++)
-		printk("CURSEC [%d] : \n",CURSEG_I(sbi,i)->segno/sbi->segs_per_sec);
+
 	/*
 	 * If segment starts before zone capacity and spans beyond
 	 * zone capacity, then usable blocks are from seg start to
