@@ -3649,11 +3649,11 @@ int f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 		}
 			//printk("segment.c - f2fs_allocate_data_block: check=%u\n",
 			//	GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)));	
-				printk("segment.c - f2fs_allocate_data_block: segment full=%u, current=%u, CURZONE=%u\n",
-				GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)),
-				curseg->segno-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)),GET_ZONE_FROM_SEG(sbi,curseg->segno));
-			for(i=CURSEG_HOT_DATA;i<NR_PERSISTENT_LOG;i++)
-				printk("CURSEC [%d] : \n",CURSEG_I(sbi,i)->segno/sbi->segs_per_sec);
+		//		printk("segment.c - f2fs_allocate_data_block: segment full=%u, current=%u, CURZONE=%u\n",
+		//		GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)),
+		//		curseg->segno-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)),GET_ZONE_FROM_SEG(sbi,curseg->segno));
+		//	for(i=CURSEG_HOT_DATA;i<NR_PERSISTENT_LOG;i++)
+		//		printk("CURSEC [%d] : \n",CURSEG_I(sbi,i)->segno/sbi->segs_per_sec);
 			if(curseg->segno==GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,curseg->segno)+1)-1){
 				printk("ZONE FULL?????????????\n");
 			}
@@ -3742,6 +3742,7 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 
 	if (f2fs_allocate_data_block(fio->sbi, fio->page, fio->old_blkaddr,
 			&fio->new_blkaddr, sum, type, fio)) {
+		printk("segment.c - do_write_page: new blkaddr allocated/%u\n",fio->new_blkaddr);
 		if (fscrypt_inode_uses_fs_layer_crypto(fio->page->mapping->host))
 			fscrypt_finalize_bounce_page(&fio->encrypted_page);
 		end_page_writeback(fio->page);
