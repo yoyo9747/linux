@@ -886,9 +886,10 @@ void submit_bio(struct bio *bio)
 		//printk("submit_bio - ZONE WRITE BIO!\n");
 		count_vm_events(PGPGOUT, bio_sectors(bio));
 	} 
-//else if (bio_op(bio) == REQ_OP_ZONE_APPEND) {
-//		printk("submit_bio - ZONE APPEND BIO!\n");
-//	}
+else if (bio_op(bio) == REQ_OP_ZONE_APPEND) {
+		count_vm_events(PGPGOUT, bio_sectors(bio));
+		//printk("submit_bio - ZONE APPEND BIO!\n");
+	}
 
 	bio_set_ioprio(bio);
 	submit_bio_noacct(bio);
