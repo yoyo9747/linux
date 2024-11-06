@@ -374,7 +374,8 @@ static void f2fs_write_end_io(struct bio *bio)
 static void f2fs_zone_write_end_io(struct bio *bio)
 {
 	struct f2fs_bio_info *io = (struct f2fs_bio_info *)bio->bi_private;
-
+	
+	printk("data.c : f2fs_zone_write_end_io\n");	
 	bio->bi_private = io->bi_private;
 	complete(&io->zone_wait);
 	f2fs_write_end_io(bio);
@@ -959,7 +960,7 @@ next:
 #ifdef CONFIG_BLK_DEV_ZONED
 	if (f2fs_sb_has_blkzoned(sbi) && btype < META && io->zone_pending_bio) {
 		wait_for_completion_io(&io->zone_wait);
-		printk("f2fs_submit_page_write: bio write submitted?\n");
+		//printk("f2fs_submit_page_write: bio write submitted?\n");
 		bio_put(io->zone_pending_bio);
 		io->zone_pending_bio = NULL;
 		io->bi_private = NULL;
@@ -997,10 +998,13 @@ next:
 	    (!io_is_mergeable(sbi, io->bio, io, fio, io->last_block_in_bio,
 			      fio->new_blkaddr) ||
 	     !f2fs_crypt_mergeable_bio(io->bio, fio->page->mapping->host,
-				       bio_page->index, fio)))
+				       bio_page->index, fio))){
+		printk("data.c - f2fs_submit_page_write - next\n");		
 		__submit_merged_bio(io);
+	}
 alloc_new:
 	if (io->bio == NULL) {
+		printk("data.c - f2fs_submit_page_write - alloc_new\n");		
 		io->bio = __bio_alloc(fio, BIO_MAX_VECS);
 		f2fs_set_bio_crypt_ctx(io->bio, fio->page->mapping->host,
 				       bio_page->index, fio, GFP_NOIO);

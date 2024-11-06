@@ -5321,13 +5321,13 @@ static inline unsigned int f2fs_usable_zone_blks_in_seg(
 	seg_start = START_BLOCK(sbi, segno);
 	sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
 	sec_cap_blkaddr = sec_start_blkaddr + CAP_BLKS_PER_SEC(sbi);
-	printk("segment.c - f2fs_usable_zone_blks_in_seg\n");
-	printk("SECNO: %u / SEG_START: %u / SEC_START: %u / SEC_CAP: %u\n",secno,seg_start/BLKS_PER_SEG(sbi),sec_start_blkaddr/BLKS_PER_SEG(sbi),sec_cap_blkaddr/BLKS_PER_SEG(sbi));
-	printk("segment.c - f2fs_allocate_data_block: segment full=%u, current=%u, CURZONE=%u\n",
-	GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),
-	segno-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),GET_ZONE_FROM_SEG(sbi,segno));
-	for(i=CURSEG_HOT_DATA;i<NR_PERSISTENT_LOG;i++)
-		printk("CURSEC [%d] : \n",CURSEG_I(sbi,i)->segno/sbi->segs_per_sec);
+//	printk("segment.c - f2fs_usable_zone_blks_in_seg\n");///ZNS DEBUG
+//	printk("SECNO: %u / SEG_START: %u / SEC_START: %u / SEC_CAP: %u\n",secno,seg_start/BLKS_PER_SEG(sbi),sec_start_blkaddr/BLKS_PER_SEG(sbi),sec_cap_blkaddr/BLKS_PER_SEG(sbi));
+//	printk("segment.c - f2fs_allocate_data_block: segment full=%u, current=%u, CURZONE=%u\n",
+//	GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),
+//	segno-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),GET_ZONE_FROM_SEG(sbi,segno));
+//	for(i=CURSEG_HOT_DATA;i<NR_PERSISTENT_LOG;i++)
+//		printk("CURSEC [%d] : \n",CURSEG_I(sbi,i)->segno/sbi->segs_per_sec);
 	/*
 	 * If segment starts before zone capacity and spans beyond
 	 * zone capacity, then usable blocks are from seg start to
