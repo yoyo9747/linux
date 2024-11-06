@@ -523,7 +523,10 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 		blk_finish_plug(current->plug);
 //		printk("fs/f2fs/data.c - f2fs_submit_write_bio\n");
 	}
-
+	//if (bio_op(bio) == REQ_OP_WRITE) {
+	//	printk("f2fs_submit_write_bio - ZONE WRITE BIO!\n");
+	//}
+	bio->bi_opf=REQ_OP_ZONE_APPEND;
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
 	submit_bio(bio);//for write
@@ -999,12 +1002,12 @@ next:
 			      fio->new_blkaddr) ||
 	     !f2fs_crypt_mergeable_bio(io->bio, fio->page->mapping->host,
 				       bio_page->index, fio))){
-		printk("data.c - f2fs_submit_page_write - next\n");		
+//		printk("data.c - f2fs_submit_page_write - next\n");		
 		__submit_merged_bio(io);
 	}
 alloc_new:
 	if (io->bio == NULL) {
-		printk("data.c - f2fs_submit_page_write - alloc_new\n");		
+//		printk("data.c - f2fs_submit_page_write - alloc_new\n");		
 		io->bio = __bio_alloc(fio, BIO_MAX_VECS);
 		f2fs_set_bio_crypt_ctx(io->bio, fio->page->mapping->host,
 				       bio_page->index, fio, GFP_NOIO);
