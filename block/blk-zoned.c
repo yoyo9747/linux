@@ -351,7 +351,7 @@ int blkdev_report_zones_ioctl(struct block_device *bdev, unsigned int cmd,
 
 	if (!bdev_is_zoned(bdev))
 		return -ENOTTY;
-
+//	printk("blkdev_report_zones_ioctl - bdev %lu\n",bdev->__bd_flags);
 	if (copy_from_user(&rep, argp, sizeof(struct blk_zone_report)))
 		return -EFAULT;
 

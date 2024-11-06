@@ -3736,13 +3736,15 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 {
 	int type = __get_segment_type(fio);
 	bool keep_order = (f2fs_lfs_mode(fio->sbi) && type == CURSEG_COLD_DATA);
+	unsigned int segno,secno;
+	block_t seg_start,sec_start_blkaddr;	
 
 	if (keep_order)
 		f2fs_down_read(&fio->sbi->io_order_lock);
 
 	if (f2fs_allocate_data_block(fio->sbi, fio->page, fio->old_blkaddr,
 			&fio->new_blkaddr, sum, type, fio)) {
-		printk("segment.c - do_write_page: new blkaddr allocated/%u\n",fio->new_blkaddr);
+		//printk("segment.c - do_write_page: new blkaddr allocated/%u\n",fio->new_blkaddr);
 		if (fscrypt_inode_uses_fs_layer_crypto(fio->page->mapping->host))
 			fscrypt_finalize_bounce_page(&fio->encrypted_page);
 		end_page_writeback(fio->page);
@@ -3752,8 +3754,17 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 	}
 	if (GET_SEGNO(fio->sbi, fio->old_blkaddr) != NULL_SEGNO)
 		f2fs_invalidate_internal_cache(fio->sbi, fio->old_blkaddr);
-	//printk("segment.c - do_write_page: ZONE NO %u\n",GET_SEGNO(fio->sbi, fio->new_blkaddr));
-
+/*	
+	segno=GET_SEGNO(fio->sbi, fio->new_blkaddr);//ZNS DEBUG
+	secno=GET_SEC_FROM_SEG(fio->sbi,segno);
+	seg_start=START_BLOCK(fio->sbi,segno);
+	sec_start_blkaddr = START_BLOCK(fio->sbi, GET_SEG_FROM_SEC(fio->sbi, secno));
+	printk("do_write_page - new_blkaaddr: %u / sec_start_blkaddr: %u\n",fio->new_blkaddr,sec_start_blkaddr);
+	printk("CURZONE: %u / WP: %u / ZONE_START: %u ",secno,seg_start/BLKS_PER_SEG(fio->sbi),sec_start_blkaddr/BLKS_PER_SEG(fio->sbi));
+	printk("ZONE_CAP=%u, WP=%u\n", 	GET_SEG_FROM_SEC(fio->sbi,GET_SEC_FROM_SEG(fio->sbi,segno)+1)-GET_SEG_FROM_SEC(fio->sbi,secno),	segno-GET_SEG_FROM_SEC(fio->sbi,GET_SEC_FROM_SEG(fio->sbi,segno)));
+	if (type<=CURSEG_COLD_DATA)
+		fio->new_blkaddr=sec_start_blkaddr;
+*/
 	/* writeout dirty page into bdev */
 	f2fs_submit_page_write(fio);
 
@@ -5321,11 +5332,9 @@ static inline unsigned int f2fs_usable_zone_blks_in_seg(
 	seg_start = START_BLOCK(sbi, segno);
 	sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
 	sec_cap_blkaddr = sec_start_blkaddr + CAP_BLKS_PER_SEC(sbi);
-//	printk("segment.c - f2fs_usable_zone_blks_in_seg\n");///ZNS DEBUG
-//	printk("SECNO: %u / SEG_START: %u / SEC_START: %u / SEC_CAP: %u\n",secno,seg_start/BLKS_PER_SEG(sbi),sec_start_blkaddr/BLKS_PER_SEG(sbi),sec_cap_blkaddr/BLKS_PER_SEG(sbi));
-//	printk("segment.c - f2fs_allocate_data_block: segment full=%u, current=%u, CURZONE=%u\n",
-//	GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),
-//	segno-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),GET_ZONE_FROM_SEG(sbi,segno));
+	//printk("segment.c - f2fs_usable_zone_blks_in_seg\n");///ZNS DEBUG
+	//printk("CURZONE: %u / ZONE_START: %u / ZONE_END: %u ",secno,seg_start/BLKS_PER_SEG(sbi),sec_start_blkaddr/BLKS_PER_SEG(sbi),sec_cap_blkaddr/BLKS_PER_SEG(sbi));
+	//printk("ZONE_CAP=%u, WP=%u\n", 	GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)+1)-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)),	segno-GET_SEG_FROM_SEC(sbi,GET_SEC_FROM_SEG(sbi,segno)));
 //	for(i=CURSEG_HOT_DATA;i<NR_PERSISTENT_LOG;i++)
 //		printk("CURSEC [%d] : \n",CURSEG_I(sbi,i)->segno/sbi->segs_per_sec);
 	/*

@@ -589,27 +589,34 @@ static inline blk_status_t blk_check_zone_append(struct request_queue *q,
 	int nr_sectors = bio_sectors(bio);
 
 	/* Only applicable to zoned block devices */
-	if (!bdev_is_zoned(bio->bi_bdev))
+	if (!bdev_is_zoned(bio->bi_bdev)){
+		printk("blk_check_zone_append = check 1\n");
 		return BLK_STS_NOTSUPP;
+	;
+	}
 
 	/* The bio sector must point to the start of a sequential zone */
-	if (!bdev_is_zone_start(bio->bi_bdev, bio->bi_iter.bi_sector))
+	if (!bdev_is_zone_start(bio->bi_bdev, bio->bi_iter.bi_sector)){
+		//printk("blk_check_zone_append = check 2 %lu\n",bio->bi_iter.bi_sector);
+		printk("blk_check_zone_append = check 2 %llu\n", (unsigned long long)bio->bi_iter.bi_sector);
 		return BLK_STS_IOERR;
-
+	}
 	/*
 	 * Not allowed to cross zone boundaries. Otherwise, the BIO will be
 	 * split and could result in non-contiguous sectors being written in
 	 * different zones.
 	 */
-	if (nr_sectors > q->limits.chunk_sectors)
+	if (nr_sectors > q->limits.chunk_sectors){
+		printk("blk_check_zone_append = check 3\n");
 		return BLK_STS_IOERR;
-
+	}
 	/* Make sure the BIO is small enough and will not get split */
-	if (nr_sectors > queue_max_zone_append_sectors(q))
+	if (nr_sectors > queue_max_zone_append_sectors(q)){
+		printk("blk_check_zone_append = check 4\n");
 		return BLK_STS_IOERR;
-
+	}
 	bio->bi_opf |= REQ_NOMERGE;
-
+	printk("blk_check_zone_append - OK???\n");
 	return BLK_STS_OK;
 }
 
@@ -813,7 +820,7 @@ void submit_bio_noacct(struct bio *bio)
 			goto not_supported;
 		break;
 	case REQ_OP_ZONE_APPEND:
-		printk("submit_bio_noacct - ???\n");
+		//printk("submit_bio_noacct - ???\n");
 		status = blk_check_zone_append(q, bio);
 		if (status != BLK_STS_OK)
 			goto end_io;

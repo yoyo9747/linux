@@ -387,13 +387,16 @@ struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
 {
 	struct block_device *bdev = sbi->sb->s_bdev;
 	int i;
-
+	printk("f2fs_target_device - s_ndevs: %d,%lu\n",sbi->s_ndevs);
+	//printk("0 - START: %u / END: %u\n",FDEV(0).start_blk,FDEV(0).end_blk);
+	//printk("1 - START: %u / END: %u\n",FDEV(1).start_blk,FDEV(1).end_blk);
 	if (f2fs_is_multi_device(sbi)) {
 		for (i = 0; i < sbi->s_ndevs; i++) {
 			if (FDEV(i).start_blk <= blk_addr &&
 			    FDEV(i).end_blk >= blk_addr) {
 				blk_addr -= FDEV(i).start_blk;
 				bdev = FDEV(i).bdev;
+			printk("blk_addr: %u / bdevnum %d\n",blk_addr,i);
 				break;
 			}
 		}
@@ -454,7 +457,7 @@ static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
 	struct block_device *bdev;
 	sector_t sector;
 	struct bio *bio;
-
+	printk("__bio_alloc - page type: %d\n",fio->type);
 	bdev = f2fs_target_device(sbi, fio->new_blkaddr, &sector);
 	bio = bio_alloc_bioset(bdev, npages,
 				fio->op | fio->op_flags | f2fs_io_flags(fio),
@@ -526,7 +529,16 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	//if (bio_op(bio) == REQ_OP_WRITE) {
 	//	printk("f2fs_submit_write_bio - ZONE WRITE BIO!\n");
 	//}
-	bio->bi_opf=REQ_OP_ZONE_APPEND;
+
+	unsigned int segno,secno,sec_start_blkaddr;
+	if(PAGE_TYPE_ON_MAIN(type)){
+		segno=GET_SEGNO(sbi, bio->bi_iter.bi_sector/8);//ZNS DEBUG
+		secno=GET_SEC_FROM_SEG(sbi,segno);
+		sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
+		bio->bi_opf=REQ_OP_ZONE_APPEND;
+		//printk("%llu->%u\n", (unsigned long long)bio->bi_iter.bi_sector,sec_start_blkaddr*8);
+		bio->bi_iter.bi_sector=sec_start_blkaddr*8;
+	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
 	submit_bio(bio);//for write
@@ -1009,6 +1021,9 @@ alloc_new:
 	if (io->bio == NULL) {
 //		printk("data.c - f2fs_submit_page_write - alloc_new\n");		
 		io->bio = __bio_alloc(fio, BIO_MAX_VECS);
+		//printk("f2fs_submit_page_write - %u\n",io->bio->bi_bdev->__bd_flags);
+		//printk("f2fs_submit_page_write - %u\n", atomic_read(&io->bio->bi_bdev->__bd_flags));
+
 		f2fs_set_bio_crypt_ctx(io->bio, fio->page->mapping->host,
 				       bio_page->index, fio, GFP_NOIO);
 		io->fio = *fio;
@@ -1026,9 +1041,9 @@ alloc_new:
 
 	trace_f2fs_submit_page_write(fio->page, fio);
 #ifdef CONFIG_BLK_DEV_ZONED
-	//if (f2fs_sb_has_blkzoned(sbi) && btype < META ) {
-	//	printk("f2fs_submit_page_write: zoned device check\n");
-	//}
+//	if (f2fs_sb_has_blkzoned(sbi) && btype < META ) {
+//		printk("f2fs_submit_page_write: zoned device check\n");
+//	}
 	if (f2fs_sb_has_blkzoned(sbi) && btype < META &&
 			is_end_zone_blkaddr(sbi, fio->new_blkaddr)) {
 		printk("f2fs_submit_page_write: merged bio write submitted?\n");
