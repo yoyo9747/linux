@@ -813,6 +813,7 @@ void submit_bio_noacct(struct bio *bio)
 			goto not_supported;
 		break;
 	case REQ_OP_ZONE_APPEND:
+		printk("submit_bio_noacct - ???\n");
 		status = blk_check_zone_append(q, bio);
 		if (status != BLK_STS_OK)
 			goto end_io;
