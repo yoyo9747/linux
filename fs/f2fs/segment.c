@@ -3744,7 +3744,6 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 
 	if (f2fs_allocate_data_block(fio->sbi, fio->page, fio->old_blkaddr,
 			&fio->new_blkaddr, sum, type, fio)) {
-		//printk("segment.c - do_write_page: new blkaddr allocated/%u\n",fio->new_blkaddr);
 		if (fscrypt_inode_uses_fs_layer_crypto(fio->page->mapping->host))
 			fscrypt_finalize_bounce_page(&fio->encrypted_page);
 		end_page_writeback(fio->page);
@@ -3752,8 +3751,10 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 			f2fs_del_fsync_node_entry(fio->sbi, fio->page);
 		goto out;
 	}
+	printk("segment.c - do_write_page: new blkaddr allocated/%u\n",fio->new_blkaddr);
 	if (GET_SEGNO(fio->sbi, fio->old_blkaddr) != NULL_SEGNO)
 		f2fs_invalidate_internal_cache(fio->sbi, fio->old_blkaddr);
+	//printk("do_write_page - %u / %u\n",fio->sbi->sm_info->main_blkaddr,F2FS_BLKSIZE);
 /*	
 	segno=GET_SEGNO(fio->sbi, fio->new_blkaddr);//ZNS DEBUG
 	secno=GET_SEC_FROM_SEG(fio->sbi,segno);
@@ -5060,7 +5061,7 @@ static int check_zone_write_pointer(struct f2fs_sb_info *sbi,
 				    struct f2fs_dev_info *fdev,
 				    struct blk_zone *zone)
 {
-	unsigned int zone_segno;
+	unsigned int zone_segno,i;
 	block_t zone_block, valid_block_cnt;
 	unsigned int log_sectors_per_block = sbi->log_blocksize - SECTOR_SHIFT;
 	int ret;
@@ -5087,6 +5088,8 @@ static int check_zone_write_pointer(struct f2fs_sb_info *sbi,
 		f2fs_notice(sbi, "Open zones: valid block[0x%x,0x%x] cond[%s]",
 				zone_segno, valid_block_cnt,
 				blk_zone_cond_str(zone->cond));
+		for(i=CURSEG_HOT_DATA;i<NR_PERSISTENT_LOG;i++)
+			printk("CURSEC [%d] : %d\n",i,CURSEG_I(sbi,i)->segno/sbi->segs_per_sec);
 		return 0;
 	}
 
@@ -5429,6 +5432,7 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	/* init sm info */
 	sbi->sm_info = sm_info;
 	sm_info->seg0_blkaddr = le32_to_cpu(raw_super->segment0_blkaddr);
+	//sm_info->main_blkaddr = 244190645;
 	sm_info->main_blkaddr = le32_to_cpu(raw_super->main_blkaddr);
 	sm_info->segment_count = le32_to_cpu(raw_super->segment_count);
 	sm_info->reserved_segments = le32_to_cpu(ckpt->rsvd_segment_count);

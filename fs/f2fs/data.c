@@ -387,23 +387,24 @@ struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
 {
 	struct block_device *bdev = sbi->sb->s_bdev;
 	int i;
-	printk("f2fs_target_device - s_ndevs: %d,%lu\n",sbi->s_ndevs);
-	//printk("0 - START: %u / END: %u\n",FDEV(0).start_blk,FDEV(0).end_blk);
+//	printk("f2fs_target_device - s_ndevs: %d\n",sbi->s_ndevs);
 	//printk("1 - START: %u / END: %u\n",FDEV(1).start_blk,FDEV(1).end_blk);
 	if (f2fs_is_multi_device(sbi)) {
 		for (i = 0; i < sbi->s_ndevs; i++) {
+			if (i==1)
+				printk("blk_addr: %u /ZONE: %u/ bdevnum: %d / START: %u / END: %u\n",blk_addr,BLOCK_TO_ZONE(blk_addr),i,sbi->devs[i].start_blk,sbi->devs[i].end_blk);
 			if (FDEV(i).start_blk <= blk_addr &&
 			    FDEV(i).end_blk >= blk_addr) {
 				blk_addr -= FDEV(i).start_blk;
 				bdev = FDEV(i).bdev;
-			printk("blk_addr: %u / bdevnum %d\n",blk_addr,i);
 				break;
 			}
 		}
 	}
 
 	if (sector)
-		*sector = SECTOR_FROM_BLOCK(blk_addr);
+		//*sector = SECTOR_FROM_BLOCK(blk_addr);
+		*sector = blk_addr;
 	return bdev;
 }
 
@@ -457,7 +458,8 @@ static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
 	struct block_device *bdev;
 	sector_t sector;
 	struct bio *bio;
-	printk("__bio_alloc - page type: %d\n",fio->type);
+	if (fio->type<2)
+		printk("__bio_alloc - page type: %d (0:DATA, 1:NODE, 2:META)\n",fio->type);
 	bdev = f2fs_target_device(sbi, fio->new_blkaddr, &sector);
 	bio = bio_alloc_bioset(bdev, npages,
 				fio->op | fio->op_flags | f2fs_io_flags(fio),
@@ -532,11 +534,12 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 
 	unsigned int segno,secno,sec_start_blkaddr;
 	if(PAGE_TYPE_ON_MAIN(type)){
+		printk("DATA WRITE - change to append\n");
 		segno=GET_SEGNO(sbi, bio->bi_iter.bi_sector/8);//ZNS DEBUG
 		secno=GET_SEC_FROM_SEG(sbi,segno);
 		sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
-		//printk("%llu->%u\n", (unsigned long long)bio->bi_iter.bi_sector,sec_start_blkaddr*8);
+		printk("%llu\n", (unsigned long long)bio->bi_iter.bi_sector);
 		bio->bi_iter.bi_sector=sec_start_blkaddr*8;
 	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);

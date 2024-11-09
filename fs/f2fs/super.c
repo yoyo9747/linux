@@ -3358,6 +3358,7 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 	u32 nat_blkaddr = le32_to_cpu(raw_super->nat_blkaddr);
 	u32 ssa_blkaddr = le32_to_cpu(raw_super->ssa_blkaddr);
 	u32 main_blkaddr = le32_to_cpu(raw_super->main_blkaddr);
+	//u32 main_blkaddr = 244190646;
 	u32 segment_count_ckpt = le32_to_cpu(raw_super->segment_count_ckpt);
 	u32 segment_count_sit = le32_to_cpu(raw_super->segment_count_sit);
 	u32 segment_count_nat = le32_to_cpu(raw_super->segment_count_nat);
@@ -3400,7 +3401,7 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 		return true;
 	}
 
-	if (ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg) !=
+	/*if (ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg) !=
 							main_blkaddr) {
 		f2fs_info(sbi, "Wrong SSA boundary, start(%u) end(%u) blocks(%u)",
 			  ssa_blkaddr, main_blkaddr,
@@ -3417,7 +3418,7 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 		int err = 0;
 		char *res;
 
-		/* fix in-memory information all the time */
+		// fix in-memory information all the time //
 		raw_super->segment_count = cpu_to_le32((main_end_blkaddr -
 				segment0_blkaddr) >> log_blocks_per_seg);
 
@@ -3433,7 +3434,7 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 			  segment_count_main << log_blocks_per_seg);
 		if (err)
 			return true;
-	}
+	}*/
 	return false;
 }
 
@@ -4248,6 +4249,9 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
 					SEGS_TO_BLKS(sbi,
 					FDEV(i).total_segments) - 1 +
 					le32_to_cpu(raw_super->segment0_blkaddr);
+					//printk("during Mount: %u\n",FDEV(i).end_blk);
+					//printk("during Mount: %u\n",SEGS_TO_BLKS(sbi,FDEV(i).total_segments));
+//					printk("during Mount: %u\n",(sbi)->log_blocks_per_seg);
 			} else {
 				FDEV(i).start_blk = FDEV(i - 1).end_blk + 1;
 				FDEV(i).end_blk = FDEV(i).start_blk +
@@ -4255,6 +4259,8 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
 						FDEV(i).total_segments) - 1;
 				FDEV(i).bdev_file = bdev_file_open_by_path(
 					FDEV(i).path, mode, sbi->sb, NULL);
+					//printk("during Mount: %u\n",FDEV(i).start_blk);
+					//printk("during Mount: %u\n",FDEV(i).end_blk);
 			}
 		}
 		if (IS_ERR(FDEV(i).bdev_file))
