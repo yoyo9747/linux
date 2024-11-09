@@ -599,6 +599,7 @@ static inline blk_status_t blk_check_zone_append(struct request_queue *q,
 	if (!bdev_is_zone_start(bio->bi_bdev, bio->bi_iter.bi_sector)){
 		//printk("blk_check_zone_append = check 2 %lu\n",bio->bi_iter.bi_sector);
 		printk("blk_check_zone_append = check 2 %llu\n", (unsigned long long)bio->bi_iter.bi_sector);
+		printk("%llu\n",(bdev_zone_sectors(bio->bi_bdev) - 1));
 		return BLK_STS_IOERR;
 	}
 	/*
@@ -820,10 +821,11 @@ void submit_bio_noacct(struct bio *bio)
 			goto not_supported;
 		break;
 	case REQ_OP_ZONE_APPEND:
-		//printk("submit_bio_noacct - ???\n");
+		printk("submit_bio_noacct - ???\n");
 		status = blk_check_zone_append(q, bio);
 		if (status != BLK_STS_OK)
 			goto end_io;
+		printk("ZONE APPEND succeed?\n");
 		break;
 	case REQ_OP_WRITE_ZEROES:
 		if (!q->limits.max_write_zeroes_sectors)

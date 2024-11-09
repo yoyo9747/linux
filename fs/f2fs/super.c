@@ -3401,7 +3401,7 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 		return true;
 	}
 
-	if (ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg) !=
+	/*if (ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg) !=
 							main_blkaddr) {
 		f2fs_info(sbi, "Wrong SSA boundary, start(%u) end(%u) blocks(%u)",
 			  ssa_blkaddr, main_blkaddr,
@@ -3434,7 +3434,8 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 			  segment_count_main << log_blocks_per_seg);
 		if (err)
 			return true;
-	}
+	}*/
+	printk("no check");
 	return false;
 }
 

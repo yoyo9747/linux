@@ -401,10 +401,8 @@ struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
 			}
 		}
 	}
-
-	if (sector)
-		*sector = SECTOR_FROM_BLOCK(blk_addr);
-		//*sector = blk_addr;
+		if (sector)
+			*sector = SECTOR_FROM_BLOCK(blk_addr);
 	return bdev;
 }
 
@@ -534,13 +532,13 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 
 	unsigned int segno,secno,sec_start_blkaddr;
 	if(PAGE_TYPE_ON_MAIN(type)){
-		printk("DATA WRITE - change to append\n");
-		segno=GET_SEGNO(sbi, bio->bi_iter.bi_sector/8);//ZNS DEBUG
-		secno=GET_SEC_FROM_SEG(sbi,segno);
-		sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
+		//segno=GET_SEGNO(sbi, bio->bi_iter.bi_sector/8);//ZNS DEBUG
+		//secno=GET_SEC_FROM_SEG(sbi,segno);
+		//sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
+		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
+		printk("DATA WRITE - change to append\n");
 		printk("%llu\n", (unsigned long long)bio->bi_iter.bi_sector);
-		bio->bi_iter.bi_sector=sec_start_blkaddr*8;
 	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
