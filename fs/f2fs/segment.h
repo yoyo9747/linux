@@ -134,8 +134,10 @@ static inline void sanity_check_seg_type(struct f2fs_sb_info *sbi,
 	(((sector_t)blk_addr) << F2FS_LOG_SECTORS_PER_BLOCK)
 #define SECTOR_TO_BLOCK(sectors)					\
 	((sectors) >> F2FS_LOG_SECTORS_PER_BLOCK)
-#define BLOCK_TO_ZONE(sectors)						\
-	((sectors-244190646) >> 19)
+#define BLOCK_TO_ZONE(blk_addr)						\
+	((blk_addr-244190646) >> 19)
+#define SECTOR_TO_ZONE(sectors)						\
+	(((sectors)) >> 19)/8
 
 /*
  * In the victim_sel_policy->alloc_mode, there are three block allocation modes.

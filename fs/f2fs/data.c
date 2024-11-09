@@ -391,8 +391,8 @@ struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
 	//printk("1 - START: %u / END: %u\n",FDEV(1).start_blk,FDEV(1).end_blk);
 	if (f2fs_is_multi_device(sbi)) {
 		for (i = 0; i < sbi->s_ndevs; i++) {
-			if (i==1)
-				printk("blk_addr: %u /ZONE: %u/ bdevnum: %d / START: %u / END: %u\n",blk_addr,BLOCK_TO_ZONE(blk_addr),i,sbi->devs[i].start_blk,sbi->devs[i].end_blk);
+			//if (i==1)
+			//	printk("blk_addr: %u /ZONE: %u\n",blk_addr-sbi->devs[i].start_blk,BLOCK_TO_ZONE(blk_addr));
 			if (FDEV(i).start_blk <= blk_addr &&
 			    FDEV(i).end_blk >= blk_addr) {
 				blk_addr -= FDEV(i).start_blk;
@@ -456,9 +456,9 @@ static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
 	struct block_device *bdev;
 	sector_t sector;
 	struct bio *bio;
-	if (fio->type<2)
-		printk("__bio_alloc - page type: %d (0:DATA, 1:NODE, 2:META)\n",fio->type);
 	bdev = f2fs_target_device(sbi, fio->new_blkaddr, &sector);
+	if (fio->type<2)
+		printk("__bio_alloc - ADR: %u / ZONE: %u / TYPE: %d (0:DATA, 1:NODE, 2:META)\n",fio->new_blkaddr-sbi->devs[1].start_blk,BLOCK_TO_ZONE(fio->new_blkaddr),fio->type);
 	bio = bio_alloc_bioset(bdev, npages,
 				fio->op | fio->op_flags | f2fs_io_flags(fio),
 				GFP_NOIO, &f2fs_bioset);
@@ -530,15 +530,15 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	//	printk("f2fs_submit_write_bio - ZONE WRITE BIO!\n");
 	//}
 
-	unsigned int segno,secno,sec_start_blkaddr;
+	unsigned int temp;
 	if(PAGE_TYPE_ON_MAIN(type)){
 		//segno=GET_SEGNO(sbi, bio->bi_iter.bi_sector/8);//ZNS DEBUG
 		//secno=GET_SEC_FROM_SEG(sbi,segno);
 		//sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
+		temp=bio->bi_iter.bi_sector;;		
 		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
-		printk("DATA WRITE - change to append\n");
-		printk("%llu\n", (unsigned long long)bio->bi_iter.bi_sector);
+		printk("%u - DATA WRITE - change to append - %llu ZONE NUM: %llu\n", temp/8,(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
 	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);

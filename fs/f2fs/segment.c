@@ -3751,7 +3751,7 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 			f2fs_del_fsync_node_entry(fio->sbi, fio->page);
 		goto out;
 	}
-	printk("segment.c - do_write_page: new blkaddr allocated/%u\n",fio->new_blkaddr);
+////	printk("segment.c - do_write_page: new blkaddr allocated/%u\n",fio->new_blkaddr);
 	if (GET_SEGNO(fio->sbi, fio->old_blkaddr) != NULL_SEGNO)
 		f2fs_invalidate_internal_cache(fio->sbi, fio->old_blkaddr);
 	//printk("do_write_page - %u / %u\n",fio->sbi->sm_info->main_blkaddr,F2FS_BLKSIZE);
