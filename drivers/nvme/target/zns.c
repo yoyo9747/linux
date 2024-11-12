@@ -609,6 +609,7 @@ u16 nvmet_bdev_zns_parse_io_cmd(struct nvmet_req *req)
 
 	switch (cmd->common.opcode) {
 	case nvme_cmd_zone_append:
+		printk("drivers/nvme/target/zns.c - nvmet_bdev_zns_parse_io_cmd: zone append reached\n");
 		req->execute = nvmet_bdev_execute_zone_append;
 		return 0;
 	case nvme_cmd_zone_mgmt_recv:

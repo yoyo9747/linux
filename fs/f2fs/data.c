@@ -524,17 +524,10 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 
 	if (f2fs_lfs_mode(sbi) && current->plug && PAGE_TYPE_ON_MAIN(type)){
 		blk_finish_plug(current->plug);
-//		printk("fs/f2fs/data.c - f2fs_submit_write_bio\n");
 	}
-	//if (bio_op(bio) == REQ_OP_WRITE) {
-	//	printk("f2fs_submit_write_bio - ZONE WRITE BIO!\n");
-	//}
 
 	unsigned int temp;
 	if(PAGE_TYPE_ON_MAIN(type)){
-		//segno=GET_SEGNO(sbi, bio->bi_iter.bi_sector/8);//ZNS DEBUG
-		//secno=GET_SEC_FROM_SEG(sbi,segno);
-		//sec_start_blkaddr = START_BLOCK(sbi, GET_SEG_FROM_SEC(sbi, secno));
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
 		temp=bio->bi_iter.bi_sector;;		
 		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
