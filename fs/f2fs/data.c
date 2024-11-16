@@ -373,15 +373,17 @@ static void f2fs_write_end_io(struct bio *bio)
 static void f2fs_zone_write_end_io(struct bio *bio)
 {
 	struct f2fs_bio_info *io = (struct f2fs_bio_info *)bio->bi_private;
-	
+	struct dnode_of_data dn;	
+	int err =0;
+	struct page *page = io->fio.page;
+
 	bio->bi_private = io->bi_private;
 	complete(&io->zone_wait);
-	if (bio_op(bio)==REQ_OP_ZONE_APPEND)
-		printk("f2fs_zone_write_end_io: updated %llu ZONE NUM: %llu\n",(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
 	if (PAGE_TYPE_ON_DATA(io->fio.type)){//sweet point cand
-//		f2fs_update_data_blkaddr(dn, io->fio->new_blkaddr);
-//		f2fs_update_iostat(io->sbi, dn->inode, io->fio->io_type, F2FS_BLKSIZE);
-		spin_unlock(&io->fio.append_lock);
+		if (bio_op(bio)==REQ_OP_ZONE_APPEND){
+			printk("f2fs_zone_write_end_io: updated %llu ZONE NUM: %llu\n",(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+			spin_unlock(&bio->append_lock);
+		}
 	}
 	f2fs_write_end_io(bio);
 }
@@ -533,12 +535,11 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 
 	unsigned int temp;
 	if(PAGE_TYPE_ON_DATA(type)){
+		spin_lock(&bio->append_lock);
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
 		temp=bio->bi_iter.bi_sector;;		
 		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
 		printk("%10u - DATA WRITE - change to append - %llu ZONE NUM: %llu\n", temp/8,(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
-//		struct f2fs_bio_info *io = (struct f2fs_bio_info *)bio->bi_private;
-//		spin_lock(&io->fio.append_lock);
 	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
@@ -1040,13 +1041,13 @@ alloc_new:
 	//if (f2fs_sb_has_blkzoned(sbi) && btype < META &&
 	//		is_end_zone_blkaddr(sbi, fio->new_blkaddr)) {
 	if (f2fs_sb_has_blkzoned(sbi) && btype < META) {
-	//	printk("f2fs_submit_page_write: merged bio write submitted?\n");
 		bio_get(io->bio);
 		reinit_completion(&io->zone_wait);
 		io->bi_private = io->bio->bi_private;
 		io->bio->bi_private = io;
 		io->bio->bi_end_io = f2fs_zone_write_end_io;
 		io->zone_pending_bio = io->bio;
+		spin_lock_init(&bio->append_lock);	
 		__submit_merged_bio(io);
 	}
 #endif

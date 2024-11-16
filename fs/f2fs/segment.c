@@ -3810,12 +3810,10 @@ void f2fs_outplace_write_data(struct dnode_of_data *dn,
 		f2fs_update_age_extent_cache(dn);
 	set_summary(&sum, dn->nid, dn->ofs_in_node, fio->version);
 	do_write_page(&sum, fio);
-    spin_lock(&fio->append_lock);
-
-//	if (!PAGE_TYPE_ON_DATA(fio->type)){//sweet point
+	//if (!PAGE_TYPE_ON_DATA(fio->type)){
 		f2fs_update_data_blkaddr(dn, fio->new_blkaddr);
 		f2fs_update_iostat(sbi, dn->inode, fio->io_type, F2FS_BLKSIZE);
-//	}
+	//}
 }
 
 int f2fs_inplace_write_data(struct f2fs_io_info *fio)

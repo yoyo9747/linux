@@ -263,12 +263,14 @@ struct bio {
 
 	struct bio_set		*bi_pool;
 
+	spinlock_t append_lock;
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid
 	 * double allocations for a small number of bio_vecs. This member
 	 * MUST obviously be kept at the very end of the bio.
 	 */
 	struct bio_vec		bi_inline_vecs[];
+	
 };
 
 #define BIO_RESET_BYTES		offsetof(struct bio, bi_max_vecs)
