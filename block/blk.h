@@ -432,7 +432,7 @@ static inline void blk_zone_update_request_bio(struct request *rq,
 	 */
 	if (req_op(rq) == REQ_OP_ZONE_APPEND || bio_zone_write_plugging(bio)){
 		bio->bi_iter.bi_sector = rq->__sector;
-		printk("blk_zone_update_request_bio: Can I find ALBA(ZA)? %llu\n",(unsigned long long)bio->bi_iter.bi_sector/8);
+		//printk("blk_zone_update_request_bio: Can I find ALBA(ZA)? %llu\n",(unsigned long long)bio->bi_iter.bi_sector/8);
 	}
 }
 void blk_zone_write_plug_bio_endio(struct bio *bio);

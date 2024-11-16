@@ -823,7 +823,7 @@ void submit_bio_noacct(struct bio *bio)
 		status = blk_check_zone_append(q, bio);
 		if (status != BLK_STS_OK)
 			goto end_io;
-		printk("ZONE APPEND succeed\n");
+		//printk("ZONE APPEND succeed\n");
 		break;
 	case REQ_OP_WRITE_ZEROES:
 		if (!q->limits.max_write_zeroes_sectors)

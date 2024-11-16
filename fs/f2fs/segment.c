@@ -3591,14 +3591,14 @@ int f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 		sanity_check_seg_type(sbi, se->type);
 		f2fs_bug_on(sbi, IS_NODESEG(se->type));
 	}
-	*new_blkaddr = NEXT_FREE_BLKADDR(sbi, curseg);
+	*new_blkaddr = NEXT_FREE_BLKADDR(sbi, curseg);//block address allocation
 
 	f2fs_bug_on(sbi, curseg->next_blkoff >= BLKS_PER_SEG(sbi));
 
 	f2fs_wait_discard_bio(sbi, *new_blkaddr);
 
 	curseg->sum_blk->entries[curseg->next_blkoff] = *sum;
-	if (curseg->alloc_type == SSR) {
+	if (curseg->alloc_type == SSR) {//not for zns
 		curseg->next_blkoff = f2fs_find_next_ssr_block(sbi, curseg);
 	} else {
 		curseg->next_blkoff++;
@@ -3741,7 +3741,7 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 
 	if (keep_order)
 		f2fs_down_read(&fio->sbi->io_order_lock);
-
+//sweet point?
 	if (f2fs_allocate_data_block(fio->sbi, fio->page, fio->old_blkaddr,
 			&fio->new_blkaddr, sum, type, fio)) {
 		if (fscrypt_inode_uses_fs_layer_crypto(fio->page->mapping->host))
@@ -3751,21 +3751,9 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 			f2fs_del_fsync_node_entry(fio->sbi, fio->page);
 		goto out;
 	}
-////	printk("segment.c - do_write_page: new blkaddr allocated/%u\n",fio->new_blkaddr);
 	if (GET_SEGNO(fio->sbi, fio->old_blkaddr) != NULL_SEGNO)
 		f2fs_invalidate_internal_cache(fio->sbi, fio->old_blkaddr);
-	//printk("do_write_page - %u / %u\n",fio->sbi->sm_info->main_blkaddr,F2FS_BLKSIZE);
-/*	
-	segno=GET_SEGNO(fio->sbi, fio->new_blkaddr);//ZNS DEBUG
-	secno=GET_SEC_FROM_SEG(fio->sbi,segno);
-	seg_start=START_BLOCK(fio->sbi,segno);
-	sec_start_blkaddr = START_BLOCK(fio->sbi, GET_SEG_FROM_SEC(fio->sbi, secno));
-	printk("do_write_page - new_blkaaddr: %u / sec_start_blkaddr: %u\n",fio->new_blkaddr,sec_start_blkaddr);
-	printk("CURZONE: %u / WP: %u / ZONE_START: %u ",secno,seg_start/BLKS_PER_SEG(fio->sbi),sec_start_blkaddr/BLKS_PER_SEG(fio->sbi));
-	printk("ZONE_CAP=%u, WP=%u\n", 	GET_SEG_FROM_SEC(fio->sbi,GET_SEC_FROM_SEG(fio->sbi,segno)+1)-GET_SEG_FROM_SEC(fio->sbi,secno),	segno-GET_SEG_FROM_SEC(fio->sbi,GET_SEC_FROM_SEG(fio->sbi,segno)));
-	if (type<=CURSEG_COLD_DATA)
-		fio->new_blkaddr=sec_start_blkaddr;
-*/
+	
 	/* writeout dirty page into bdev */
 	f2fs_submit_page_write(fio);
 
@@ -3822,9 +3810,12 @@ void f2fs_outplace_write_data(struct dnode_of_data *dn,
 		f2fs_update_age_extent_cache(dn);
 	set_summary(&sum, dn->nid, dn->ofs_in_node, fio->version);
 	do_write_page(&sum, fio);
-	f2fs_update_data_blkaddr(dn, fio->new_blkaddr);
+    spin_lock(&fio->append_lock);
 
-	f2fs_update_iostat(sbi, dn->inode, fio->io_type, F2FS_BLKSIZE);
+//	if (!PAGE_TYPE_ON_DATA(fio->type)){//sweet point
+		f2fs_update_data_blkaddr(dn, fio->new_blkaddr);
+		f2fs_update_iostat(sbi, dn->inode, fio->io_type, F2FS_BLKSIZE);
+//	}
 }
 
 int f2fs_inplace_write_data(struct f2fs_io_info *fio)

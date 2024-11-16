@@ -333,7 +333,6 @@ static void f2fs_write_end_io(struct bio *bio)
 
 	if (time_to_inject(sbi, FAULT_WRITE_IO))
 		bio->bi_status = BLK_STS_IOERR;
-
 	bio_for_each_segment_all(bvec, bio, iter_all) {
 		struct page *page = bvec->bv_page;
 		enum count_type type = WB_DATA_TYPE(page, false);
@@ -375,9 +374,15 @@ static void f2fs_zone_write_end_io(struct bio *bio)
 {
 	struct f2fs_bio_info *io = (struct f2fs_bio_info *)bio->bi_private;
 	
-	printk("data.c : f2fs_zone_write_end_io\n");	
 	bio->bi_private = io->bi_private;
 	complete(&io->zone_wait);
+	if (bio_op(bio)==REQ_OP_ZONE_APPEND)
+		printk("f2fs_zone_write_end_io: updated %llu ZONE NUM: %llu\n",(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+	if (PAGE_TYPE_ON_DATA(io->fio.type)){//sweet point cand
+//		f2fs_update_data_blkaddr(dn, io->fio->new_blkaddr);
+//		f2fs_update_iostat(io->sbi, dn->inode, io->fio->io_type, F2FS_BLKSIZE);
+		spin_unlock(&io->fio.append_lock);
+	}
 	f2fs_write_end_io(bio);
 }
 #endif
@@ -457,8 +462,8 @@ static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
 	sector_t sector;
 	struct bio *bio;
 	bdev = f2fs_target_device(sbi, fio->new_blkaddr, &sector);
-	if (fio->type<2)
-		printk("__bio_alloc - ADR: %u / ZONE: %u / TYPE: %d (0:DATA, 1:NODE, 2:META)\n",fio->new_blkaddr-sbi->devs[1].start_blk,BLOCK_TO_ZONE(fio->new_blkaddr),fio->type);
+	//if (fio->type<2)
+	//	printk("__bio_alloc - ADR: %u / ZONE: %u / TYPE: %d (0:DATA, 1:NODE, 2:META)\n",fio->new_blkaddr-sbi->devs[1].start_blk,BLOCK_TO_ZONE(fio->new_blkaddr),fio->type);
 	bio = bio_alloc_bioset(bdev, npages,
 				fio->op | fio->op_flags | f2fs_io_flags(fio),
 				GFP_NOIO, &f2fs_bioset);
@@ -527,11 +532,13 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	}
 
 	unsigned int temp;
-	if(PAGE_TYPE_ON_MAIN(type)){
+	if(PAGE_TYPE_ON_DATA(type)){
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
 		temp=bio->bi_iter.bi_sector;;		
 		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
-		printk("%u - DATA WRITE - change to append - %llu ZONE NUM: %llu\n", temp/8,(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+		printk("%10u - DATA WRITE - change to append - %llu ZONE NUM: %llu\n", temp/8,(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+//		struct f2fs_bio_info *io = (struct f2fs_bio_info *)bio->bi_private;
+//		spin_lock(&io->fio.append_lock);
 	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
@@ -968,8 +975,7 @@ void f2fs_submit_page_write(struct f2fs_io_info *fio)
 next:
 #ifdef CONFIG_BLK_DEV_ZONED
 	if (f2fs_sb_has_blkzoned(sbi) && btype < META && io->zone_pending_bio) {
-		wait_for_completion_io(&io->zone_wait);
-		//printk("f2fs_submit_page_write: bio write submitted?\n");
+		wait_for_completion_io(&io->zone_wait);//??
 		bio_put(io->zone_pending_bio);
 		io->zone_pending_bio = NULL;
 		io->bi_private = NULL;
@@ -1008,15 +1014,11 @@ next:
 			      fio->new_blkaddr) ||
 	     !f2fs_crypt_mergeable_bio(io->bio, fio->page->mapping->host,
 				       bio_page->index, fio))){
-//		printk("data.c - f2fs_submit_page_write - next\n");		
 		__submit_merged_bio(io);
 	}
 alloc_new:
 	if (io->bio == NULL) {
-//		printk("data.c - f2fs_submit_page_write - alloc_new\n");		
 		io->bio = __bio_alloc(fio, BIO_MAX_VECS);
-		//printk("f2fs_submit_page_write - %u\n",io->bio->bi_bdev->__bd_flags);
-		//printk("f2fs_submit_page_write - %u\n", atomic_read(&io->bio->bi_bdev->__bd_flags));
 
 		f2fs_set_bio_crypt_ctx(io->bio, fio->page->mapping->host,
 				       bio_page->index, fio, GFP_NOIO);
@@ -1035,12 +1037,10 @@ alloc_new:
 
 	trace_f2fs_submit_page_write(fio->page, fio);
 #ifdef CONFIG_BLK_DEV_ZONED
-//	if (f2fs_sb_has_blkzoned(sbi) && btype < META ) {
-//		printk("f2fs_submit_page_write: zoned device check\n");
-//	}
-	if (f2fs_sb_has_blkzoned(sbi) && btype < META &&
-			is_end_zone_blkaddr(sbi, fio->new_blkaddr)) {
-		printk("f2fs_submit_page_write: merged bio write submitted?\n");
+	//if (f2fs_sb_has_blkzoned(sbi) && btype < META &&
+	//		is_end_zone_blkaddr(sbi, fio->new_blkaddr)) {
+	if (f2fs_sb_has_blkzoned(sbi) && btype < META) {
+	//	printk("f2fs_submit_page_write: merged bio write submitted?\n");
 		bio_get(io->bio);
 		reinit_completion(&io->zone_wait);
 		io->bi_private = io->bio->bi_private;

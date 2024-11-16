@@ -1115,6 +1115,8 @@ enum count_type {
  */
 #define PAGE_TYPE_OF_BIO(type)	((type) > META ? META : (type))
 #define PAGE_TYPE_ON_MAIN(type)	((type) == DATA || (type) == NODE)
+#define PAGE_TYPE_ON_DATA(type)	((type) == DATA)
+#define PAGE_TYPE_ON_NODE(type)	((type) == NODE)
 enum page_type {
 	DATA = 0,
 	NODE = 1,	/* should not change this */
@@ -1215,6 +1217,7 @@ struct f2fs_io_info {
 	struct writeback_control *io_wbc; /* writeback control */
 	struct bio **bio;		/* bio for ipu */
 	sector_t *last_block;		/* last block number in bio */
+	spinlock_t append_lock;		/* serialize append IOs */
 };
 
 struct bio_entry {
