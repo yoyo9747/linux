@@ -381,8 +381,9 @@ static void f2fs_zone_write_end_io(struct bio *bio)
 	complete(&io->zone_wait);
 	if (PAGE_TYPE_ON_DATA(io->fio.type)){//sweet point cand
 		if (bio_op(bio)==REQ_OP_ZONE_APPEND){
-			printk("f2fs_zone_write_end_io: updated %llu ZONE NUM: %llu\n",(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
-			spin_unlock(&bio->append_lock);
+			atomic_set(&bio->append_lock, 1);
+			printk("f2fs_zone_write_end_io: updated %llu ZONE NUM: %llu lock: %u\n",(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),atomic_read(&bio->append_lock));
+//			spin_unlock(&bio->append_lock);
 		}
 	}
 	f2fs_write_end_io(bio);
@@ -535,15 +536,23 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 
 	unsigned int temp;
 	if(PAGE_TYPE_ON_DATA(type)){
-		spin_lock(&bio->append_lock);
+//		spin_lock(&bio->append_lock);
+		atomic_set(&bio->append_lock, 0);
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
 		temp=bio->bi_iter.bi_sector;;		
 		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
-		printk("%10u - DATA WRITE - change to append - %llu ZONE NUM: %llu\n", temp/8,(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+		printk("%10u - DATA WRITE - change to append - %llu ZONE NUM: %llu lock: %u\n", temp/8,(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),atomic_read(&bio->append_lock));
 	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
 	submit_bio(bio);//for write
+	
+	while (atomic_read(&bio->append_lock) == 0)
+		;
+	if (PAGE_TYPE_ON_DATA(type)){
+		printk("OUT FROM THE LOCK updated %llu ZONE NUM: %llu lock: %u\n",(unsigned long long)bio->bi_iter.bi_sector/8,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),atomic_read(&bio->append_lock));
+		printk("====================================OUT FROM THE LOCK=============================================================\n");
+	}
 }
 
 static void __submit_merged_bio(struct f2fs_bio_info *io)
@@ -559,6 +568,9 @@ static void __submit_merged_bio(struct f2fs_bio_info *io)
 	} else {
 		trace_f2fs_prepare_write_bio(io->sbi->sb, fio->type, io->bio);
 		f2fs_submit_write_bio(io->sbi, io->bio, fio->type);
+//		if (PAGE_TYPE_ON_DATA(fio->type)){
+//			printk("blkaddr: %u / sector:%u\n",fio->new_blkaddr,io->bio->bi_iter.bi_sector);	
+//		}
 	}
 	io->bio = NULL;
 }
@@ -1047,7 +1059,8 @@ alloc_new:
 		io->bio->bi_private = io;
 		io->bio->bi_end_io = f2fs_zone_write_end_io;
 		io->zone_pending_bio = io->bio;
-		spin_lock_init(&bio->append_lock);	
+//		spin_lock_init(&io->bio->append_lock);
+		atomic_set(&io->bio->append_lock, 1);
 		__submit_merged_bio(io);
 	}
 #endif

@@ -263,7 +263,7 @@ struct bio {
 
 	struct bio_set		*bi_pool;
 
-	spinlock_t append_lock;
+	atomic_t append_lock;
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid
 	 * double allocations for a small number of bio_vecs. This member
