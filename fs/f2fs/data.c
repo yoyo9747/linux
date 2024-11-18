@@ -379,7 +379,7 @@ static void f2fs_zone_write_end_io(struct bio *bio)
 
 	bio->bi_private = io->bi_private;
 	complete(&io->zone_wait);
-	if (PAGE_TYPE_ON_DATA(io->fio.type)){//sweet point cand
+	if (PAGE_TYPE_ON_MAIN(io->fio.type)){//sweet point cand
 		if (bio_op(bio)==REQ_OP_ZONE_APPEND){
 			atomic_set(&bio->append_lock, 1);
 			if (bio->bi_iter.bi_sector!=bio->bi_iter.bi_sector2)
@@ -470,7 +470,7 @@ static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
 				fio->op | fio->op_flags | f2fs_io_flags(fio),
 				GFP_NOIO, &f2fs_bioset);
 	bio->bi_iter.bi_sector = sector;
-	if (PAGE_TYPE_ON_DATA(fio->type)){
+	if (PAGE_TYPE_ON_MAIN(fio->type)){
 		bio->bi_iter.bi_sector2=sector;
 		//printk("__bio_alloc - %llu\n",(unsigned long long)bio->bi_iter.bi_sector);
 	}
@@ -538,7 +538,7 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	}
 
 	unsigned int temp;
-	if(PAGE_TYPE_ON_DATA(type)){
+	if(PAGE_TYPE_ON_MAIN(type)){
 //		spin_lock(&bio->append_lock);
 		atomic_set(&bio->append_lock, 0);
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
@@ -551,7 +551,7 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	submit_bio(bio);//for write
 
 	int i=0;	
-	if (PAGE_TYPE_ON_DATA(type)){
+	if (PAGE_TYPE_ON_MAIN(type)){
 		while (atomic_read(&bio->append_lock) == 0){
 			//printk("waiting,, nefore: %u / bio: %llu / idx %llu\n",temp,bio->bi_iter.bi_sector,(unsigned long long)bio->bi_iter.bi_sector2);
 			;
