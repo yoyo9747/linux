@@ -77,10 +77,11 @@ static inline void bvec_set_virt(struct bio_vec *bv, void *vaddr,
 struct bvec_iter {
 	sector_t		bi_sector;	/* device address in 512 byte
 						   sectors */
+	sector_t		bi_sector2;
+
 	unsigned int		bi_size;	/* residual I/O count */
 
 	unsigned int		bi_idx;		/* current index into bvl_vec */
-
 	unsigned int            bi_bvec_done;	/* number of bytes completed in
 						   current bvec */
 } __packed __aligned(4);
