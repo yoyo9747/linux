@@ -382,7 +382,8 @@ static void f2fs_zone_write_end_io(struct bio *bio)
 	if (PAGE_TYPE_ON_DATA(io->fio.type)){//sweet point cand
 		if (bio_op(bio)==REQ_OP_ZONE_APPEND){
 			atomic_set(&bio->append_lock, 1);
-			printk("f2fs_zone_write_end_io: updated %llu ZONE NUM: %llu lock: %u\n",(unsigned long long)bio->bi_iter.bi_sector,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),atomic_read(&bio->append_lock));
+			if (bio->bi_iter.bi_sector!=bio->bi_iter.bi_sector2)
+				printk("f2fs_zone_write_end_io: updated %llu ZONE NUM: %llu origin: %llu\n",(unsigned long long)bio->bi_iter.bi_sector,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),(unsigned long long)bio->bi_iter.bi_sector2);
 //			spin_unlock(&bio->append_lock);
 		}
 	}
@@ -471,7 +472,7 @@ static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
 	bio->bi_iter.bi_sector = sector;
 	if (PAGE_TYPE_ON_DATA(fio->type)){
 		bio->bi_iter.bi_sector2=sector;
-		printk("__bio_alloc - %llu\n",(unsigned long long)bio->bi_iter.bi_sector);
+		//printk("__bio_alloc - %llu\n",(unsigned long long)bio->bi_iter.bi_sector);
 	}
 	if (is_read_io(fio->op)) {
 		bio->bi_end_io = f2fs_read_end_io;
@@ -543,7 +544,7 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
 		temp=bio->bi_iter.bi_sector;;		
 		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
-		printk("%10u - DATA WRITE - change to append - %llu ZONE NUM: %llu lock: %u / idx: %llu\n", temp,(unsigned long long)bio->bi_iter.bi_sector,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),atomic_read(&bio->append_lock),(unsigned long long)bio->bi_iter.bi_sector2);
+//		printk("%10u - DATA WRITE - change to append - %llu ZONE NUM: %llu lock: %u / idx: %llu\n", temp,(unsigned long long)bio->bi_iter.bi_sector,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),atomic_read(&bio->append_lock),(unsigned long long)bio->bi_iter.bi_sector2);
 	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
@@ -552,15 +553,15 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	int i=0;	
 	if (PAGE_TYPE_ON_DATA(type)){
 		while (atomic_read(&bio->append_lock) == 0){
-			printk("waiting,, nefore: %u / bio: %llu / idx %llu\n",temp,bio->bi_iter.bi_sector,(unsigned long long)bio->bi_iter.bi_sector2);
+			//printk("waiting,, nefore: %u / bio: %llu / idx %llu\n",temp,bio->bi_iter.bi_sector,(unsigned long long)bio->bi_iter.bi_sector2);
 			;
 		}
-		printk("OUT FROM THE LOCK updated %llu ZONE NUM: %llu IDX: %llu lock: %u\n==========================================================\n",(unsigned long long)bio->bi_iter.bi_sector,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),(unsigned long long)bio->bi_iter.bi_sector2,atomic_read(&bio->append_lock));
+		/*printk("OUT FROM THE LOCK updated %llu ZONE NUM: %llu IDX: %llu lock: %u\n==========================================================\n",(unsigned long long)bio->bi_iter.bi_sector,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),(unsigned long long)bio->bi_iter.bi_sector2,atomic_read(&bio->append_lock));
 		if (temp!=bio->bi_iter.bi_sector2)
 			printk("How can this happend\n");
 		if (temp==bio->bi_iter.bi_sector2)
 			printk("NOOO %llu\n",(unsigned long long)bio->bi_iter.bi_sector2);
-	}
+*/	}
 }
 
 static void __submit_merged_bio(struct f2fs_bio_info *io)
