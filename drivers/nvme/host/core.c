@@ -1047,7 +1047,7 @@ blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req)
 		ret = nvme_setup_rw(ns, req, cmd, nvme_cmd_write);
 		break;
 	case REQ_OP_ZONE_APPEND:
-		printk("drivers/nvme/host/core.c - nvme_setup_cmd: ZONE APPEND arrived! %llu idx %llu\n",req->bio->bi_iter.bi_sector,req->bio->bi_iter.bi_sector2);
+//		printk("drivers/nvme/host/core.c - nvme_setup_cmd: ZONE APPEND arrived! %llu idx %llu\n",req->bio->bi_iter.bi_sector,req->bio->bi_iter.bi_sector2);
 		ret = nvme_setup_rw(ns, req, cmd, nvme_cmd_zone_append);
 		break;
 	default:
