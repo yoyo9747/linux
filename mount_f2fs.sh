@@ -1,3 +1,6 @@
+sudo rm -rf /mnt/f2fs
+sudo mkdir /mnt/f2fs
+
 sudo insmod fs/f2fs/f2fs.ko
 
 sudo mkfs.f2fs -m -f /dev/nvme0n1 -c /dev/nvme1n2 -d2
