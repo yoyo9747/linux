@@ -3803,16 +3803,18 @@ void f2fs_outplace_write_data(struct dnode_of_data *dn,
 {
 	struct f2fs_sb_info *sbi = fio->sbi;
 	struct f2fs_summary sum;
-
+	
+//	printk("f2fs_outplace_write_data\n");
 	f2fs_bug_on(sbi, dn->data_blkaddr == NULL_ADDR);
 	if (fio->io_type == FS_DATA_IO || fio->io_type == FS_CP_DATA_IO)
 		f2fs_update_age_extent_cache(dn);
 	set_summary(&sum, dn->nid, dn->ofs_in_node, fio->version);
-	do_write_page(&sum, fio);
-	//if (!PAGE_TYPE_ON_DATA(fio->type)){
-		f2fs_update_data_blkaddr(dn, fio->new_blkaddr);
-		f2fs_update_iostat(sbi, dn->inode, fio->io_type, F2FS_BLKSIZE);
-	//}
+	if (PAGE_TYPE_ON_MAIN(fio.type))
+		do_append_page(&sum,fio);
+	else
+		do_write_page(&sum, fio);
+	f2fs_update_data_blkaddr(dn, fio->new_blkaddr);
+	f2fs_update_iostat(sbi, dn->inode, fio->io_type, F2FS_BLKSIZE);
 }
 
 int f2fs_inplace_write_data(struct f2fs_io_info *fio)
