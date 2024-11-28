@@ -540,13 +540,13 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
 	submit_bio(bio);
-/*
+
 	if (PAGE_TYPE_ON_MAIN(type)){
 		while(atomic_read(&bio->bi_iter.append_lock) == 0){
 			;//printk("waiting,, nefore: %u / bio: %llu\n",temp,bio->bi_iter.bi_sector);
 		}
 	}
-*/
+
 }
 
 static void __submit_merged_bio(struct f2fs_bio_info *io)
