@@ -537,12 +537,9 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 		blk_finish_plug(current->plug);
 	}
 
-	unsigned int temp;
 	if(PAGE_TYPE_ON_MAIN(type)){
-//		spin_lock(&bio->append_lock);
 		atomic_set(&bio->append_lock, 0);
 		bio->bi_opf=REQ_OP_ZONE_APPEND;
-		temp=bio->bi_iter.bi_sector;;		
 		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
 //		printk("%10u - DATA WRITE - change to append - %llu ZONE NUM: %llu lock: %u / idx: %llu\n", temp,(unsigned long long)bio->bi_iter.bi_sector,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),atomic_read(&bio->append_lock),(unsigned long long)bio->bi_iter.bi_sector2);
 	}
@@ -550,18 +547,12 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	iostat_update_submit_ctx(bio, type);
 	submit_bio(bio);//for write
 
-	int i=0;	
 	if (PAGE_TYPE_ON_MAIN(type)){
 		while (atomic_read(&bio->append_lock) == 0){
 			//printk("waiting,, nefore: %u / bio: %llu / idx %llu\n",temp,bio->bi_iter.bi_sector,(unsigned long long)bio->bi_iter.bi_sector2);
 			;
 		}
-		/*printk("OUT FROM THE LOCK updated %llu ZONE NUM: %llu IDX: %llu lock: %u\n==========================================================\n",(unsigned long long)bio->bi_iter.bi_sector,(unsigned long long)SECTOR_TO_ZONE(bio->bi_iter.bi_sector),(unsigned long long)bio->bi_iter.bi_sector2,atomic_read(&bio->append_lock));
-		if (temp!=bio->bi_iter.bi_sector2)
-			printk("How can this happend\n");
-		if (temp==bio->bi_iter.bi_sector2)
-			printk("NOOO %llu\n",(unsigned long long)bio->bi_iter.bi_sector2);
-*/	}
+	}
 }
 
 static void __submit_merged_bio(struct f2fs_bio_info *io)
@@ -2691,7 +2682,6 @@ int f2fs_do_write_data_page(struct f2fs_io_info *fio)
 	struct node_info ni;
 	bool ipu_force = false;
 	int err = 0;
-
 	/* Use COW inode to make dnode_of_data for atomic write */
 	if (f2fs_is_atomic_file(inode))
 		set_new_dnode(&dn, F2FS_I(inode)->cow_inode, NULL, NULL, 0);

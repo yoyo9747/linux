@@ -1223,7 +1223,7 @@ static void __submit_zone_reset_cmd(struct f2fs_sb_info *sbi,
 	unsigned long flags;
 
 	trace_f2fs_issue_reset_zone(bdev, dc->di.start);
-	printk("fs/f2fs/segment.c - submit_zone_reset_cmd");
+	//printk("fs/f2fs/segment.c - submit_zone_reset_cmd");
 	spin_lock_irqsave(&dc->lock, flags);
 	dc->state = D_SUBMIT;
 	dc->bio_ref++;
@@ -1238,7 +1238,7 @@ static void __submit_zone_reset_cmd(struct f2fs_sb_info *sbi,
 
 	/* sanity check on discard range */
 	__check_sit_bitmap(sbi, dc->di.lstart, dc->di.lstart + dc->di.len);
-	printk("ZONE RESET TO %u\n",dc->di.start);
+	//printk("ZONE RESET TO %u\n",dc->di.start);
 	bio->bi_iter.bi_sector = SECTOR_FROM_BLOCK(dc->di.start);
 	bio->bi_private = dc;
 	bio->bi_end_io = f2fs_submit_discard_endio;
@@ -2160,7 +2160,7 @@ void f2fs_clear_prefree_segments(struct f2fs_sb_info *sbi,
 
 	if (f2fs_lfs_mode(sbi) && __is_large_section(sbi))
 		section_alignment = true;
-	printk("segments.c - f2fs_clear_prefree_segments\n");
+	//printk("segments.c - f2fs_clear_prefree_segments\n");
 	mutex_lock(&dirty_i->seglist_lock);
 
 	while (1) {
@@ -2196,12 +2196,12 @@ void f2fs_clear_prefree_segments(struct f2fs_sb_info *sbi,
 		    (!f2fs_lfs_mode(sbi) || !__is_large_section(sbi))) {
 			f2fs_issue_discard(sbi, START_BLOCK(sbi, start),
 				SEGS_TO_BLKS(sbi, end - start));
-			printk("f2fs_clear_prefree_segments: zone reset command to %u\n",START_BLOCK(sbi,start));
+	//		printk("f2fs_clear_prefree_segments: zone reset command to %u\n",START_BLOCK(sbi,start));
 			continue;
 		}
 next:
 		secno = GET_SEC_FROM_SEG(sbi, start);
-		printk("f2fs_clear_prefree_segments: next: secno= %u\n",secno);
+	//	printk("f2fs_clear_prefree_segments: next: secno= %u\n",secno);
 		start_segno = GET_SEG_FROM_SEC(sbi, secno);
 		if (!IS_CURSEC(sbi, secno) &&
 			!get_valid_blocks(sbi, start, true))
@@ -3739,8 +3739,11 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 	unsigned int segno,secno;
 	block_t seg_start,sec_start_blkaddr;	
 
-	if (keep_order)
+	//printk("%d ",fio->type);
+	if (keep_order){
+		printk("keep order?\n");	
 		f2fs_down_read(&fio->sbi->io_order_lock);
+	}
 	if (f2fs_allocate_data_block(fio->sbi, fio->page, fio->old_blkaddr,
 			&fio->new_blkaddr, sum, type, fio)) {
 		if (fscrypt_inode_uses_fs_layer_crypto(fio->page->mapping->host))
