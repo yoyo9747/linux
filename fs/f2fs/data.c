@@ -328,16 +328,19 @@ static void f2fs_write_end_io(struct bio *bio)
 	struct bio_vec *bvec;
 	struct bvec_iter_all iter_all;
 
-	if (bio_op(bio)==REQ_OP_ZONE_APPEND){
-		atomic_set(&bio->bi_iter.append_lock, 1);
-		if(bio->bi_iter.bi_sector!=bio->bi_iter.before_append){
-			printk("RANDOM ORDERING HAPPENED");
-		//printk("before %llu zslba: %llu ZONE: %llu after: %llu,ZONE: %llu",bio->bi_iter.before_append,bio->bi_iter.before_append-bio->bi_iter.before_append%4194304,SECTOR_TO_ZONE(bio->bi_iter.before_append),bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
-		}
-	}
-
 	iostat_update_and_unbind_ctx(bio);
 	sbi = bio->bi_private;
+	if (F2FS_OPTION(sbi).append_mode >= APPEND_WITH_LOCK){
+		if (bio_op(bio)==REQ_OP_ZONE_APPEND){
+			if(bio->bi_iter.bi_sector!=bio->bi_iter.before_append){
+				printk("RANDOM ORDERING HAPPENED");
+				//printk("before %llu zslba: %llu ZONE: %llu after: %llu,ZONE: %llu",bio->bi_iter.before_append,bio->bi_iter.before_append-bio->bi_iter.before_append%4194304,SECTOR_TO_ZONE(bio->bi_iter.before_append),bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+			}
+			if (F2FS_OPTION(sbi).append_mode == APPEND_WITH_LOCK){
+			atomic_set(&bio->bi_iter.append_lock, 1);
+			}
+		}
+	}
 
 	if (time_to_inject(sbi, FAULT_WRITE_IO))
 		bio->bi_status = BLK_STS_IOERR;
@@ -528,22 +531,27 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 
 	if (f2fs_lfs_mode(sbi) && current->plug && PAGE_TYPE_ON_MAIN(type))
 		blk_finish_plug(current->plug);
-	unsigned int temp;	
-	if (PAGE_TYPE_ON_MAIN(type)){
-		//printk("before- bio: %llu,ZONE: %llu",bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
-		bio->bi_opf=REQ_OP_ZONE_APPEND;
-		bio->bi_iter.before_append=bio->bi_iter.bi_sector;
-		//bio->bi_private->before_append=bio->bi_iter.bi_sector;
-		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
-		atomic_set(&bio->bi_iter.append_lock, 0);
+	unsigned int temp;
+	if (F2FS_OPTION(sbi).append_mode >= APPEND_WITH_LOCK){	
+		if (PAGE_TYPE_ON_MAIN(type)){
+			//printk("before- bio: %llu,ZONE: %llu",bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+			bio->bi_opf=REQ_OP_ZONE_APPEND;
+			bio->bi_iter.before_append=bio->bi_iter.bi_sector;
+			//bio->bi_private->before_append=bio->bi_iter.bi_sector;
+			bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
+			if (F2FS_OPTION(sbi).append_mode == APPEND_WITH_LOCK)
+				atomic_set(&bio->bi_iter.append_lock, 0);
+		}
 	}
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
 	submit_bio(bio);
 
-	if (PAGE_TYPE_ON_MAIN(type)){
-		while(atomic_read(&bio->bi_iter.append_lock) == 0){
-			;//printk("waiting,, nefore: %u / bio: %llu\n",temp,bio->bi_iter.bi_sector);
+	if (F2FS_OPTION(sbi).append_mode == APPEND_WITH_LOCK){
+		if (PAGE_TYPE_ON_MAIN(type)){
+			while(atomic_read(&bio->bi_iter.append_lock) == 0){
+				;//printk("waiting,, nefore: %u / bio: %llu\n",temp,bio->bi_iter.bi_sector);
+			}
 		}
 	}
 

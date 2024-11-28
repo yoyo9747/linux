@@ -28,6 +28,7 @@
 #include <linux/part_stat.h>
 #include <linux/zstd.h>
 #include <linux/lz4.h>
+#include <linux/fs_parser.h>
 
 #include "f2fs.h"
 #include "node.h"
@@ -191,6 +192,7 @@ enum {
 	Opt_memory_mode,
 	Opt_age_extent_cache,
 	Opt_errors,
+	Opt_zone_append,
 	Opt_err,
 };
 
@@ -270,6 +272,7 @@ static match_table_t f2fs_tokens = {
 	{Opt_memory_mode, "memory=%s"},
 	{Opt_age_extent_cache, "age_extent_cache"},
 	{Opt_errors, "errors=%s"},
+	{Opt_zone_append, "zone_append=%s"},//0 = normal write, 1=append with lock, 2=append with nolock
 	{Opt_err, NULL},
 };
 
@@ -1287,6 +1290,18 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 		case Opt_age_extent_cache:
 			set_opt(sbi, AGE_EXTENT_CACHE);
 			break;
+		case Opt_zone_append:
+			name = match_strdup(&args[0]);
+            if (!name)
+                return -ENOMEM;
+			if (!strcmp(name, "write")) 
+				F2FS_OPTION(sbi).append_mode = 0;
+			else if (!strcmp(name, "append_lock")) 
+				F2FS_OPTION(sbi).append_mode = 1;
+			else if (!strcmp(name, "append_nolock")) 
+				F2FS_OPTION(sbi).append_mode = 2;
+			printk(KERN_INFO"zone_append option detected with value: %s", name);
+			break;
 		case Opt_errors:
 			name = match_strdup(&args[0]);
 			if (!name)
@@ -2101,6 +2116,7 @@ static int f2fs_show_options(struct seq_file *seq, struct dentry *root)
 		seq_printf(seq, ",errors=%s", "continue");
 	else if (F2FS_OPTION(sbi).errors == MOUNT_ERRORS_PANIC)
 		seq_printf(seq, ",errors=%s", "panic");
+	seq_printf(seq, ",append_mode=%u", F2FS_OPTION(sbi).append_mode);
 
 	return 0;
 }
@@ -2125,7 +2141,7 @@ static void default_options(struct f2fs_sb_info *sbi, bool remount)
 		F2FS_OPTION(sbi).active_logs = NR_CURSEG_RO_TYPE;
 	else
 		F2FS_OPTION(sbi).active_logs = NR_CURSEG_PERSIST_TYPE;
-
+	F2FS_OPTION(sbi).append_mode = NORMAL_WRITE;
 	F2FS_OPTION(sbi).inline_xattr_size = DEFAULT_INLINE_XATTR_ADDRS;
 	if (le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_main) <=
 							SMALL_VOLUME_SEGMENTS)

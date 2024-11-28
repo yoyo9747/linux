@@ -180,7 +180,10 @@ struct f2fs_mount_info {
 	block_t unusable_cap;		/* Amount of space allowed to be
 					 * unusable when disabling checkpoint
 					 */
-
+	
+	/*For Zone Append */
+	int append_mode;
+	
 	/* For compression */
 	unsigned char compress_algorithm;	/* algorithm type */
 	unsigned char compress_log_size;	/* cluster log size */
@@ -1006,6 +1009,10 @@ static inline void set_new_dnode(struct dnode_of_data *dn, struct inode *inode,
 #define NR_CURSEG_RO_TYPE	(2)
 #define NR_CURSEG_PERSIST_TYPE	(NR_CURSEG_DATA_TYPE + NR_CURSEG_NODE_TYPE)
 #define NR_CURSEG_TYPE		(NR_CURSEG_INMEM_TYPE + NR_CURSEG_PERSIST_TYPE)
+
+#define NORMAL_WRITE (0)
+#define APPEND_WITH_LOCK (1)
+#define APPEND_WITH_NO_LOCK (2)
 
 enum {
 	CURSEG_HOT_DATA	= 0,	/* directory entry blocks */
