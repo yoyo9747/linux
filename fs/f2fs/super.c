@@ -1300,7 +1300,7 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 				F2FS_OPTION(sbi).append_mode = 1;
 			else if (!strcmp(name, "append_nolock")) 
 				F2FS_OPTION(sbi).append_mode = 2;
-			printk(KERN_INFO"zone_append option detected with value: %s", name);
+			printk(KERN_INFO"zone_append option detected with value: %u", F2FS_OPTION(sbi).append_mode);
 			break;
 		case Opt_errors:
 			name = match_strdup(&args[0]);
