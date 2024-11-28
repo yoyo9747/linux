@@ -577,7 +577,7 @@ out_unlock:
 }
 
 int usnic_ib_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
-		       struct uverbs_attr_bundle *attrs)
+		       struct ib_udata *udata)
 {
 	if (attr->flags)
 		return -EOPNOTSUPP;

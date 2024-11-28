@@ -16,11 +16,10 @@
 
 #include "hid-uclogic-rdesc.h"
 #include <linux/slab.h>
-#include <linux/unaligned.h>
-#include <kunit/visibility.h>
+#include <asm/unaligned.h>
 
 /* Fixed WP4030U report descriptor */
-const __u8 uclogic_rdesc_wp4030u_fixed_arr[] = {
+__u8 uclogic_rdesc_wp4030u_fixed_arr[] = {
 	0x05, 0x0D,         /*  Usage Page (Digitizer),             */
 	0x09, 0x01,         /*  Usage (Digitizer),                  */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -65,7 +64,7 @@ const size_t uclogic_rdesc_wp4030u_fixed_size =
 			sizeof(uclogic_rdesc_wp4030u_fixed_arr);
 
 /* Fixed WP5540U report descriptor */
-const __u8 uclogic_rdesc_wp5540u_fixed_arr[] = {
+__u8 uclogic_rdesc_wp5540u_fixed_arr[] = {
 	0x05, 0x0D,         /*  Usage Page (Digitizer),             */
 	0x09, 0x01,         /*  Usage (Digitizer),                  */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -142,7 +141,7 @@ const size_t uclogic_rdesc_wp5540u_fixed_size =
 			sizeof(uclogic_rdesc_wp5540u_fixed_arr);
 
 /* Fixed WP8060U report descriptor */
-const __u8 uclogic_rdesc_wp8060u_fixed_arr[] = {
+__u8 uclogic_rdesc_wp8060u_fixed_arr[] = {
 	0x05, 0x0D,         /*  Usage Page (Digitizer),             */
 	0x09, 0x01,         /*  Usage (Digitizer),                  */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -219,7 +218,7 @@ const size_t uclogic_rdesc_wp8060u_fixed_size =
 			sizeof(uclogic_rdesc_wp8060u_fixed_arr);
 
 /* Fixed WP1062 report descriptor */
-const __u8 uclogic_rdesc_wp1062_fixed_arr[] = {
+__u8 uclogic_rdesc_wp1062_fixed_arr[] = {
 	0x05, 0x0D,         /*  Usage Page (Digitizer),             */
 	0x09, 0x01,         /*  Usage (Digitizer),                  */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -267,7 +266,7 @@ const size_t uclogic_rdesc_wp1062_fixed_size =
 			sizeof(uclogic_rdesc_wp1062_fixed_arr);
 
 /* Fixed PF1209 report descriptor */
-const __u8 uclogic_rdesc_pf1209_fixed_arr[] = {
+__u8 uclogic_rdesc_pf1209_fixed_arr[] = {
 	0x05, 0x0D,         /*  Usage Page (Digitizer),             */
 	0x09, 0x01,         /*  Usage (Digitizer),                  */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -344,7 +343,7 @@ const size_t uclogic_rdesc_pf1209_fixed_size =
 			sizeof(uclogic_rdesc_pf1209_fixed_arr);
 
 /* Fixed PID 0522 tablet report descriptor, interface 0 (stylus) */
-const __u8 uclogic_rdesc_twhl850_fixed0_arr[] = {
+__u8 uclogic_rdesc_twhl850_fixed0_arr[] = {
 	0x05, 0x0D,         /*  Usage Page (Digitizer),             */
 	0x09, 0x01,         /*  Usage (Digitizer),                  */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -390,7 +389,7 @@ const size_t uclogic_rdesc_twhl850_fixed0_size =
 			sizeof(uclogic_rdesc_twhl850_fixed0_arr);
 
 /* Fixed PID 0522 tablet report descriptor, interface 1 (mouse) */
-const __u8 uclogic_rdesc_twhl850_fixed1_arr[] = {
+__u8 uclogic_rdesc_twhl850_fixed1_arr[] = {
 	0x05, 0x01,         /*  Usage Page (Desktop),               */
 	0x09, 0x02,         /*  Usage (Mouse),                      */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -430,7 +429,7 @@ const size_t uclogic_rdesc_twhl850_fixed1_size =
 			sizeof(uclogic_rdesc_twhl850_fixed1_arr);
 
 /* Fixed PID 0522 tablet report descriptor, interface 2 (frame buttons) */
-const __u8 uclogic_rdesc_twhl850_fixed2_arr[] = {
+__u8 uclogic_rdesc_twhl850_fixed2_arr[] = {
 	0x05, 0x01,         /*  Usage Page (Desktop),               */
 	0x09, 0x06,         /*  Usage (Keyboard),                   */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -456,7 +455,7 @@ const size_t uclogic_rdesc_twhl850_fixed2_size =
 			sizeof(uclogic_rdesc_twhl850_fixed2_arr);
 
 /* Fixed TWHA60 report descriptor, interface 0 (stylus) */
-const __u8 uclogic_rdesc_twha60_fixed0_arr[] = {
+__u8 uclogic_rdesc_twha60_fixed0_arr[] = {
 	0x05, 0x0D,         /*  Usage Page (Digitizer),             */
 	0x09, 0x01,         /*  Usage (Digitizer),                  */
 	0xA1, 0x01,         /*  Collection (Application),           */
@@ -505,7 +504,7 @@ const size_t uclogic_rdesc_twha60_fixed0_size =
 			sizeof(uclogic_rdesc_twha60_fixed0_arr);
 
 /* Fixed TWHA60 report descriptor, interface 1 (frame buttons) */
-const __u8 uclogic_rdesc_twha60_fixed1_arr[] = {
+__u8 uclogic_rdesc_twha60_fixed1_arr[] = {
 	0x05, 0x01, /*  Usage Page (Desktop),       */
 	0x09, 0x06, /*  Usage (Keyboard),           */
 	0xA1, 0x01, /*  Collection (Application),   */
@@ -690,10 +689,10 @@ const size_t uclogic_rdesc_v2_pen_template_size =
 	0xA0,           /*      Collection (Physical),          */ \
 	0x05, 0x09,     /*          Usage Page (Button),        */ \
 	0x19, 0x01,     /*          Usage Minimum (01h),        */ \
-	0x29, 0x0A,     /*          Usage Maximum (0Ah),        */ \
-	0x95, 0x0A,     /*          Report Count (10),          */ \
+	0x29, 0x03,     /*          Usage Maximum (03h),        */ \
+	0x95, 0x03,     /*          Report Count (3),           */ \
 	0x81, 0x02,     /*          Input (Variable),           */ \
-	0x95, ((_size) * 8 - 52),                                  \
+	0x95, ((_size) * 8 - 45),                                  \
 			/*          Report Count (padding),     */ \
 	0x81, 0x01,     /*          Input (Constant),           */ \
 	0xC0,           /*      End Collection,                 */ \
@@ -790,8 +789,7 @@ const __u8 uclogic_rdesc_v2_frame_touch_strip_arr[] = {
 	0x95, 0x01,         /*          Report Count (1),           */
 	0x81, 0x02,         /*          Input (Variable),           */
 	0x05, 0x01,         /*          Usage Page (Desktop),       */
-	0x09, 0x33,         /*          Usage (Rx),                 */
-	0x09, 0x34,         /*          Usage (Ry),                 */
+	0x09, 0x38,         /*          Usage (Wheel),              */
 	0x95, 0x01,         /*          Report Count (1),           */
 	0x15, 0x00,         /*          Logical Minimum (0),        */
 	0x25, 0x07,         /*          Logical Maximum (7),        */
@@ -1244,4 +1242,3 @@ __u8 *uclogic_rdesc_template_apply(const __u8 *template_ptr,
 
 	return rdesc_ptr;
 }
-EXPORT_SYMBOL_IF_KUNIT(uclogic_rdesc_template_apply);

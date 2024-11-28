@@ -505,7 +505,7 @@ static int __init g5_pm72_cpufreq_init(struct device_node *cpunode)
 			continue;
 		if (strcmp(loc, "CPU CLOCK"))
 			continue;
-		if (!of_property_present(hwclock, "platform-get-frequency"))
+		if (!of_get_property(hwclock, "platform-get-frequency", NULL))
 			continue;
 		break;
 	}
@@ -671,5 +671,4 @@ static int __init g5_cpufreq_init(void)
 module_init(g5_cpufreq_init);
 
 
-MODULE_DESCRIPTION("cpufreq driver for SMU & 970FX based G5 Macs");
 MODULE_LICENSE("GPL");

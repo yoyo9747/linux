@@ -21,14 +21,10 @@
 #include <asm/cacheflush.h>
 #include <asm/kvm_vcpu_vector.h>
 
-#define CREATE_TRACE_POINTS
-#include "trace.h"
-
 const struct _kvm_stats_desc kvm_vcpu_stats_desc[] = {
 	KVM_GENERIC_VCPU_STATS(),
 	STATS_DESC_COUNTER(VCPU, ecall_exit_stat),
 	STATS_DESC_COUNTER(VCPU, wfi_exit_stat),
-	STATS_DESC_COUNTER(VCPU, wrs_exit_stat),
 	STATS_DESC_COUNTER(VCPU, mmio_exit_user),
 	STATS_DESC_COUNTER(VCPU, mmio_exit_kernel),
 	STATS_DESC_COUNTER(VCPU, csr_exit_user),
@@ -764,7 +760,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		return ret;
 	}
 
-	if (!vcpu->wants_to_run) {
+	if (run->immediate_exit) {
 		kvm_vcpu_srcu_read_unlock(vcpu);
 		return -EINTR;
 	}
@@ -835,8 +831,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		 */
 		kvm_riscv_local_tlb_sanitize(vcpu);
 
-		trace_kvm_entry(vcpu);
-
 		guest_timing_enter_irqoff();
 
 		kvm_riscv_vcpu_enter_exit(vcpu);
@@ -874,8 +868,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		guest_timing_exit_irqoff();
 
 		local_irq_enable();
-
-		trace_kvm_exit(&trap);
 
 		preempt_enable();
 

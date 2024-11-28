@@ -82,7 +82,6 @@ struct ubifs_compressor *ubifs_compressors[UBIFS_COMPR_TYPES_CNT];
 
 /**
  * ubifs_compress - compress data.
- * @c: UBIFS file-system description object
  * @in_buf: data to compress
  * @in_len: length of the data to compress
  * @out_buf: output buffer where compressed data should be stored
@@ -141,7 +140,6 @@ no_compr:
 
 /**
  * ubifs_decompress - decompress data.
- * @c: UBIFS file-system description object
  * @in_buf: data to decompress
  * @in_len: length of the data to decompress
  * @out_buf: output buffer where decompressed data should

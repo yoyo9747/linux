@@ -186,6 +186,9 @@ static loff_t hmcdrv_dev_seek(struct file *fp, loff_t pos, int whence)
 	if (pos < 0)
 		return -EINVAL;
 
+	if (fp->f_pos != pos)
+		++fp->f_version;
+
 	fp->f_pos = pos;
 	return pos;
 }

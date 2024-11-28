@@ -8,6 +8,7 @@ title: Freescale Layerscape Device Configuration Unit
 
 maintainers:
   - Shawn Guo <shawnguo@kernel.org>
+  - Li Yang <leoyang.li@nxp.com>
 
 description: |
   DCFG is the device configuration unit, that provides general purpose

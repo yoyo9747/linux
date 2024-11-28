@@ -31,14 +31,14 @@ int snd_sbdsp_command(struct snd_sb *chip, unsigned char val)
 {
 	int i;
 #ifdef IO_DEBUG
-	dev_dbg(chip->card->dev, "command 0x%x\n", val);
+	snd_printk(KERN_DEBUG "command 0x%x\n", val);
 #endif
 	for (i = BUSY_LOOPS; i; i--)
 		if ((inb(SBP(chip, STATUS)) & 0x80) == 0) {
 			outb(val, SBP(chip, COMMAND));
 			return 1;
 		}
-	dev_dbg(chip->card->dev, "%s [0x%lx]: timeout (0x%x)\n", __func__, chip->port, val);
+	snd_printd("%s [0x%lx]: timeout (0x%x)\n", __func__, chip->port, val);
 	return 0;
 }
 
@@ -50,12 +50,12 @@ int snd_sbdsp_get_byte(struct snd_sb *chip)
 		if (inb(SBP(chip, DATA_AVAIL)) & 0x80) {
 			val = inb(SBP(chip, READ));
 #ifdef IO_DEBUG
-			dev_dbg(chip->card->dev, "get_byte 0x%x\n", val);
+			snd_printk(KERN_DEBUG "get_byte 0x%x\n", val);
 #endif
 			return val;
 		}
 	}
-	dev_dbg(chip->card->dev, "%s [0x%lx]: timeout\n", __func__, chip->port);
+	snd_printd("%s [0x%lx]: timeout\n", __func__, chip->port);
 	return -ENODEV;
 }
 
@@ -74,8 +74,7 @@ int snd_sbdsp_reset(struct snd_sb *chip)
 			else
 				break;
 		}
-	if (chip->card)
-		dev_dbg(chip->card->dev, "%s [0x%lx] failed...\n", __func__, chip->port);
+	snd_printdd("%s [0x%lx] failed...\n", __func__, chip->port);
 	return -ENODEV;
 }
 
@@ -113,8 +112,8 @@ static int snd_sbdsp_probe(struct snd_sb * chip)
 	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	major = version >> 8;
 	minor = version & 0xff;
-	dev_dbg(chip->card->dev, "SB [0x%lx]: DSP chip found, version = %i.%i\n",
-		chip->port, major, minor);
+	snd_printdd("SB [0x%lx]: DSP chip found, version = %i.%i\n",
+		    chip->port, major, minor);
 
 	switch (chip->hardware) {
 	case SB_HW_AUTO:
@@ -141,8 +140,8 @@ static int snd_sbdsp_probe(struct snd_sb * chip)
 			str = "16";
 			break;
 		default:
-			dev_info(chip->card->dev, "SB [0x%lx]: unknown DSP chip version %i.%i\n",
-				 chip->port, major, minor);
+			snd_printk(KERN_INFO "SB [0x%lx]: unknown DSP chip version %i.%i\n",
+				   chip->port, major, minor);
 			return -ENODEV;
 		}
 		break;
@@ -201,7 +200,7 @@ int snd_sbdsp_create(struct snd_card *card,
 			      hardware == SB_HW_CS5530) ?
 			     IRQF_SHARED : 0,
 			     "SoundBlaster", (void *) chip)) {
-		dev_err(card->dev, "sb: can't grab irq %d\n", irq);
+		snd_printk(KERN_ERR "sb: can't grab irq %d\n", irq);
 		return -EBUSY;
 	}
 	chip->irq = irq;
@@ -213,14 +212,14 @@ int snd_sbdsp_create(struct snd_card *card,
 	chip->res_port = devm_request_region(card->dev, port, 16,
 					     "SoundBlaster");
 	if (!chip->res_port) {
-		dev_err(card->dev, "sb: can't grab port 0x%lx\n", port);
+		snd_printk(KERN_ERR "sb: can't grab port 0x%lx\n", port);
 		return -EBUSY;
 	}
 
 #ifdef CONFIG_ISA
 	if (dma8 >= 0 && snd_devm_request_dma(card->dev, dma8,
 					      "SoundBlaster - 8bit")) {
-		dev_err(card->dev, "sb: can't grab DMA8 %d\n", dma8);
+		snd_printk(KERN_ERR "sb: can't grab DMA8 %d\n", dma8);
 		return -EBUSY;
 	}
 	chip->dma8 = dma8;
@@ -230,7 +229,7 @@ int snd_sbdsp_create(struct snd_card *card,
 			dma16 = -1;
 		} else if (snd_devm_request_dma(card->dev, dma16,
 						"SoundBlaster - 16bit")) {
-			dev_err(card->dev, "sb: can't grab DMA16 %d\n", dma16);
+			snd_printk(KERN_ERR "sb: can't grab DMA16 %d\n", dma16);
 			return -EBUSY;
 		}
 	}

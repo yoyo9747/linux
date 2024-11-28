@@ -746,5 +746,4 @@ struct matrox_switch matrox_millennium = {
 };
 EXPORT_SYMBOL(matrox_millennium);
 #endif
-MODULE_DESCRIPTION("Matrox Millennium output driver");
 MODULE_LICENSE("GPL");

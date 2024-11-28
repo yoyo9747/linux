@@ -66,11 +66,13 @@ struct peci_request *peci_xfer_ep_mmio64_readl(struct peci_device *device, u8 ba
 /**
  * struct peci_device_id - PECI device data to match
  * @data: pointer to driver private data specific to device
- * @x86_vfm: device vendor-family-model
+ * @family: device family
+ * @model: device model
  */
 struct peci_device_id {
 	const void *data;
-	u32 x86_vfm;
+	u16 family;
+	u8 model;
 };
 
 extern const struct device_type peci_device_type;
@@ -96,7 +98,10 @@ struct peci_driver {
 	const struct peci_device_id *id_table;
 };
 
-#define to_peci_driver(__drv)	container_of_const(__drv, struct peci_driver, driver)
+static inline struct peci_driver *to_peci_driver(struct device_driver *d)
+{
+	return container_of(d, struct peci_driver, driver);
+}
 
 int __peci_driver_register(struct peci_driver *driver, struct module *owner,
 			   const char *mod_name);

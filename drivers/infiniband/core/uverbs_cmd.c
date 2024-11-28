@@ -572,7 +572,7 @@ static int ib_uverbs_open_xrcd(struct uverbs_attr_bundle *attrs)
 	struct inode                   *inode = NULL;
 	int				new_xrcd = 0;
 	struct ib_device *ib_dev;
-	struct fd f = EMPTY_FD;
+	struct fd f = {};
 	int ret;
 
 	ret = uverbs_request(attrs, &cmd, sizeof(cmd));
@@ -584,12 +584,12 @@ static int ib_uverbs_open_xrcd(struct uverbs_attr_bundle *attrs)
 	if (cmd.fd != -1) {
 		/* search for file descriptor */
 		f = fdget(cmd.fd);
-		if (!fd_file(f)) {
+		if (!f.file) {
 			ret = -EBADF;
 			goto err_tree_mutex_unlock;
 		}
 
-		inode = file_inode(fd_file(f));
+		inode = file_inode(f.file);
 		xrcd = find_xrcd(ibudev, inode);
 		if (!xrcd && !(cmd.oflags & O_CREAT)) {
 			/* no file descriptor. Need CREATE flag */
@@ -632,7 +632,7 @@ static int ib_uverbs_open_xrcd(struct uverbs_attr_bundle *attrs)
 		atomic_inc(&xrcd->usecnt);
 	}
 
-	if (fd_file(f))
+	if (f.file)
 		fdput(f);
 
 	mutex_unlock(&ibudev->xrcd_tree_mutex);
@@ -648,7 +648,7 @@ err:
 	uobj_alloc_abort(&obj->uobject, attrs);
 
 err_tree_mutex_unlock:
-	if (fd_file(f))
+	if (f.file)
 		fdput(f);
 
 	mutex_unlock(&ibudev->xrcd_tree_mutex);
@@ -1051,7 +1051,7 @@ static int create_cq(struct uverbs_attr_bundle *attrs,
 	rdma_restrack_new(&cq->res, RDMA_RESTRACK_CQ);
 	rdma_restrack_set_name(&cq->res, NULL);
 
-	ret = ib_dev->ops.create_cq(cq, &attr, attrs);
+	ret = ib_dev->ops.create_cq(cq, &attr, &attrs->driver_udata);
 	if (ret)
 		goto err_free;
 	rdma_restrack_add(&cq->res);

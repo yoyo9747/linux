@@ -7,7 +7,7 @@
 
 #include <linux/slab.h>
 #include <linux/etherdevice.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include "wme.h"
 #include "mesh.h"
 

@@ -717,30 +717,53 @@ imap_needs_cow(
 	return true;
 }
 
-/*
- * Extents not yet cached requires exclusive access, don't block for
- * IOMAP_NOWAIT.
- *
- * This is basically an opencoded xfs_ilock_data_map_shared() call, but with
- * support for IOMAP_NOWAIT.
- */
 static int
 xfs_ilock_for_iomap(
 	struct xfs_inode	*ip,
 	unsigned		flags,
 	unsigned		*lockmode)
 {
-	if (flags & IOMAP_NOWAIT) {
-		if (xfs_need_iread_extents(&ip->i_df))
+	unsigned int		mode = *lockmode;
+	bool			is_write = flags & (IOMAP_WRITE | IOMAP_ZERO);
+
+	/*
+	 * COW writes may allocate delalloc space or convert unwritten COW
+	 * extents, so we need to make sure to take the lock exclusively here.
+	 */
+	if (xfs_is_cow_inode(ip) && is_write)
+		mode = XFS_ILOCK_EXCL;
+
+	/*
+	 * Extents not yet cached requires exclusive access, don't block.  This
+	 * is an opencoded xfs_ilock_data_map_shared() call but with
+	 * non-blocking behaviour.
+	 */
+	if (xfs_need_iread_extents(&ip->i_df)) {
+		if (flags & IOMAP_NOWAIT)
 			return -EAGAIN;
-		if (!xfs_ilock_nowait(ip, *lockmode))
-			return -EAGAIN;
-	} else {
-		if (xfs_need_iread_extents(&ip->i_df))
-			*lockmode = XFS_ILOCK_EXCL;
-		xfs_ilock(ip, *lockmode);
+		mode = XFS_ILOCK_EXCL;
 	}
 
+relock:
+	if (flags & IOMAP_NOWAIT) {
+		if (!xfs_ilock_nowait(ip, mode))
+			return -EAGAIN;
+	} else {
+		xfs_ilock(ip, mode);
+	}
+
+	/*
+	 * The reflink iflag could have changed since the earlier unlocked
+	 * check, so if we got ILOCK_SHARED for a write and but we're now a
+	 * reflink inode we have to switch to ILOCK_EXCL and relock.
+	 */
+	if (mode == XFS_ILOCK_SHARED && is_write && xfs_is_cow_inode(ip)) {
+		xfs_iunlock(ip, mode);
+		mode = XFS_ILOCK_EXCL;
+		goto relock;
+	}
+
+	*lockmode = mode;
 	return 0;
 }
 
@@ -778,7 +801,7 @@ xfs_direct_write_iomap_begin(
 	int			nimaps = 1, error = 0;
 	bool			shared = false;
 	u16			iomap_flags = 0;
-	unsigned int		lockmode;
+	unsigned int		lockmode = XFS_ILOCK_SHARED;
 	u64			seq;
 
 	ASSERT(flags & (IOMAP_WRITE | IOMAP_ZERO));
@@ -794,29 +817,9 @@ xfs_direct_write_iomap_begin(
 	if (offset + length > i_size_read(inode))
 		iomap_flags |= IOMAP_F_DIRTY;
 
-	/*
-	 * COW writes may allocate delalloc space or convert unwritten COW
-	 * extents, so we need to make sure to take the lock exclusively here.
-	 */
-	if (xfs_is_cow_inode(ip))
-		lockmode = XFS_ILOCK_EXCL;
-	else
-		lockmode = XFS_ILOCK_SHARED;
-
-relock:
 	error = xfs_ilock_for_iomap(ip, flags, &lockmode);
 	if (error)
 		return error;
-
-	/*
-	 * The reflink iflag could have changed since the earlier unlocked
-	 * check, check if it again and relock if needed.
-	 */
-	if (xfs_is_cow_inode(ip) && lockmode == XFS_ILOCK_SHARED) {
-		xfs_iunlock(ip, lockmode);
-		lockmode = XFS_ILOCK_EXCL;
-		goto relock;
-	}
 
 	error = xfs_bmapi_read(ip, offset_fsb, end_fsb - offset_fsb, &imap,
 			       &nimaps, 0);
@@ -1208,14 +1211,14 @@ out_unlock:
 	return error;
 }
 
-static void
+static int
 xfs_buffered_write_delalloc_punch(
 	struct inode		*inode,
 	loff_t			offset,
-	loff_t			length,
-	struct iomap		*iomap)
+	loff_t			length)
 {
 	xfs_bmap_punch_delalloc_range(XFS_I(inode), offset, offset + length);
+	return 0;
 }
 
 static int
@@ -1227,8 +1230,17 @@ xfs_buffered_write_iomap_end(
 	unsigned		flags,
 	struct iomap		*iomap)
 {
-	iomap_file_buffered_write_punch_delalloc(inode, offset, length, written,
-			flags, iomap, &xfs_buffered_write_delalloc_punch);
+
+	struct xfs_mount	*mp = XFS_M(inode->i_sb);
+	int			error;
+
+	error = iomap_file_buffered_write_punch_delalloc(inode, iomap, offset,
+			length, written, &xfs_buffered_write_delalloc_punch);
+	if (error && !xfs_is_shutdown(mp)) {
+		xfs_alert(mp, "%s: unable to clean up ino 0x%llx",
+			__func__, XFS_I(inode)->i_ino);
+		return error;
+	}
 	return 0;
 }
 

@@ -2,12 +2,9 @@
 
 SUBDIRS = lib generated samples
 
-all: $(SUBDIRS) libynl.a
+all: $(SUBDIRS)
 
 samples: | lib generated
-libynl.a: | lib generated
-	@echo -e "\tAR $@"
-	@ar rcs $@ lib/ynl.o generated/*-user.o
 
 $(SUBDIRS):
 	@if [ -f "$@/Makefile" ] ; then \
@@ -20,6 +17,5 @@ clean distclean:
 			$(MAKE) -C $$dir $@; \
 		fi \
 	done
-	rm -f libynl.a
 
 .PHONY: all clean distclean $(SUBDIRS)

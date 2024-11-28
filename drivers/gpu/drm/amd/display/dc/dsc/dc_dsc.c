@@ -145,6 +145,7 @@ uint32_t dc_bandwidth_in_kbps_from_timing(
 	return kbps;
 }
 
+
 /* Forward Declerations */
 static bool decide_dsc_bandwidth_range(
 		const uint32_t min_bpp_x16,
@@ -668,7 +669,6 @@ static bool decide_dsc_bandwidth_range(
  */
 static bool decide_dsc_target_bpp_x16(
 		const struct dc_dsc_policy *policy,
-		const struct dc_dsc_config_options *options,
 		const struct dsc_enc_caps *dsc_common_caps,
 		const int target_bandwidth_kbps,
 		const struct dc_crtc_timing *timing,
@@ -683,7 +683,7 @@ static bool decide_dsc_target_bpp_x16(
 	if (decide_dsc_bandwidth_range(policy->min_target_bpp * 16, policy->max_target_bpp * 16,
 			num_slices_h, dsc_common_caps, timing, link_encoding, &range)) {
 		if (target_bandwidth_kbps >= range.stream_kbps) {
-			if (policy->enable_dsc_when_not_needed || options->force_dsc_when_not_needed)
+			if (policy->enable_dsc_when_not_needed)
 				/* enable max bpp even dsc is not needed */
 				*target_bpp_x16 = range.max_target_bpp_x16;
 		} else if (target_bandwidth_kbps >= range.max_kbps) {
@@ -883,7 +883,7 @@ static bool setup_dsc_config(
 
 	memset(dsc_cfg, 0, sizeof(struct dc_dsc_config));
 
-	dc_dsc_get_policy_for_timing(timing, options->max_target_bpp_limit_override_x16, &policy, link_encoding);
+	dc_dsc_get_policy_for_timing(timing, options->max_target_bpp_limit_override_x16, &policy);
 	pic_width = timing->h_addressable + timing->h_border_left + timing->h_border_right;
 	pic_height = timing->v_addressable + timing->v_border_top + timing->v_border_bottom;
 
@@ -1019,30 +1019,14 @@ static bool setup_dsc_config(
 		else
 			is_dsc_possible = false;
 	}
-	// When we force ODM, num dsc h slices must be divisible by num odm h slices
-	switch (options->dsc_force_odm_hslice_override) {
-	case 0:
-	case 1:
-		break;
-	case 2:
-		if (num_slices_h < 2)
-			num_slices_h = fit_num_slices_up(dsc_common_caps.slice_caps, 2);
-		break;
-	case 3:
-		if (dsc_common_caps.slice_caps.bits.NUM_SLICES_12)
-			num_slices_h = 12;
-		else
-			num_slices_h = 0;
-		break;
-	case 4:
-		if (num_slices_h < 4)
-			num_slices_h = fit_num_slices_up(dsc_common_caps.slice_caps, 4);
-		break;
-	default:
-		break;
+	// When we force 2:1 ODM, we can't have 1 slice to divide amongst 2 separate DSC instances
+	// need to enforce at minimum 2 horizontal slices
+	if (options->dsc_force_odm_hslice_override) {
+		num_slices_h = fit_num_slices_up(dsc_common_caps.slice_caps, 2);
+		if (num_slices_h == 0)
+			is_dsc_possible = false;
 	}
-	if (num_slices_h == 0)
-		is_dsc_possible = false;
+
 	if (!is_dsc_possible)
 		goto done;
 
@@ -1081,7 +1065,6 @@ static bool setup_dsc_config(
 	if (target_bandwidth_kbps > 0) {
 		is_dsc_possible = decide_dsc_target_bpp_x16(
 				&policy,
-				options,
 				&dsc_common_caps,
 				target_bandwidth_kbps,
 				timing,
@@ -1173,8 +1156,7 @@ uint32_t dc_dsc_stream_bandwidth_overhead_in_kbps(
 
 void dc_dsc_get_policy_for_timing(const struct dc_crtc_timing *timing,
 		uint32_t max_target_bpp_limit_override_x16,
-		struct dc_dsc_policy *policy,
-		const enum dc_link_encoding_format link_encoding)
+		struct dc_dsc_policy *policy)
 {
 	uint32_t bpc = 0;
 
@@ -1238,7 +1220,10 @@ void dc_dsc_get_policy_for_timing(const struct dc_crtc_timing *timing,
 		policy->max_target_bpp = max_target_bpp_limit_override_x16 / 16;
 
 	/* enable DSC when not needed, default false */
-	policy->enable_dsc_when_not_needed = dsc_policy_enable_dsc_when_not_needed;
+	if (dsc_policy_enable_dsc_when_not_needed)
+		policy->enable_dsc_when_not_needed = dsc_policy_enable_dsc_when_not_needed;
+	else
+		policy->enable_dsc_when_not_needed = false;
 }
 
 void dc_dsc_policy_set_max_target_bpp_limit(uint32_t limit)
@@ -1267,5 +1252,4 @@ void dc_dsc_get_default_config_option(const struct dc *dc, struct dc_dsc_config_
 	options->dsc_force_odm_hslice_override = dc->debug.force_odm_combine;
 	options->max_target_bpp_limit_override_x16 = 0;
 	options->slice_height_granularity = 1;
-	options->force_dsc_when_not_needed = false;
 }

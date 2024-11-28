@@ -3,15 +3,11 @@
 gen := arch/$(ARCH)/include/generated
 kapi := $(gen)/asm
 
-kapisyshdr-y := cpucap-defs.h sysreg-defs.h
-
-kapi-hdrs-y := $(addprefix $(kapi)/, $(kapisyshdr-y))
+kapi-hdrs-y := $(kapi)/cpucap-defs.h $(kapi)/sysreg-defs.h
 
 targets += $(addprefix ../../../, $(kapi-hdrs-y))
 
 PHONY += kapi
-
-all: $(syscall64) kapi
 
 kapi:   $(kapi-hdrs-y)
 

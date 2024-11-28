@@ -4,8 +4,7 @@
 # Include the generic Makefile to check the built vdso.
 include $(srctree)/lib/vdso/Makefile
 
-obj-vdso-y := elf.o vgetcpu.o vgettimeofday.o vgetrandom.o \
-              vgetrandom-chacha.o sigreturn.o
+obj-vdso-y := elf.o vgetcpu.o vgettimeofday.o sigreturn.o
 
 # Common compiler flags between ABIs.
 ccflags-vdso := \
@@ -28,10 +27,6 @@ aflags-vdso := $(ccflags-vdso) \
 
 ifneq ($(c-gettimeofday-y),)
   CFLAGS_vgettimeofday.o += -include $(c-gettimeofday-y)
-endif
-
-ifneq ($(c-getrandom-y),)
-  CFLAGS_vgetrandom.o += -include $(c-getrandom-y)
 endif
 
 # VDSO linker flags.

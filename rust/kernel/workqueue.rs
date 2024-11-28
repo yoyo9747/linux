@@ -482,26 +482,24 @@ pub unsafe trait HasWork<T, const ID: u64 = 0> {
 /// use kernel::sync::Arc;
 /// use kernel::workqueue::{self, impl_has_work, Work};
 ///
-/// struct MyStruct<'a, T, const N: usize> {
-///     work_field: Work<MyStruct<'a, T, N>, 17>,
-///     f: fn(&'a [T; N]),
+/// struct MyStruct {
+///     work_field: Work<MyStruct, 17>,
 /// }
 ///
 /// impl_has_work! {
-///     impl{'a, T, const N: usize} HasWork<MyStruct<'a, T, N>, 17>
-///     for MyStruct<'a, T, N> { self.work_field }
+///     impl HasWork<MyStruct, 17> for MyStruct { self.work_field }
 /// }
 /// ```
 #[macro_export]
 macro_rules! impl_has_work {
-    ($(impl$({$($generics:tt)*})?
+    ($(impl$(<$($implarg:ident),*>)?
        HasWork<$work_type:ty $(, $id:tt)?>
-       for $self:ty
+       for $self:ident $(<$($selfarg:ident),*>)?
        { self.$field:ident }
     )*) => {$(
         // SAFETY: The implementation of `raw_get_work` only compiles if the field has the right
         // type.
-        unsafe impl$(<$($generics)+>)? $crate::workqueue::HasWork<$work_type $(, $id)?> for $self {
+        unsafe impl$(<$($implarg),*>)? $crate::workqueue::HasWork<$work_type $(, $id)?> for $self $(<$($selfarg),*>)? {
             const OFFSET: usize = ::core::mem::offset_of!(Self, $field) as usize;
 
             #[inline]
@@ -517,7 +515,7 @@ macro_rules! impl_has_work {
 pub use impl_has_work;
 
 impl_has_work! {
-    impl{T} HasWork<Self> for ClosureWork<T> { self.work }
+    impl<T> HasWork<Self> for ClosureWork<T> { self.work }
 }
 
 unsafe impl<T, const ID: u64> WorkItemPointer<ID> for Arc<T>

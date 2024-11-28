@@ -1277,5 +1277,4 @@ static struct platform_driver sun50i_a100_ccu_driver = {
 module_platform_driver(sun50i_a100_ccu_driver);
 
 MODULE_IMPORT_NS(SUNXI_CCU);
-MODULE_DESCRIPTION("Support for the Allwinner A100 CCU");
 MODULE_LICENSE("GPL");

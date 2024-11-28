@@ -259,14 +259,16 @@ struct st_slim_rproc *st_slim_rproc_alloc(struct platform_device *pdev,
 		slim_rproc->mem[i].size = resource_size(res);
 	}
 
-	slim_rproc->slimcore = devm_platform_ioremap_resource_byname(pdev, "slimcore");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "slimcore");
+	slim_rproc->slimcore = devm_ioremap_resource(dev, res);
 	if (IS_ERR(slim_rproc->slimcore)) {
 		dev_err(&pdev->dev, "failed to ioremap slimcore IO\n");
 		err = PTR_ERR(slim_rproc->slimcore);
 		goto err;
 	}
 
-	slim_rproc->peri = devm_platform_ioremap_resource_byname(pdev, "peripherals");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "peripherals");
+	slim_rproc->peri = devm_ioremap_resource(dev, res);
 	if (IS_ERR(slim_rproc->peri)) {
 		dev_err(&pdev->dev, "failed to ioremap peripherals IO\n");
 		err = PTR_ERR(slim_rproc->peri);

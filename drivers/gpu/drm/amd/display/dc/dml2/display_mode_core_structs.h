@@ -36,7 +36,6 @@ enum dml_project_id {
 	dml_project_dcn321 = 2,
 	dml_project_dcn35 = 3,
 	dml_project_dcn351 = 4,
-	dml_project_dcn401 = 5,
 };
 enum dml_prefetch_modes {
 	dml_prefetch_support_uclk_fclk_and_stutter_if_possible = 0,
@@ -575,7 +574,6 @@ struct dml_output_cfg_st {
 	dml_uint_t AudioSampleRate[__DML_NUM_PLANES__];
 	dml_uint_t AudioSampleLayout[__DML_NUM_PLANES__];
 	dml_bool_t OutputDisabled[__DML_NUM_PLANES__];
-	dml_uint_t DSCSlices[__DML_NUM_PLANES__];
 }; // dml_timing_cfg_st;
 
 /// @brief Writeback Setting

@@ -755,7 +755,8 @@ static int ina2xx_work_buffer(struct iio_dev *indio_dev)
 	 * Single register reads: bulk_read will not work with ina226/219
 	 * as there is no auto-increment of the register pointer.
 	 */
-	iio_for_each_active_channel(indio_dev, bit) {
+	for_each_set_bit(bit, indio_dev->active_scan_mask,
+			 indio_dev->masklength) {
 		unsigned int val;
 
 		ret = regmap_read(chip->regmap,
@@ -1045,19 +1046,20 @@ static void ina2xx_remove(struct i2c_client *client)
 	iio_device_unregister(indio_dev);
 
 	/* Powerdown */
-	ret = regmap_clear_bits(chip->regmap, INA2XX_CONFIG, INA2XX_MODE_MASK);
+	ret = regmap_update_bits(chip->regmap, INA2XX_CONFIG,
+				 INA2XX_MODE_MASK, 0);
 	if (ret)
 		dev_warn(&client->dev, "Failed to power down device (%pe)\n",
 			 ERR_PTR(ret));
 }
 
 static const struct i2c_device_id ina2xx_id[] = {
-	{ "ina219", ina219 },
-	{ "ina220", ina219 },
-	{ "ina226", ina226 },
-	{ "ina230", ina226 },
-	{ "ina231", ina226 },
-	{ }
+	{"ina219", ina219},
+	{"ina220", ina219},
+	{"ina226", ina226},
+	{"ina230", ina226},
+	{"ina231", ina226},
+	{}
 };
 MODULE_DEVICE_TABLE(i2c, ina2xx_id);
 
@@ -1082,7 +1084,7 @@ static const struct of_device_id ina2xx_of_match[] = {
 		.compatible = "ti,ina231",
 		.data = (void *)ina226
 	},
-	{ }
+	{},
 };
 MODULE_DEVICE_TABLE(of, ina2xx_of_match);
 

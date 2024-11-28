@@ -10,7 +10,6 @@
 #include "test_util.h"
 #include "kvm_util.h"
 #include "processor.h"
-#include "hyperv.h"
 
 #define HCALL_REGION_GPA	0xc0000000ULL
 #define HCALL_REGION_SLOT	10

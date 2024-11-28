@@ -132,5 +132,4 @@ static struct platform_driver vexpress_sysreg_driver = {
 };
 
 module_platform_driver(vexpress_sysreg_driver);
-MODULE_DESCRIPTION("Versatile Express system registers driver");
 MODULE_LICENSE("GPL v2");

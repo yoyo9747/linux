@@ -175,8 +175,8 @@ module_param(power_save, xint, 0644);
 MODULE_PARM_DESC(power_save, "Automatic power-saving timeout "
 		 "(in second, 0 = disable).");
 
-static int pm_blacklist = -1;
-module_param(pm_blacklist, bint, 0644);
+static bool pm_blacklist = true;
+module_param(pm_blacklist, bool, 0644);
 MODULE_PARM_DESC(pm_blacklist, "Enable power-management denylist");
 
 /* reset the HD-audio controller in power save mode.
@@ -188,7 +188,7 @@ module_param(power_save_controller, bool, 0644);
 MODULE_PARM_DESC(power_save_controller, "Reset controller in power save mode.");
 #else /* CONFIG_PM */
 #define power_save	0
-#define pm_blacklist	0
+#define pm_blacklist	false
 #define power_save_controller	false
 #endif /* CONFIG_PM */
 
@@ -930,14 +930,10 @@ static int __maybe_unused param_set_xint(const char *val, const struct kernel_pa
 	if (ret || prev == power_save)
 		return ret;
 
-	if (pm_blacklist > 0)
-		return 0;
-
 	mutex_lock(&card_list_lock);
 	list_for_each_entry(hda, &card_list, list) {
 		chip = &hda->chip;
-		if (!hda->probe_continued || chip->disabled ||
-		    hda->runtime_pm_disabled)
+		if (!hda->probe_continued || chip->disabled)
 			continue;
 		snd_hda_set_power_save(&chip->bus, power_save * 1000);
 	}
@@ -1813,7 +1809,7 @@ static int azx_create(struct snd_card *card, struct pci_dev *pci,
 
 	/* use the non-cached pages in non-snoop mode */
 	if (!azx_snoop(chip))
-		azx_bus(chip)->dma_type = SNDRV_DMA_TYPE_DEV_WC;
+		azx_bus(chip)->dma_type = SNDRV_DMA_TYPE_DEV_WC_SG;
 
 	if (chip->driver_type == AZX_DRIVER_NVIDIA) {
 		dev_dbg(chip->card->dev, "Enable delay in RIRB handling\n");
@@ -2247,10 +2243,9 @@ static const struct snd_pci_quirk power_save_denylist[] = {
 
 static void set_default_power_save(struct azx *chip)
 {
-	struct hda_intel *hda = container_of(chip, struct hda_intel, chip);
 	int val = power_save;
 
-	if (pm_blacklist < 0) {
+	if (pm_blacklist) {
 		const struct snd_pci_quirk *q;
 
 		q = snd_pci_quirk_lookup(chip->pci, power_save_denylist);
@@ -2258,11 +2253,7 @@ static void set_default_power_save(struct azx *chip)
 			dev_info(chip->card->dev, "device %04x:%04x is on the power_save denylist, forcing power_save to 0\n",
 				 q->subvendor, q->subdevice);
 			val = 0;
-			hda->runtime_pm_disabled = 1;
 		}
-	} else if (pm_blacklist > 0) {
-		dev_info(chip->card->dev, "Forcing power_save to 0 via option\n");
-		val = 0;
 	}
 	snd_hda_set_power_save(&chip->bus, val * 1000);
 }
@@ -2504,8 +2495,6 @@ static const struct pci_device_id azx_ids[] = {
 	{ PCI_DEVICE_DATA(INTEL, HDA_ARL_S, AZX_DRIVER_SKL | AZX_DCAPS_INTEL_SKYLAKE) },
 	/* Arrow Lake */
 	{ PCI_DEVICE_DATA(INTEL, HDA_ARL, AZX_DRIVER_SKL | AZX_DCAPS_INTEL_SKYLAKE) },
-	/* Panther Lake */
-	{ PCI_DEVICE_DATA(INTEL, HDA_PTL, AZX_DRIVER_SKL | AZX_DCAPS_INTEL_LNL) },
 	/* Apollolake (Broxton-P) */
 	{ PCI_DEVICE_DATA(INTEL, HDA_APL, AZX_DRIVER_SKL | AZX_DCAPS_INTEL_BROXTON) },
 	/* Gemini-Lake */
@@ -2680,7 +2669,7 @@ static const struct pci_device_id azx_ids[] = {
 	  .driver_data = AZX_DRIVER_ATIHDMI_NS | AZX_DCAPS_PRESET_ATI_HDMI_NS |
 	  AZX_DCAPS_PM_RUNTIME },
 	/* GLENFLY */
-	{ PCI_DEVICE(PCI_VENDOR_ID_GLENFLY, PCI_ANY_ID),
+	{ PCI_DEVICE(0x6766, PCI_ANY_ID),
 	  .class = PCI_CLASS_MULTIMEDIA_HD_AUDIO << 8,
 	  .class_mask = 0xffffff,
 	  .driver_data = AZX_DRIVER_GFHDMI | AZX_DCAPS_POSFIX_LPIB |

@@ -830,6 +830,7 @@ static int hi3110_can_probe(struct spi_device *spi)
 	struct device *dev = &spi->dev;
 	struct net_device *net;
 	struct hi3110_priv *priv;
+	const void *match;
 	struct clk *clk;
 	u32 freq;
 	int ret;
@@ -873,7 +874,11 @@ static int hi3110_can_probe(struct spi_device *spi)
 		CAN_CTRLMODE_LISTENONLY |
 		CAN_CTRLMODE_BERR_REPORTING;
 
-	priv->model = (enum hi3110_model)(uintptr_t)spi_get_device_match_data(spi);
+	match = device_get_match_data(dev);
+	if (match)
+		priv->model = (enum hi3110_model)(uintptr_t)match;
+	else
+		priv->model = spi_get_device_id(spi)->driver_data;
 	priv->net = net;
 	priv->clk = clk;
 

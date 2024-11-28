@@ -21,18 +21,11 @@ struct xterm_wait {
 static irqreturn_t xterm_interrupt(int irq, void *data)
 {
 	struct xterm_wait *xterm = data;
-	int fd = -1, n_fds = 1;
-	ssize_t ret;
+	int fd;
 
-	ret = os_rcv_fd_msg(xterm->fd, &fd, n_fds,
-			    &xterm->pid, sizeof(xterm->pid));
-	if (ret == -EAGAIN)
+	fd = os_rcv_fd(xterm->fd, &xterm->pid);
+	if (fd == -EAGAIN)
 		return IRQ_NONE;
-
-	if (ret < 0)
-		fd = ret;
-	else if (ret != sizeof(xterm->pid))
-		fd = -EMSGSIZE;
 
 	xterm->new_fd = fd;
 	complete(&xterm->ready);

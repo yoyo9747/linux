@@ -157,9 +157,6 @@ enum hwsim_commands {
  *	to provide details about peer measurement request (nl80211_peer_measurement_attrs)
  * @HWSIM_ATTR_PMSR_RESULT: nested attributed used with %HWSIM_CMD_REPORT_PMSR
  *	to provide peer measurement result (nl80211_peer_measurement_attrs)
- * @HWSIM_ATTR_MULTI_RADIO: Register multiple wiphy radios (flag).
- *	Adds one radio for each band. Number of supported channels will be set for
- *	each radio instead of for the wiphy.
  * @__HWSIM_ATTR_MAX: enum limit
  */
 enum hwsim_attrs {
@@ -192,7 +189,6 @@ enum hwsim_attrs {
 	HWSIM_ATTR_PMSR_SUPPORT,
 	HWSIM_ATTR_PMSR_REQUEST,
 	HWSIM_ATTR_PMSR_RESULT,
-	HWSIM_ATTR_MULTI_RADIO,
 	__HWSIM_ATTR_MAX,
 };
 #define HWSIM_ATTR_MAX (__HWSIM_ATTR_MAX - 1)
@@ -261,7 +257,7 @@ enum hwsim_tx_rate_flags {
 };
 
 /**
- * struct hwsim_tx_rate_flag - rate selection/status
+ * struct hwsim_tx_rate - rate selection/status
  *
  * @idx: rate index to attempt to send with
  * @flags: the rate flags according to &enum hwsim_tx_rate_flags
@@ -299,7 +295,7 @@ enum hwsim_vqs {
 };
 
 /**
- * enum hwsim_rate_info_attributes - bitrate information.
+ * enum hwsim_rate_info -- bitrate information.
  *
  * Information about a receiving or transmitting bitrate
  * that can be mapped to struct rate_info

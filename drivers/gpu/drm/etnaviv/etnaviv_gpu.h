@@ -11,7 +11,6 @@
 #include "etnaviv_mmu.h"
 #include "etnaviv_drv.h"
 #include "common.xml.h"
-#include "state.xml.h"
 
 struct etnaviv_gem_submit;
 struct etnaviv_vram_mapping;
@@ -171,13 +170,6 @@ static inline void gpu_write(struct etnaviv_gpu *gpu, u32 reg, u32 data)
 
 static inline u32 gpu_read(struct etnaviv_gpu *gpu, u32 reg)
 {
-	/* On some variants, such as the GC7000r6009, some FE registers
-	 * need two reads to be consistent. Do that extra read here and
-	 * throw away the result.
-	 */
-	if (reg >= VIVS_FE_DMA_STATUS && reg <= VIVS_FE_AUTO_FLUSH)
-		readl(gpu->mmio + reg);
-
 	return readl(gpu->mmio + reg);
 }
 

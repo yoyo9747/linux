@@ -13,7 +13,7 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_host.h>

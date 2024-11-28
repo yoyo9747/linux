@@ -18,7 +18,7 @@
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
 #include <linux/atomic.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <media/v4l2-common.h>
 
@@ -214,13 +214,13 @@ static void uvc_fixup_video_ctrl(struct uvc_streaming *stream,
 		 * Compute a bandwidth estimation by multiplying the frame
 		 * size by the number of video frames per second, divide the
 		 * result by the number of USB frames (or micro-frames for
-		 * high- and super-speed devices) per second and add the UVC
-		 * header size (assumed to be 12 bytes long).
+		 * high-speed devices) per second and add the UVC header size
+		 * (assumed to be 12 bytes long).
 		 */
 		bandwidth = frame->wWidth * frame->wHeight / 8 * format->bpp;
 		bandwidth *= 10000000 / interval + 1;
 		bandwidth /= 1000;
-		if (stream->dev->udev->speed >= USB_SPEED_HIGH)
+		if (stream->dev->udev->speed == USB_SPEED_HIGH)
 			bandwidth /= 8;
 		bandwidth += 12;
 
@@ -466,49 +466,18 @@ static inline ktime_t uvc_video_get_time(void)
 		return ktime_get_real();
 }
 
-static void uvc_video_clock_add_sample(struct uvc_clock *clock,
-				       const struct uvc_clock_sample *sample)
-{
-	unsigned long flags;
-
-	/*
-	 * If we write new data on the position where we had the last
-	 * overflow, remove the overflow pointer. There is no SOF overflow
-	 * in the whole circular buffer.
-	 */
-	if (clock->head == clock->last_sof_overflow)
-		clock->last_sof_overflow = -1;
-
-	spin_lock_irqsave(&clock->lock, flags);
-
-	if (clock->count > 0 && clock->last_sof > sample->dev_sof) {
-		/*
-		 * Remove data from the circular buffer that is older than the
-		 * last SOF overflow. We only support one SOF overflow per
-		 * circular buffer.
-		 */
-		if (clock->last_sof_overflow != -1)
-			clock->count = (clock->head - clock->last_sof_overflow
-					+ clock->size) % clock->size;
-		clock->last_sof_overflow = clock->head;
-	}
-
-	/* Add sample. */
-	clock->samples[clock->head] = *sample;
-	clock->head = (clock->head + 1) % clock->size;
-	clock->count = min(clock->count + 1, clock->size);
-
-	spin_unlock_irqrestore(&clock->lock, flags);
-}
-
 static void
 uvc_video_clock_decode(struct uvc_streaming *stream, struct uvc_buffer *buf,
 		       const u8 *data, int len)
 {
-	struct uvc_clock_sample sample;
+	struct uvc_clock_sample *sample;
 	unsigned int header_size;
 	bool has_pts = false;
 	bool has_scr = false;
+	unsigned long flags;
+	ktime_t time;
+	u16 host_sof;
+	u16 dev_sof;
 
 	switch (data[1] & (UVC_STREAM_PTS | UVC_STREAM_SCR)) {
 	case UVC_STREAM_PTS | UVC_STREAM_SCR:
@@ -553,51 +522,14 @@ uvc_video_clock_decode(struct uvc_streaming *stream, struct uvc_buffer *buf,
 	 * all the data packets of the same frame contains the same SOF. In that
 	 * case only the first one will match the host_sof.
 	 */
-	sample.dev_sof = get_unaligned_le16(&data[header_size - 2]);
-	if (sample.dev_sof == stream->clock.last_sof)
+	dev_sof = get_unaligned_le16(&data[header_size - 2]);
+	if (dev_sof == stream->clock.last_sof)
 		return;
 
-	sample.dev_stc = get_unaligned_le32(&data[header_size - 6]);
+	stream->clock.last_sof = dev_sof;
 
-	/*
-	 * STC (Source Time Clock) is the clock used by the camera. The UVC 1.5
-	 * standard states that it "must be captured when the first video data
-	 * of a video frame is put on the USB bus". This is generally understood
-	 * as requiring devices to clear the payload header's SCR bit before
-	 * the first packet containing video data.
-	 *
-	 * Most vendors follow that interpretation, but some (namely SunplusIT
-	 * on some devices) always set the `UVC_STREAM_SCR` bit, fill the SCR
-	 * field with 0's,and expect that the driver only processes the SCR if
-	 * there is data in the packet.
-	 *
-	 * Ignore all the hardware timestamp information if we haven't received
-	 * any data for this frame yet, the packet contains no data, and both
-	 * STC and SOF are zero. This heuristics should be safe on compliant
-	 * devices. This should be safe with compliant devices, as in the very
-	 * unlikely case where a UVC 1.1 device would send timing information
-	 * only before the first packet containing data, and both STC and SOF
-	 * happen to be zero for a particular frame, we would only miss one
-	 * clock sample from many and the clock recovery algorithm wouldn't
-	 * suffer from this condition.
-	 */
-	if (buf && buf->bytesused == 0 && len == header_size &&
-	    sample.dev_stc == 0 && sample.dev_sof == 0)
-		return;
-
-	sample.host_sof = usb_get_current_frame_number(stream->dev->udev);
-
-	/*
-	 * On some devices, like the Logitech C922, the device SOF does not run
-	 * at a stable rate of 1kHz. For those devices use the host SOF instead.
-	 * In the tests performed so far, this improves the timestamp precision.
-	 * This is probably explained by a small packet handling jitter from the
-	 * host, but the exact reason hasn't been fully determined.
-	 */
-	if (stream->dev->quirks & UVC_QUIRK_INVALID_DEVICE_SOF)
-		sample.dev_sof = sample.host_sof;
-
-	sample.host_time = uvc_video_get_time();
+	host_sof = usb_get_current_frame_number(stream->dev->udev);
+	time = uvc_video_get_time();
 
 	/*
 	 * The UVC specification allows device implementations that can't obtain
@@ -620,29 +552,46 @@ uvc_video_clock_decode(struct uvc_streaming *stream, struct uvc_buffer *buf,
 	 * the 8 LSBs of the delta are kept.
 	 */
 	if (stream->clock.sof_offset == (u16)-1) {
-		u16 delta_sof = (sample.host_sof - sample.dev_sof) & 255;
+		u16 delta_sof = (host_sof - dev_sof) & 255;
 		if (delta_sof >= 10)
 			stream->clock.sof_offset = delta_sof;
 		else
 			stream->clock.sof_offset = 0;
 	}
 
-	sample.dev_sof = (sample.dev_sof + stream->clock.sof_offset) & 2047;
-	uvc_video_clock_add_sample(&stream->clock, &sample);
-	stream->clock.last_sof = sample.dev_sof;
+	dev_sof = (dev_sof + stream->clock.sof_offset) & 2047;
+
+	spin_lock_irqsave(&stream->clock.lock, flags);
+
+	sample = &stream->clock.samples[stream->clock.head];
+	sample->dev_stc = get_unaligned_le32(&data[header_size - 6]);
+	sample->dev_sof = dev_sof;
+	sample->host_sof = host_sof;
+	sample->host_time = time;
+
+	/* Update the sliding window head and count. */
+	stream->clock.head = (stream->clock.head + 1) % stream->clock.size;
+
+	if (stream->clock.count < stream->clock.size)
+		stream->clock.count++;
+
+	spin_unlock_irqrestore(&stream->clock.lock, flags);
 }
 
-static void uvc_video_clock_reset(struct uvc_clock *clock)
+static void uvc_video_clock_reset(struct uvc_streaming *stream)
 {
+	struct uvc_clock *clock = &stream->clock;
+
 	clock->head = 0;
 	clock->count = 0;
 	clock->last_sof = -1;
-	clock->last_sof_overflow = -1;
 	clock->sof_offset = -1;
 }
 
-static int uvc_video_clock_init(struct uvc_clock *clock)
+static int uvc_video_clock_init(struct uvc_streaming *stream)
 {
+	struct uvc_clock *clock = &stream->clock;
+
 	spin_lock_init(&clock->lock);
 	clock->size = 32;
 
@@ -651,15 +600,15 @@ static int uvc_video_clock_init(struct uvc_clock *clock)
 	if (clock->samples == NULL)
 		return -ENOMEM;
 
-	uvc_video_clock_reset(clock);
+	uvc_video_clock_reset(stream);
 
 	return 0;
 }
 
-static void uvc_video_clock_cleanup(struct uvc_clock *clock)
+static void uvc_video_clock_cleanup(struct uvc_streaming *stream)
 {
-	kfree(clock->samples);
-	clock->samples = NULL;
+	kfree(stream->clock.samples);
+	stream->clock.samples = NULL;
 }
 
 /*
@@ -760,11 +709,11 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 	unsigned long flags;
 	u64 timestamp;
 	u32 delta_stc;
-	u32 y1;
+	u32 y1, y2;
 	u32 x1, x2;
 	u32 mean;
 	u32 sof;
-	u64 y, y2;
+	u64 y;
 
 	if (!uvc_hw_timestamps_param)
 		return;
@@ -779,11 +728,11 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 
 	spin_lock_irqsave(&clock->lock, flags);
 
-	if (clock->count < 2)
+	if (clock->count < clock->size)
 		goto done;
 
-	first = &clock->samples[(clock->head - clock->count + clock->size) % clock->size];
-	last = &clock->samples[(clock->head - 1 + clock->size) % clock->size];
+	first = &clock->samples[clock->head];
+	last = &clock->samples[(clock->head - 1) % clock->size];
 
 	/* First step, PTS to SOF conversion. */
 	delta_stc = buf->pts - (1UL << 31);
@@ -797,18 +746,6 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 	if (y2 < y1)
 		y2 += 2048 << 16;
 
-	/*
-	 * Have at least 1/4 of a second of timestamps before we
-	 * try to do any calculation. Otherwise we do not have enough
-	 * precision. This value was determined by running Android CTS
-	 * on different devices.
-	 *
-	 * dev_sof runs at 1KHz, and we have a fixed point precision of
-	 * 16 bits.
-	 */
-	if ((y2 - y1) < ((1000 / 4) << 16))
-		goto done;
-
 	y = (u64)(y2 - y1) * (1ULL << 31) + (u64)y1 * (u64)x2
 	  - (u64)y2 * (u64)x1;
 	y = div_u64(y, x2 - x1);
@@ -816,7 +753,7 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 	sof = y;
 
 	uvc_dbg(stream->dev, CLOCK,
-		"%s: PTS %u y %llu.%06llu SOF %u.%06llu (x1 %u x2 %u y1 %u y2 %llu SOF offset %u)\n",
+		"%s: PTS %u y %llu.%06llu SOF %u.%06llu (x1 %u x2 %u y1 %u y2 %u SOF offset %u)\n",
 		stream->dev->name, buf->pts,
 		y >> 16, div_u64((y & 0xffff) * 1000000, 65536),
 		sof >> 16, div_u64(((u64)sof & 0xffff) * 1000000LLU, 65536),
@@ -831,7 +768,7 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 		goto done;
 
 	y1 = NSEC_PER_SEC;
-	y2 = ktime_to_ns(ktime_sub(last->host_time, first->host_time)) + y1;
+	y2 = (u32)ktime_to_ns(ktime_sub(last->host_time, first->host_time)) + y1;
 
 	/*
 	 * Interpolated and host SOF timestamps can wrap around at slightly
@@ -852,7 +789,7 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 	timestamp = ktime_to_ns(first->host_time) + y - y1;
 
 	uvc_dbg(stream->dev, CLOCK,
-		"%s: SOF %u.%06llu y %llu ts %llu buf ts %llu (x1 %u/%u/%u x2 %u/%u/%u y1 %u y2 %llu)\n",
+		"%s: SOF %u.%06llu y %llu ts %llu buf ts %llu (x1 %u/%u/%u x2 %u/%u/%u y1 %u y2 %u)\n",
 		stream->dev->name,
 		sof >> 16, div_u64(((u64)sof & 0xffff) * 1000000LLU, 65536),
 		y, timestamp, vbuf->vb2_buf.timestamp,
@@ -2134,7 +2071,7 @@ int uvc_video_resume(struct uvc_streaming *stream, int reset)
 
 	stream->frozen = 0;
 
-	uvc_video_clock_reset(&stream->clock);
+	uvc_video_clock_reset(stream);
 
 	if (!uvc_queue_streaming(&stream->queue))
 		return 0;
@@ -2283,7 +2220,7 @@ int uvc_video_start_streaming(struct uvc_streaming *stream)
 {
 	int ret;
 
-	ret = uvc_video_clock_init(&stream->clock);
+	ret = uvc_video_clock_init(stream);
 	if (ret < 0)
 		return ret;
 
@@ -2301,7 +2238,7 @@ int uvc_video_start_streaming(struct uvc_streaming *stream)
 error_video:
 	usb_set_interface(stream->dev->udev, stream->intfnum, 0);
 error_commit:
-	uvc_video_clock_cleanup(&stream->clock);
+	uvc_video_clock_cleanup(stream);
 
 	return ret;
 }
@@ -2329,5 +2266,5 @@ void uvc_video_stop_streaming(struct uvc_streaming *stream)
 		usb_clear_halt(stream->dev->udev, pipe);
 	}
 
-	uvc_video_clock_cleanup(&stream->clock);
+	uvc_video_clock_cleanup(stream);
 }

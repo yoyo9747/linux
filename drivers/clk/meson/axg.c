@@ -2183,8 +2183,6 @@ static struct platform_driver axg_driver = {
 		.of_match_table = clkc_match_table,
 	},
 };
-module_platform_driver(axg_driver);
 
-MODULE_DESCRIPTION("Amlogic AXG Main Clock Controller driver");
+module_platform_driver(axg_driver);
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(CLK_MESON);

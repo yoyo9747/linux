@@ -561,8 +561,8 @@ MODULE_DEVICE_TABLE(of, of_ipmi_ipmb_match);
 #endif
 
 static const struct i2c_device_id ipmi_ipmb_id[] = {
-	{ DEVICE_NAME },
-	{}
+	{ DEVICE_NAME, 0 },
+	{},
 };
 MODULE_DEVICE_TABLE(i2c, ipmi_ipmb_id);
 

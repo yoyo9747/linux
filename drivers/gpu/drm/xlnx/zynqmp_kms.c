@@ -120,13 +120,9 @@ static void zynqmp_dpsub_plane_atomic_update(struct drm_plane *plane,
 		zynqmp_disp_blend_set_global_alpha(dpsub->disp, true,
 						   plane->state->alpha >> 8);
 
-	/*
-	 * Unconditionally enable the layer, as it may have been disabled
-	 * previously either explicitly to reconfigure layer format, or
-	 * implicitly after DPSUB reset during display mode change. DRM
-	 * framework calls this callback for enabled planes only.
-	 */
-	zynqmp_disp_layer_enable(layer);
+	/* Enable or re-enable the plane if the format has changed. */
+	if (format_changed)
+		zynqmp_disp_layer_enable(layer);
 }
 
 static const struct drm_plane_helper_funcs zynqmp_dpsub_plane_helper_funcs = {
@@ -437,28 +433,23 @@ static int zynqmp_dpsub_kms_init(struct zynqmp_dpsub *dpsub)
 				DRM_BRIDGE_ATTACH_NO_CONNECTOR);
 	if (ret) {
 		dev_err(dpsub->dev, "failed to attach bridge to encoder\n");
-		goto err_encoder;
+		return ret;
 	}
 
 	/* Create the connector for the chain of bridges. */
 	connector = drm_bridge_connector_init(&dpsub->drm->dev, encoder);
 	if (IS_ERR(connector)) {
 		dev_err(dpsub->dev, "failed to created connector\n");
-		ret = PTR_ERR(connector);
-		goto err_encoder;
+		return PTR_ERR(connector);
 	}
 
 	ret = drm_connector_attach_encoder(connector, encoder);
 	if (ret < 0) {
 		dev_err(dpsub->dev, "failed to attach connector to encoder\n");
-		goto err_encoder;
+		return ret;
 	}
 
 	return 0;
-
-err_encoder:
-	drm_encoder_cleanup(encoder);
-	return ret;
 }
 
 static void zynqmp_dpsub_drm_release(struct drm_device *drm, void *res)
@@ -538,6 +529,5 @@ void zynqmp_dpsub_drm_cleanup(struct zynqmp_dpsub *dpsub)
 
 	drm_dev_unregister(drm);
 	drm_atomic_helper_shutdown(drm);
-	drm_encoder_cleanup(&dpsub->drm->encoder);
 	drm_kms_helper_poll_fini(drm);
 }

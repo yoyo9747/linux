@@ -18,7 +18,6 @@ properties:
   compatible:
     items:
       - const: nuvoton,ma35d1-reset
-      - const: syscon
 
   reg:
     maxItems: 1
@@ -38,7 +37,7 @@ examples:
   - |
 
     system-management@40460000 {
-        compatible = "nuvoton,ma35d1-reset", "syscon";
+        compatible = "nuvoton,ma35d1-reset";
         reg = <0x40460000 0x200>;
         #reset-cells = <1>;
     };

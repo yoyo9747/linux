@@ -245,20 +245,23 @@ static ssize_t gpio_keys_attr_store_helper(struct gpio_keys_drvdata *ddata,
 {
 	int n_events = get_n_events_by_type(type);
 	const unsigned long *bitmap = get_bm_events_by_type(ddata->input, type);
+	unsigned long *bits;
 	ssize_t error;
 	int i;
 
-	unsigned long *bits __free(bitmap) = bitmap_alloc(n_events, GFP_KERNEL);
+	bits = bitmap_alloc(n_events, GFP_KERNEL);
 	if (!bits)
 		return -ENOMEM;
 
 	error = bitmap_parselist(buf, bits, n_events);
 	if (error)
-		return error;
+		goto out;
 
 	/* First validate */
-	if (!bitmap_subset(bits, bitmap, n_events))
-		return -EINVAL;
+	if (!bitmap_subset(bits, bitmap, n_events)) {
+		error = -EINVAL;
+		goto out;
+	}
 
 	for (i = 0; i < ddata->pdata->nbuttons; i++) {
 		struct gpio_button_data *bdata = &ddata->data[i];
@@ -268,11 +271,12 @@ static ssize_t gpio_keys_attr_store_helper(struct gpio_keys_drvdata *ddata,
 
 		if (test_bit(*bdata->code, bits) &&
 		    !bdata->button->can_disable) {
-			return -EINVAL;
+			error = -EINVAL;
+			goto out;
 		}
 	}
 
-	guard(mutex)(&ddata->disable_lock);
+	mutex_lock(&ddata->disable_lock);
 
 	for (i = 0; i < ddata->pdata->nbuttons; i++) {
 		struct gpio_button_data *bdata = &ddata->data[i];
@@ -286,7 +290,11 @@ static ssize_t gpio_keys_attr_store_helper(struct gpio_keys_drvdata *ddata,
 			gpio_keys_enable_button(bdata);
 	}
 
-	return 0;
+	mutex_unlock(&ddata->disable_lock);
+
+out:
+	bitmap_free(bits);
+	return error;
 }
 
 #define ATTR_SHOW_FN(name, type, only_disabled)				\
@@ -462,10 +470,11 @@ static irqreturn_t gpio_keys_irq_isr(int irq, void *dev_id)
 {
 	struct gpio_button_data *bdata = dev_id;
 	struct input_dev *input = bdata->input;
+	unsigned long flags;
 
 	BUG_ON(irq != bdata->irq);
 
-	guard(spinlock_irqsave)(&bdata->lock);
+	spin_lock_irqsave(&bdata->lock, flags);
 
 	if (!bdata->key_pressed) {
 		if (bdata->button->wakeup)
@@ -488,6 +497,7 @@ static irqreturn_t gpio_keys_irq_isr(int irq, void *dev_id)
 			      ms_to_ktime(bdata->release_delay),
 			      HRTIMER_MODE_REL_HARD);
 out:
+	spin_unlock_irqrestore(&bdata->lock, flags);
 	return IRQ_HANDLED;
 }
 
@@ -758,6 +768,7 @@ gpio_keys_get_devtree_pdata(struct device *dev)
 {
 	struct gpio_keys_platform_data *pdata;
 	struct gpio_keys_button *button;
+	struct fwnode_handle *child;
 	int nbuttons, irq;
 
 	nbuttons = device_get_child_node_count(dev);
@@ -779,7 +790,7 @@ gpio_keys_get_devtree_pdata(struct device *dev)
 
 	device_property_read_string(dev, "label", &pdata->name);
 
-	device_for_each_child_node_scoped(dev, child) {
+	device_for_each_child_node(dev, child) {
 		if (is_of_node(child)) {
 			irq = of_irq_get_byname(to_of_node(child), "irq");
 			if (irq > 0)
@@ -797,6 +808,7 @@ gpio_keys_get_devtree_pdata(struct device *dev)
 		if (fwnode_property_read_u32(child, "linux,code",
 					     &button->code)) {
 			dev_err(dev, "Button without keycode\n");
+			fwnode_handle_put(child);
 			return ERR_PTR(-EINVAL);
 		}
 
@@ -1052,10 +1064,10 @@ static int gpio_keys_suspend(struct device *dev)
 		if (error)
 			return error;
 	} else {
-		guard(mutex)(&input->mutex);
-
+		mutex_lock(&input->mutex);
 		if (input_device_enabled(input))
 			gpio_keys_close(input);
+		mutex_unlock(&input->mutex);
 	}
 
 	return 0;
@@ -1065,19 +1077,19 @@ static int gpio_keys_resume(struct device *dev)
 {
 	struct gpio_keys_drvdata *ddata = dev_get_drvdata(dev);
 	struct input_dev *input = ddata->input;
-	int error;
+	int error = 0;
 
 	if (device_may_wakeup(dev)) {
 		gpio_keys_disable_wakeup(ddata);
 	} else {
-		guard(mutex)(&input->mutex);
-
-		if (input_device_enabled(input)) {
+		mutex_lock(&input->mutex);
+		if (input_device_enabled(input))
 			error = gpio_keys_open(input);
-			if (error)
-				return error;
-		}
+		mutex_unlock(&input->mutex);
 	}
+
+	if (error)
+		return error;
 
 	gpio_keys_report_state(ddata);
 	return 0;

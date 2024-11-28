@@ -987,23 +987,31 @@ static int img_hash_probe(struct platform_device *pdev)
 	}
 	dev_dbg(dev, "using IRQ channel %d\n", irq);
 
-	hdev->hash_clk = devm_clk_get_enabled(&pdev->dev, "hash");
+	hdev->hash_clk = devm_clk_get(&pdev->dev, "hash");
 	if (IS_ERR(hdev->hash_clk)) {
 		dev_err(dev, "clock initialization failed.\n");
 		err = PTR_ERR(hdev->hash_clk);
 		goto res_err;
 	}
 
-	hdev->sys_clk = devm_clk_get_enabled(&pdev->dev, "sys");
+	hdev->sys_clk = devm_clk_get(&pdev->dev, "sys");
 	if (IS_ERR(hdev->sys_clk)) {
 		dev_err(dev, "clock initialization failed.\n");
 		err = PTR_ERR(hdev->sys_clk);
 		goto res_err;
 	}
 
-	err = img_hash_dma_init(hdev);
+	err = clk_prepare_enable(hdev->hash_clk);
 	if (err)
 		goto res_err;
+
+	err = clk_prepare_enable(hdev->sys_clk);
+	if (err)
+		goto clk_err;
+
+	err = img_hash_dma_init(hdev);
+	if (err)
+		goto dma_err;
 
 	dev_dbg(dev, "using %s for DMA transfers\n",
 		dma_chan_name(hdev->dma_lch));
@@ -1024,6 +1032,10 @@ err_algs:
 	list_del(&hdev->list);
 	spin_unlock(&img_hash.lock);
 	dma_release_channel(hdev->dma_lch);
+dma_err:
+	clk_disable_unprepare(hdev->sys_clk);
+clk_err:
+	clk_disable_unprepare(hdev->hash_clk);
 res_err:
 	tasklet_kill(&hdev->done_task);
 	tasklet_kill(&hdev->dma_task);
@@ -1046,6 +1058,9 @@ static void img_hash_remove(struct platform_device *pdev)
 	tasklet_kill(&hdev->dma_task);
 
 	dma_release_channel(hdev->dma_lch);
+
+	clk_disable_unprepare(hdev->hash_clk);
+	clk_disable_unprepare(hdev->sys_clk);
 }
 
 #ifdef CONFIG_PM_SLEEP

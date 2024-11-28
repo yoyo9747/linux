@@ -9,8 +9,6 @@ title: Temperature Sensor ADC (TSADC) on Rockchip SoCs
 maintainers:
   - Heiko Stuebner <heiko@sntech.de>
 
-$ref: thermal-sensor.yaml#
-
 properties:
   compatible:
     enum:
@@ -78,8 +76,9 @@ required:
   - clocks
   - clock-names
   - resets
+  - "#thermal-sensor-cells"
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

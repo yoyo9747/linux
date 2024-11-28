@@ -338,10 +338,8 @@ static int of_get_regulation_constraints(struct device *dev,
  * @desc: regulator description
  *
  * Populates regulator_init_data structure by extracting data from device
- * tree node.
- *
- * Return: Pointer to a populated &struct regulator_init_data or NULL if
- *	   memory allocation fails.
+ * tree node, returns a pointer to the populated structure or NULL if memory
+ * alloc fails.
  */
 struct regulator_init_data *of_get_regulator_init_data(struct device *dev,
 					  struct device_node *node,
@@ -393,7 +391,7 @@ static void devm_of_regulator_put_matches(struct device *dev, void *res)
  * in place and an additional of_node reference is taken for each matched
  * regulator.
  *
- * Return: The number of matches found or a negative error number on failure.
+ * Returns the number of matches found or a negative error code on failure.
  */
 int of_regulator_match(struct device *dev, struct device_node *node,
 		       struct of_regulator_match *matches,
@@ -552,117 +550,13 @@ error:
 	return NULL;
 }
 
-/**
- * of_get_child_regulator - get a child regulator device node
- * based on supply name
- * @parent: Parent device node
- * @prop_name: Combination regulator supply name and "-supply"
- *
- * Traverse all child nodes.
- * Extract the child regulator device node corresponding to the supply name.
- *
- * Return: Pointer to the &struct device_node corresponding to the regulator
- *	   if found, or %NULL if not found.
- */
-static struct device_node *of_get_child_regulator(struct device_node *parent,
-						  const char *prop_name)
-{
-	struct device_node *regnode = NULL;
-	struct device_node *child = NULL;
-
-	for_each_child_of_node(parent, child) {
-		regnode = of_parse_phandle(child, prop_name, 0);
-		if (regnode)
-			goto err_node_put;
-
-		regnode = of_get_child_regulator(child, prop_name);
-		if (regnode)
-			goto err_node_put;
-	}
-	return NULL;
-
-err_node_put:
-	of_node_put(child);
-	return regnode;
-}
-
-/**
- * of_get_regulator - get a regulator device node based on supply name
- * @dev: Device pointer for the consumer (of regulator) device
- * @supply: regulator supply name
- *
- * Extract the regulator device node corresponding to the supply name.
- *
- * Return: Pointer to the &struct device_node corresponding to the regulator
- *	   if found, or %NULL if not found.
- */
-static struct device_node *of_get_regulator(struct device *dev, const char *supply)
-{
-	struct device_node *regnode = NULL;
-	char prop_name[64]; /* 64 is max size of property name */
-
-	dev_dbg(dev, "Looking up %s-supply from device tree\n", supply);
-
-	snprintf(prop_name, 64, "%s-supply", supply);
-	regnode = of_parse_phandle(dev->of_node, prop_name, 0);
-	if (regnode)
-		return regnode;
-
-	regnode = of_get_child_regulator(dev->of_node, prop_name);
-	if (regnode)
-		return regnode;
-
-	dev_dbg(dev, "Looking up %s property in node %pOF failed\n", prop_name, dev->of_node);
-	return NULL;
-}
-
-static struct regulator_dev *of_find_regulator_by_node(struct device_node *np)
+struct regulator_dev *of_find_regulator_by_node(struct device_node *np)
 {
 	struct device *dev;
 
 	dev = class_find_device_by_of_node(&regulator_class, np);
 
 	return dev ? dev_to_rdev(dev) : NULL;
-}
-
-/**
- * of_regulator_dev_lookup - lookup a regulator device with device tree only
- * @dev: Device pointer for regulator supply lookup.
- * @supply: Supply name or regulator ID.
- *
- * Return: Pointer to the &struct regulator_dev on success, or ERR_PTR()
- *	   encoded value on error.
- *
- * If successful, returns a pointer to the &struct regulator_dev that
- * corresponds to the name @supply and with the embedded &struct device
- * refcount incremented by one. The refcount must be dropped by calling
- * put_device().
- *
- * On failure one of the following ERR_PTR() encoded values is returned:
- * * -%ENODEV if lookup fails permanently.
- * * -%EPROBE_DEFER if lookup could succeed in the future.
- */
-struct regulator_dev *of_regulator_dev_lookup(struct device *dev,
-					      const char *supply)
-{
-	struct regulator_dev *r;
-	struct device_node *node;
-
-	node = of_get_regulator(dev, supply);
-	if (node) {
-		r = of_find_regulator_by_node(node);
-		of_node_put(node);
-		if (r)
-			return r;
-
-		/*
-		 * We have a node, but there is no device.
-		 * assume it has not registered yet.
-		 */
-		return ERR_PTR(-EPROBE_DEFER);
-	}
-
-	return ERR_PTR(-ENODEV);
 }
 
 /*
@@ -725,7 +619,7 @@ static bool of_coupling_find_node(struct device_node *src,
  * - all coupled regulators have the same number of regulator_dev phandles
  * - all regulators are linked to each other
  *
- * Return: True if all conditions are met; false otherwise.
+ * Returns true if all conditions are met.
  */
 bool of_check_coupling_data(struct regulator_dev *rdev)
 {
@@ -796,8 +690,8 @@ clean:
  *	  "regulator-coupled-with" property
  * @index: Index in phandles array
  *
- * Return: Pointer to the &struct regulator_dev parsed from DTS, or %NULL if
- *	   it has not yet been registered.
+ * Returns the regulator_dev pointer parsed from DTS. If it has not been yet
+ * registered, returns NULL
  */
 struct regulator_dev *of_parse_coupled_regulator(struct regulator_dev *rdev,
 						 int index)
@@ -841,31 +735,30 @@ static int is_supply_name(const char *name)
 	return 0;
 }
 
-/**
+/*
  * of_regulator_bulk_get_all - get multiple regulator consumers
  *
  * @dev:	Device to supply
  * @np:		device node to search for consumers
  * @consumers:  Configuration of consumers; clients are stored here.
  *
+ * @return number of regulators on success, an errno on failure.
+ *
  * This helper function allows drivers to get several regulator
  * consumers in one operation.  If any of the regulators cannot be
  * acquired then any regulators that were allocated will be freed
- * before returning to the caller, and @consumers will not be
- * changed.
- *
- * Return: Number of regulators on success, or a negative error number
- *	   on failure.
+ * before returning to the caller.
  */
 int of_regulator_bulk_get_all(struct device *dev, struct device_node *np,
 			      struct regulator_bulk_data **consumers)
 {
 	int num_consumers = 0;
 	struct regulator *tmp;
-	struct regulator_bulk_data *_consumers = NULL;
 	struct property *prop;
 	int i, n = 0, ret;
 	char name[64];
+
+	*consumers = NULL;
 
 	/*
 	 * first pass: get numbers of xxx-supply
@@ -876,7 +769,7 @@ restart:
 		i = is_supply_name(prop->name);
 		if (i == 0)
 			continue;
-		if (!_consumers) {
+		if (!*consumers) {
 			num_consumers++;
 			continue;
 		} else {
@@ -884,31 +777,28 @@ restart:
 			name[i] = '\0';
 			tmp = regulator_get(dev, name);
 			if (IS_ERR(tmp)) {
-				ret = PTR_ERR(tmp);
+				ret = -EINVAL;
 				goto error;
 			}
-			_consumers[n].consumer = tmp;
+			(*consumers)[n].consumer = tmp;
 			n++;
 			continue;
 		}
 	}
-	if (_consumers) {
-		*consumers = _consumers;
+	if (*consumers)
 		return num_consumers;
-	}
 	if (num_consumers == 0)
 		return 0;
-	_consumers = kmalloc_array(num_consumers,
+	*consumers = kmalloc_array(num_consumers,
 				   sizeof(struct regulator_bulk_data),
 				   GFP_KERNEL);
-	if (!_consumers)
+	if (!*consumers)
 		return -ENOMEM;
 	goto restart;
 
 error:
 	while (--n >= 0)
-		regulator_put(_consumers[n].consumer);
-	kfree(_consumers);
+		regulator_put(consumers[n]->consumer);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(of_regulator_bulk_get_all);

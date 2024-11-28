@@ -494,6 +494,7 @@ struct mceusb_dev {
 	u32 carrier;
 	unsigned char tx_mask;
 
+	char name[128];
 	char phys[64];
 	enum mceusb_model_type model;
 
@@ -773,7 +774,7 @@ static void mceusb_dev_printdata(struct mceusb_dev *ir, u8 *buf, int buf_len,
 
 /*
  * Schedule work that can't be done in interrupt handlers
- * (mceusb_dev_recv() and mce_write_callback()) nor BH work.
+ * (mceusb_dev_recv() and mce_write_callback()) nor tasklets.
  * Invokes mceusb_deferred_kevent() for recovering from
  * error events specified by the kevent bit field.
  */
@@ -1590,10 +1591,16 @@ static struct rc_dev *mceusb_init_rc_dev(struct mceusb_dev *ir)
 		goto out;
 	}
 
+	snprintf(ir->name, sizeof(ir->name), "%s (%04x:%04x)",
+		 mceusb_model[ir->model].name ?
+			mceusb_model[ir->model].name :
+			"Media Center Ed. eHome Infrared Remote Transceiver",
+		 le16_to_cpu(ir->usbdev->descriptor.idVendor),
+		 le16_to_cpu(ir->usbdev->descriptor.idProduct));
+
 	usb_make_path(ir->usbdev, ir->phys, sizeof(ir->phys));
 
-	rc->device_name = mceusb_model[ir->model].name ? :
-		"Media Center Ed. eHome Infrared Remote Transceiver";
+	rc->device_name = ir->name;
 	rc->input_phys = ir->phys;
 	usb_to_input_id(ir->usbdev, &rc->input_id);
 	rc->dev.parent = dev;

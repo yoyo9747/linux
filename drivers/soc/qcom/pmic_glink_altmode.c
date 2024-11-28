@@ -20,7 +20,7 @@
 
 #include <linux/soc/qcom/pmic_glink.h>
 
-#define PMIC_GLINK_MAX_PORTS	3
+#define PMIC_GLINK_MAX_PORTS	2
 
 #define USBC_SC8180X_NOTIFY_IND	0x13
 #define USBC_CMD_WRITE_REQ      0x15
@@ -520,17 +520,12 @@ static int pmic_glink_altmode_probe(struct auxiliary_device *adev,
 			return ret;
 	}
 
-	altmode->client = devm_pmic_glink_client_alloc(dev,
-						       altmode->owner_id,
-						       pmic_glink_altmode_callback,
-						       pmic_glink_altmode_pdr_notify,
-						       altmode);
-	if (IS_ERR(altmode->client))
-		return PTR_ERR(altmode->client);
-
-	pmic_glink_client_register(altmode->client);
-
-	return 0;
+	altmode->client = devm_pmic_glink_register_client(dev,
+							  altmode->owner_id,
+							  pmic_glink_altmode_callback,
+							  pmic_glink_altmode_pdr_notify,
+							  altmode);
+	return PTR_ERR_OR_ZERO(altmode->client);
 }
 
 static const struct auxiliary_device_id pmic_glink_altmode_id_table[] = {

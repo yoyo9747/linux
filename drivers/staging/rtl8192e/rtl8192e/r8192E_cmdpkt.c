@@ -16,18 +16,18 @@ bool rtl92e_send_cmd_pkt(struct net_device *dev, u32 type, const void *data,
 	struct sk_buff		*skb;
 	unsigned char		*seg_ptr;
 	struct cb_desc *tcb_desc;
-	u8				last_ini_pkt;
+	u8				bLastIniPkt;
 
 	struct tx_fwinfo_8190pci *pTxFwInfo = NULL;
 
 	do {
 		if ((len - frag_offset) > CMDPACKET_FRAG_SIZE) {
 			frag_length = CMDPACKET_FRAG_SIZE;
-			last_ini_pkt = 0;
+			bLastIniPkt = 0;
 
 		} else {
 			frag_length = (u16)(len - frag_offset);
-			last_ini_pkt = 1;
+			bLastIniPkt = 1;
 		}
 
 		if (type == DESC_PACKET_TYPE_NORMAL)
@@ -42,8 +42,8 @@ bool rtl92e_send_cmd_pkt(struct net_device *dev, u32 type, const void *data,
 		memcpy((unsigned char *)(skb->cb), &dev, sizeof(dev));
 		tcb_desc = (struct cb_desc *)(skb->cb + MAX_DEV_ADDR_SIZE);
 		tcb_desc->queue_index = TXCMD_QUEUE;
-		tcb_desc->cmd_or_init = type;
-		tcb_desc->last_ini_pkt = last_ini_pkt;
+		tcb_desc->bCmdOrInit = type;
+		tcb_desc->bLastIniPkt = bLastIniPkt;
 
 		if (type == DESC_PACKET_TYPE_NORMAL) {
 			tcb_desc->pkt_size = frag_length;

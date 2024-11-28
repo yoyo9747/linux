@@ -11,6 +11,7 @@
 #include <linux/lockdep.h>
 #include <linux/percpu_counter.h>
 #include "extent_io.h"
+#include "locking.h"
 
 struct extent_buffer;
 struct btrfs_path;

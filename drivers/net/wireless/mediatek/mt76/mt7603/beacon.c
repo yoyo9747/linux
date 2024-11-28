@@ -107,7 +107,7 @@ void mt7603_pre_tbtt_tasklet(struct tasklet_struct *t)
 	struct sk_buff *skb;
 	int i, nframes;
 
-	if (dev->mphy.offchannel)
+	if (mt76_hw(dev)->conf.flags & IEEE80211_CONF_OFFCHANNEL)
 		return;
 
 	data.dev = dev;

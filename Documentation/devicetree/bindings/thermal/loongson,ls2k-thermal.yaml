@@ -38,6 +38,7 @@ required:
   - compatible
   - reg
   - interrupts
+  - '#thermal-sensor-cells'
 
 if:
   properties:

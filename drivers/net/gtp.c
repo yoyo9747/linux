@@ -1269,9 +1269,6 @@ static netdev_tx_t gtp_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (skb_cow_head(skb, dev->needed_headroom))
 		goto tx_err;
 
-	if (!pskb_inet_may_pull(skb))
-		goto tx_err;
-
 	skb_reset_inner_headers(skb);
 
 	/* PDP context lookups in gtp_build_skb_*() need rcu read-side lock. */
@@ -1356,7 +1353,7 @@ static void gtp_link_setup(struct net_device *dev)
 
 	dev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
 	dev->priv_flags	|= IFF_NO_QUEUE;
-	dev->lltx = true;
+	dev->features	|= NETIF_F_LLTX;
 	netif_keep_dst(dev);
 
 	dev->needed_headroom	= LL_MAX_HEADER + GTP_IPV4_MAXLEN;
@@ -1653,7 +1650,7 @@ static struct sock *gtp_encap_enable_socket(int fd, int type,
 	sock = sockfd_lookup(fd, &err);
 	if (!sock) {
 		pr_debug("gtp socket fd=%d not found\n", fd);
-		return ERR_PTR(err);
+		return NULL;
 	}
 
 	sk = sock->sk;

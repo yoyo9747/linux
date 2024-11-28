@@ -435,7 +435,7 @@ static int __init ttc_setup_clockevent(struct clk *clk,
 				    &ttcce->ttc.clk_rate_change_nb);
 	if (err) {
 		pr_warn("Unable to register clock notifier.\n");
-		goto out_clk_unprepare;
+		goto out_kfree;
 	}
 
 	ttcce->ttc.freq = clk_get_rate(ttcce->ttc.clk);
@@ -465,15 +465,13 @@ static int __init ttc_setup_clockevent(struct clk *clk,
 	err = request_irq(irq, ttc_clock_event_interrupt,
 			  IRQF_TIMER, ttcce->ce.name, ttcce);
 	if (err)
-		goto out_clk_unprepare;
+		goto out_kfree;
 
 	clockevents_config_and_register(&ttcce->ce,
 			ttcce->ttc.freq / PRESCALE, 1, 0xfffe);
 
 	return 0;
 
-out_clk_unprepare:
-	clk_disable_unprepare(ttcce->ttc.clk);
 out_kfree:
 	kfree(ttcce);
 	return err;

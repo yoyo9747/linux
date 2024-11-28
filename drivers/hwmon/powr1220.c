@@ -279,11 +279,12 @@ static const struct hwmon_chip_info powr1220_chip_info = {
 	.info = powr1220_info,
 };
 
+static const struct i2c_device_id powr1220_ids[];
+
 static int powr1220_probe(struct i2c_client *client)
 {
 	struct powr1220_data *data;
 	struct device *hwmon_dev;
-	enum powr1xxx_chips chip;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -ENODEV;
@@ -292,8 +293,7 @@ static int powr1220_probe(struct i2c_client *client)
 	if (!data)
 		return -ENOMEM;
 
-	chip = (uintptr_t)i2c_get_match_data(client);
-	switch (chip) {
+	switch (i2c_match_id(powr1220_ids, client)->driver_data) {
 	case powr1014:
 		data->max_channels = 10;
 		break;

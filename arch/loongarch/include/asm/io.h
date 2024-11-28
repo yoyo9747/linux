@@ -25,16 +25,10 @@ extern void __init early_iounmap(void __iomem *addr, unsigned long size);
 static inline void __iomem *ioremap_prot(phys_addr_t offset, unsigned long size,
 					 unsigned long prot_val)
 {
-	switch (prot_val & _CACHE_MASK) {
-	case _CACHE_CC:
+	if (prot_val & _CACHE_CC)
 		return (void __iomem *)(unsigned long)(CACHE_BASE + offset);
-	case _CACHE_SUC:
+	else
 		return (void __iomem *)(unsigned long)(UNCACHE_BASE + offset);
-	case _CACHE_WUC:
-		return (void __iomem *)(unsigned long)(WRITECOMBINE_BASE + offset);
-	default:
-		return NULL;
-	}
 }
 
 #define ioremap(offset, size)		\

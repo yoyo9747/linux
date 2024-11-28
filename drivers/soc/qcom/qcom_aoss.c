@@ -394,7 +394,7 @@ static int qmp_cooling_device_add(struct qmp *qmp,
 
 static int qmp_cooling_devices_register(struct qmp *qmp)
 {
-	struct device_node *np;
+	struct device_node *np, *child;
 	int count = 0;
 	int ret;
 
@@ -407,13 +407,15 @@ static int qmp_cooling_devices_register(struct qmp *qmp)
 	if (!qmp->cooling_devs)
 		return -ENOMEM;
 
-	for_each_available_child_of_node_scoped(np, child) {
+	for_each_available_child_of_node(np, child) {
 		if (!of_property_present(child, "#cooling-cells"))
 			continue;
 		ret = qmp_cooling_device_add(qmp, &qmp->cooling_devs[count++],
 					     child);
-		if (ret)
+		if (ret) {
+			of_node_put(child);
 			goto unroll;
+		}
 	}
 
 	if (!count)

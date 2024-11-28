@@ -327,10 +327,10 @@ static inline int journal_res_get_fast(struct journal *j,
 				       unsigned flags)
 {
 	union journal_res_state old, new;
+	u64 v = atomic64_read(&j->reservations.counter);
 
-	old.v = atomic64_read(&j->reservations.counter);
 	do {
-		new.v = old.v;
+		old.v = new.v = v;
 
 		/*
 		 * Check if there is still room in the current journal
@@ -356,8 +356,8 @@ static inline int journal_res_get_fast(struct journal *j,
 
 		if (flags & JOURNAL_RES_GET_CHECK)
 			return 1;
-	} while (!atomic64_try_cmpxchg(&j->reservations.counter,
-				       &old.v, new.v));
+	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
+				       old.v, new.v)) != old.v);
 
 	res->ref	= true;
 	res->idx	= old.idx;

@@ -21,8 +21,13 @@ struct drm_crtc *vc4_find_crtc_for_encoder(struct kunit *test,
 	return NULL;
 }
 
-struct drm_plane *vc4_dummy_plane(struct kunit *test, struct drm_device *drm,
-				  enum drm_plane_type type);
+struct vc4_dummy_plane {
+	struct vc4_plane plane;
+};
+
+struct vc4_dummy_plane *vc4_dummy_plane(struct kunit *test,
+					struct drm_device *drm,
+					enum drm_plane_type type);
 
 struct vc4_dummy_crtc {
 	struct vc4_crtc crtc;

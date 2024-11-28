@@ -25,6 +25,10 @@
 #include <math.h>
 #include "pmu.h"
 
+#ifdef PARSER_DEBUG
+extern int expr_debug;
+#endif
+
 struct expr_id_data {
 	union {
 		struct {

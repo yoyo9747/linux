@@ -33,7 +33,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *, struct bch_fs *,
 	x(SYNC)				\
 	x(MOVE)				\
 	x(IN_WORKER)			\
-	x(SUBMITTED)			\
+	x(DONE)				\
 	x(IO_ERROR)			\
 	x(CONVERT_UNWRITTEN)
 

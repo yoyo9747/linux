@@ -47,7 +47,6 @@
 #include <linux/vfs.h>
 #include <linux/inet.h>
 #include <linux/in6.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
 #include <net/ipv6.h>
 #include <linux/netdevice.h>
@@ -229,7 +228,6 @@ static int __nfs_list_for_each_server(struct list_head *head,
 		ret = fn(server, data);
 		if (ret)
 			goto out;
-		cond_resched();
 		rcu_read_lock();
 	}
 	rcu_read_unlock();
@@ -550,9 +548,6 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 		seq_puts(m, ",local_lock=flock");
 	else
 		seq_puts(m, ",local_lock=posix");
-
-	if (nfss->flags & NFS_MOUNT_NO_ALIGNWRITE)
-		seq_puts(m, ",noalignwrite");
 
 	if (nfss->flags & NFS_MOUNT_WRITE_EAGER) {
 		if (nfss->flags & NFS_MOUNT_WRITE_WAIT)

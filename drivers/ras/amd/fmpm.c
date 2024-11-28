@@ -56,8 +56,6 @@
 
 #include "../debugfs.h"
 
-#include "atl/internal.h"
-
 #define INVALID_CPU			UINT_MAX
 
 /* Validation Bits */
@@ -117,6 +115,8 @@ static struct fru_rec **fru_records;
 
 /* system physical addresses array */
 static u64 *spa_entries;
+
+#define INVALID_SPA	~0ULL
 
 static struct dentry *fmpm_dfs_dir;
 static struct dentry *fmpm_dfs_entries;

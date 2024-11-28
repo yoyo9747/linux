@@ -154,7 +154,7 @@ struct ocfs2_lock_stats {
 
 struct ocfs2_lock_res {
 	void                    *l_priv;
-	const struct ocfs2_lock_res_ops *l_ops;
+	struct ocfs2_lock_res_ops *l_ops;
 
 
 	struct list_head         l_blocked_list;

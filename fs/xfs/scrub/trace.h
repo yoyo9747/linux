@@ -959,16 +959,18 @@ TRACE_EVENT(xfile_create,
 	TP_STRUCT__entry(
 		__field(dev_t, dev)
 		__field(unsigned long, ino)
-		__array(char, pathname, MAXNAMELEN)
+		__array(char, pathname, 256)
 	),
 	TP_fast_assign(
+		char		pathname[257];
 		char		*path;
 
 		__entry->ino = file_inode(xf->file)->i_ino;
-		path = file_path(xf->file, __entry->pathname, MAXNAMELEN);
+		memset(pathname, 0, sizeof(pathname));
+		path = file_path(xf->file, pathname, sizeof(pathname) - 1);
 		if (IS_ERR(path))
-			strncpy(__entry->pathname, "(unknown)",
-					sizeof(__entry->pathname));
+			path = "(unknown)";
+		strncpy(__entry->pathname, path, sizeof(__entry->pathname));
 	),
 	TP_printk("xfino 0x%lx path '%s'",
 		  __entry->ino,

@@ -7,7 +7,6 @@
  * Author: Li Zhengyu (lizhengyu3@huawei.com)
  *
  */
-#include <asm/asm.h>
 #include <linux/linkage.h>
 
 .text
@@ -35,7 +34,6 @@ SYM_CODE_END(purgatory_start)
 
 .data
 
-.align LGREG
 SYM_DATA(riscv_kernel_entry, .quad 0)
 
 .end

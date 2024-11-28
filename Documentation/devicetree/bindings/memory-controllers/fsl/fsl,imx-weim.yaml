@@ -134,8 +134,9 @@ allOf:
           properties:
             fsl,weim-cs-timing:
               items:
-                - description: CSxU
-                - description: CSxL
+                items:
+                  - description: CSxU
+                  - description: CSxL
   - if:
       properties:
         compatible:
@@ -150,9 +151,10 @@ allOf:
           properties:
             fsl,weim-cs-timing:
               items:
-                - description: CSCRxU
-                - description: CSCRxL
-                - description: CSCRxA
+                items:
+                  - description: CSCRxU
+                  - description: CSCRxL
+                  - description: CSCRxA
   - if:
       properties:
         compatible:
@@ -169,12 +171,13 @@ allOf:
           properties:
             fsl,weim-cs-timing:
               items:
-                - description: CSxGCR1
-                - description: CSxGCR2
-                - description: CSxRCR1
-                - description: CSxRCR2
-                - description: CSxWCR1
-                - description: CSxWCR2
+                items:
+                  - description: CSxGCR1
+                  - description: CSxGCR2
+                  - description: CSxRCR1
+                  - description: CSxRCR2
+                  - description: CSxWCR1
+                  - description: CSxWCR2
 
 additionalProperties: false
 

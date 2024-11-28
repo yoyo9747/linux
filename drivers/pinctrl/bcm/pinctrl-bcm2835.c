@@ -34,7 +34,6 @@
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
-#include <linux/string_choices.h>
 #include <linux/types.h>
 #include <dt-bindings/pinctrl/bcm2835.h>
 
@@ -753,7 +752,7 @@ static void bcm2835_pctl_pin_dbg_show(struct pinctrl_dev *pctldev,
 	int irq = irq_find_mapping(chip->irq.domain, offset);
 
 	seq_printf(s, "function %s in %s; irq %d (%s)",
-		fname, str_hi_lo(value),
+		fname, value ? "hi" : "lo",
 		irq, irq_type_names[pc->irq_type[offset]]);
 }
 
@@ -1280,7 +1279,6 @@ static const struct of_device_id bcm2835_pinctrl_match[] = {
 	},
 	{}
 };
-MODULE_DEVICE_TABLE(of, bcm2835_pinctrl_match);
 
 static int bcm2835_pinctrl_probe(struct platform_device *pdev)
 {
@@ -1430,7 +1428,7 @@ static int bcm2835_pinctrl_probe(struct platform_device *pdev)
 	}
 
 	dev_info(dev, "GPIO_OUT persistence: %s\n",
-		 str_yes_no(persist_gpio_outputs));
+		 persist_gpio_outputs ? "yes" : "no");
 
 	return 0;
 

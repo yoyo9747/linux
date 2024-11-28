@@ -1854,6 +1854,5 @@ error:
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(mb86a16_attach);
-MODULE_DESCRIPTION("Fujitsu MB86A16 DVB-S/DSS DC Receiver driver");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Manu Abraham");

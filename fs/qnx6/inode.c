@@ -184,17 +184,17 @@ static const char *qnx6_checkroot(struct super_block *s)
 	struct qnx6_dir_entry *dir_entry;
 	struct inode *root = d_inode(s->s_root);
 	struct address_space *mapping = root->i_mapping;
-	struct folio *folio = read_mapping_folio(mapping, 0, NULL);
-
-	if (IS_ERR(folio))
+	struct page *page = read_mapping_page(mapping, 0, NULL);
+	if (IS_ERR(page))
 		return "error reading root directory";
-	dir_entry = kmap_local_folio(folio, 0);
+	kmap(page);
+	dir_entry = page_address(page);
 	for (i = 0; i < 2; i++) {
 		/* maximum 3 bytes - due to match_root limitation */
 		if (strncmp(dir_entry[i].de_fname, match_root[i], 3))
 			error = 1;
 	}
-	folio_release_kmap(folio, dir_entry);
+	qnx6_put_page(page);
 	if (error)
 		return "error reading root directory.";
 	return NULL;
@@ -518,7 +518,7 @@ struct inode *qnx6_iget(struct super_block *sb, unsigned ino)
 	struct inode *inode;
 	struct qnx6_inode_info	*ei;
 	struct address_space *mapping;
-	struct folio *folio;
+	struct page *page;
 	u32 n, offs;
 
 	inode = iget_locked(sb, ino);
@@ -538,16 +538,17 @@ struct inode *qnx6_iget(struct super_block *sb, unsigned ino)
 		return ERR_PTR(-EIO);
 	}
 	n = (ino - 1) >> (PAGE_SHIFT - QNX6_INODE_SIZE_BITS);
+	offs = (ino - 1) & (~PAGE_MASK >> QNX6_INODE_SIZE_BITS);
 	mapping = sbi->inodes->i_mapping;
-	folio = read_mapping_folio(mapping, n, NULL);
-	if (IS_ERR(folio)) {
+	page = read_mapping_page(mapping, n, NULL);
+	if (IS_ERR(page)) {
 		pr_err("major problem: unable to read inode from dev %s\n",
 		       sb->s_id);
 		iget_failed(inode);
-		return ERR_CAST(folio);
+		return ERR_CAST(page);
 	}
-	offs = offset_in_folio(folio, (ino - 1) << QNX6_INODE_SIZE_BITS);
-	raw_inode = kmap_local_folio(folio, offs);
+	kmap(page);
+	raw_inode = ((struct qnx6_inode_entry *)page_address(page)) + offs;
 
 	inode->i_mode    = fs16_to_cpu(sbi, raw_inode->di_mode);
 	i_uid_write(inode, (uid_t)fs32_to_cpu(sbi, raw_inode->di_uid));
@@ -577,7 +578,7 @@ struct inode *qnx6_iget(struct super_block *sb, unsigned ino)
 		inode->i_mapping->a_ops = &qnx6_aops;
 	} else
 		init_special_inode(inode, inode->i_mode, 0);
-	folio_release_kmap(folio, raw_inode);
+	qnx6_put_page(page);
 	unlock_new_inode(inode);
 	return inode;
 }
@@ -693,5 +694,4 @@ static void __exit exit_qnx6_fs(void)
 
 module_init(init_qnx6_fs)
 module_exit(exit_qnx6_fs)
-MODULE_DESCRIPTION("QNX6 file system");
 MODULE_LICENSE("GPL");

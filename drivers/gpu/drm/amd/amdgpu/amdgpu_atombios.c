@@ -1018,9 +1018,8 @@ int amdgpu_atombios_get_clock_dividers(struct amdgpu_device *adev,
 		if (clock_type == COMPUTE_ENGINE_PLL_PARAM) {
 			args.v3.ulClockParams = cpu_to_le32((clock_type << 24) | clock);
 
-			if (amdgpu_atom_execute_table(adev->mode_info.atom_context,
-			    index, (uint32_t *)&args, sizeof(args)))
-				return -EINVAL;
+			amdgpu_atom_execute_table(adev->mode_info.atom_context, index, (uint32_t *)&args,
+				sizeof(args));
 
 			dividers->post_div = args.v3.ucPostDiv;
 			dividers->enable_post_div = (args.v3.ucCntlFlag &
@@ -1040,9 +1039,8 @@ int amdgpu_atombios_get_clock_dividers(struct amdgpu_device *adev,
 			if (strobe_mode)
 				args.v5.ucInputFlag = ATOM_PLL_INPUT_FLAG_PLL_STROBE_MODE_EN;
 
-			if (amdgpu_atom_execute_table(adev->mode_info.atom_context,
-			    index, (uint32_t *)&args, sizeof(args)))
-				return -EINVAL;
+			amdgpu_atom_execute_table(adev->mode_info.atom_context, index, (uint32_t *)&args,
+				sizeof(args));
 
 			dividers->post_div = args.v5.ucPostDiv;
 			dividers->enable_post_div = (args.v5.ucCntlFlag &
@@ -1060,9 +1058,8 @@ int amdgpu_atombios_get_clock_dividers(struct amdgpu_device *adev,
 		/* fusion */
 		args.v4.ulClock = cpu_to_le32(clock);	/* 10 khz */
 
-		if (amdgpu_atom_execute_table(adev->mode_info.atom_context,
-		    index, (uint32_t *)&args, sizeof(args)))
-			return -EINVAL;
+		amdgpu_atom_execute_table(adev->mode_info.atom_context, index, (uint32_t *)&args,
+			sizeof(args));
 
 		dividers->post_divider = dividers->post_div = args.v4.ucPostDiv;
 		dividers->real_clock = le32_to_cpu(args.v4.ulClock);
@@ -1073,9 +1070,8 @@ int amdgpu_atombios_get_clock_dividers(struct amdgpu_device *adev,
 		args.v6_in.ulClock.ulComputeClockFlag = clock_type;
 		args.v6_in.ulClock.ulClockFreq = cpu_to_le32(clock);	/* 10 khz */
 
-		if (amdgpu_atom_execute_table(adev->mode_info.atom_context,
-		    index, (uint32_t *)&args, sizeof(args)))
-			return -EINVAL;
+		amdgpu_atom_execute_table(adev->mode_info.atom_context, index, (uint32_t *)&args,
+			sizeof(args));
 
 		dividers->whole_fb_div = le16_to_cpu(args.v6_out.ulFbDiv.usFbDiv);
 		dividers->frac_fb_div = le16_to_cpu(args.v6_out.ulFbDiv.usFbDivFrac);
@@ -1117,9 +1113,8 @@ int amdgpu_atombios_get_memory_pll_dividers(struct amdgpu_device *adev,
 			if (strobe_mode)
 				args.ucInputFlag |= MPLL_INPUT_FLAG_STROBE_MODE_EN;
 
-			if (amdgpu_atom_execute_table(adev->mode_info.atom_context,
-			    index, (uint32_t *)&args, sizeof(args)))
-				return -EINVAL;
+			amdgpu_atom_execute_table(adev->mode_info.atom_context, index, (uint32_t *)&args,
+				sizeof(args));
 
 			mpll_param->clkfrac = le16_to_cpu(args.ulFbDiv.usFbDivFrac);
 			mpll_param->clkf = le16_to_cpu(args.ulFbDiv.usFbDiv);
@@ -1216,9 +1211,8 @@ int amdgpu_atombios_get_max_vddc(struct amdgpu_device *adev, u8 voltage_type,
 		args.v2.ucVoltageMode = 0;
 		args.v2.usVoltageLevel = 0;
 
-		if (amdgpu_atom_execute_table(adev->mode_info.atom_context,
-		    index, (uint32_t *)&args, sizeof(args)))
-			return -EINVAL;
+		amdgpu_atom_execute_table(adev->mode_info.atom_context, index, (uint32_t *)&args,
+			sizeof(args));
 
 		*voltage = le16_to_cpu(args.v2.usVoltageLevel);
 		break;
@@ -1227,9 +1221,8 @@ int amdgpu_atombios_get_max_vddc(struct amdgpu_device *adev, u8 voltage_type,
 		args.v3.ucVoltageMode = ATOM_GET_VOLTAGE_LEVEL;
 		args.v3.usVoltageLevel = cpu_to_le16(voltage_id);
 
-		if (amdgpu_atom_execute_table(adev->mode_info.atom_context,
-		    index, (uint32_t *)&args, sizeof(args)))
-			return -EINVAL;
+		amdgpu_atom_execute_table(adev->mode_info.atom_context, index, (uint32_t *)&args,
+			sizeof(args));
 
 		*voltage = le16_to_cpu(args.v3.usVoltageLevel);
 		break;
@@ -1491,8 +1484,6 @@ int amdgpu_atombios_init_mc_reg_table(struct amdgpu_device *adev,
 										(u32)le32_to_cpu(*((u32 *)reg_data + j));
 									j++;
 								} else if ((reg_table->mc_reg_address[i].pre_reg_data & LOW_NIBBLE_MASK) == DATA_EQU_PREV) {
-									if (i == 0)
-										continue;
 									reg_table->mc_reg_table_entry[num_ranges].mc_data[i] =
 										reg_table->mc_reg_table_entry[num_ranges].mc_data[i - 1];
 								}

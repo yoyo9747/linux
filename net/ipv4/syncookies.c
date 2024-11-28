@@ -496,6 +496,6 @@ out:
 out_free:
 	reqsk_free(req);
 out_drop:
-	sk_skb_reason_drop(sk, skb, reason);
+	kfree_skb_reason(skb, reason);
 	return NULL;
 }

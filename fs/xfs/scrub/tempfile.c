@@ -40,16 +40,11 @@ xrep_tempfile_create(
 	struct xfs_scrub	*sc,
 	uint16_t		mode)
 {
-	struct xfs_icreate_args	args = {
-		.pip		= sc->mp->m_rootip,
-		.mode		= mode,
-		.flags		= XFS_ICREATE_TMPFILE | XFS_ICREATE_UNLINKABLE,
-	};
 	struct xfs_mount	*mp = sc->mp;
 	struct xfs_trans	*tp = NULL;
-	struct xfs_dquot	*udqp;
-	struct xfs_dquot	*gdqp;
-	struct xfs_dquot	*pdqp;
+	struct xfs_dquot	*udqp = NULL;
+	struct xfs_dquot	*gdqp = NULL;
+	struct xfs_dquot	*pdqp = NULL;
 	struct xfs_trans_res	*tres;
 	struct xfs_inode	*dp = mp->m_rootip;
 	xfs_ino_t		ino;
@@ -70,7 +65,8 @@ xrep_tempfile_create(
 	 * inode should be completely root owned so that we don't fail due to
 	 * quota limits.
 	 */
-	error = xfs_icreate_dqalloc(&args, &udqp, &gdqp, &pdqp);
+	error = xfs_qm_vop_dqalloc(dp, GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, 0,
+			XFS_QMOPT_QUOTALL, &udqp, &gdqp, &pdqp);
 	if (error)
 		return error;
 
@@ -88,14 +84,17 @@ xrep_tempfile_create(
 		goto out_release_dquots;
 
 	/* Allocate inode, set up directory. */
-	error = xfs_dialloc(&tp, &args, &ino);
+	error = xfs_dialloc(&tp, dp->i_ino, mode, &ino);
 	if (error)
 		goto out_trans_cancel;
-	error = xfs_icreate(tp, ino, &args, &sc->tempip);
+	error = xfs_init_new_inode(&nop_mnt_idmap, tp, dp, ino, mode, 0, 0,
+			0, false, &sc->tempip);
 	if (error)
 		goto out_trans_cancel;
 
-	/* We don't touch file data, so drop the realtime flags. */
+	/* Change the ownership of the inode to root. */
+	VFS_I(sc->tempip)->i_uid = GLOBAL_ROOT_UID;
+	VFS_I(sc->tempip)->i_gid = GLOBAL_ROOT_GID;
 	sc->tempip->i_diflags &= ~(XFS_DIFLAG_REALTIME | XFS_DIFLAG_RTINHERIT);
 	xfs_trans_log_inode(tp, sc->tempip, XFS_ILOG_CORE);
 

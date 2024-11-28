@@ -1725,7 +1725,7 @@ static struct platform_driver grcan_driver = {
 		.of_match_table = grcan_match,
 	},
 	.probe = grcan_probe,
-	.remove = grcan_remove,
+	.remove_new = grcan_remove,
 };
 
 module_platform_driver(grcan_driver);

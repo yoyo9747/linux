@@ -32,7 +32,6 @@
 #define dev_fmt(fmt) "iio-backend: " fmt
 
 #include <linux/cleanup.h>
-#include <linux/debugfs.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/errno.h>
@@ -41,7 +40,6 @@
 #include <linux/mutex.h>
 #include <linux/property.h>
 #include <linux/slab.h>
-#include <linux/stringify.h>
 #include <linux/types.h>
 
 #include <linux/iio/backend.h>
@@ -54,14 +52,6 @@ struct iio_backend {
 	struct device *dev;
 	struct module *owner;
 	void *priv;
-	const char *name;
-	unsigned int cached_reg_addr;
-	/*
-	 * This index is relative to the frontend. Meaning that for
-	 * frontends with multiple backends, this will be the index of this
-	 * backend. Used for the debugfs directory name.
-	 */
-	u8 idx;
 };
 
 /*
@@ -121,142 +111,7 @@ static DEFINE_MUTEX(iio_back_lock);
 	__ret = iio_backend_check_op(__back, op);		\
 	if (!__ret)						\
 		__back->ops->op(__back, ##args);		\
-	else							\
-		dev_dbg(__back->dev, "Op(%s) not implemented\n",\
-			__stringify(op));			\
 }
-
-static ssize_t iio_backend_debugfs_read_reg(struct file *file,
-					    char __user *userbuf,
-					    size_t count, loff_t *ppos)
-{
-	struct iio_backend *back = file->private_data;
-	char read_buf[20];
-	unsigned int val;
-	int ret, len;
-
-	ret = iio_backend_op_call(back, debugfs_reg_access,
-				  back->cached_reg_addr, 0, &val);
-	if (ret)
-		return ret;
-
-	len = scnprintf(read_buf, sizeof(read_buf), "0x%X\n", val);
-
-	return simple_read_from_buffer(userbuf, count, ppos, read_buf, len);
-}
-
-static ssize_t iio_backend_debugfs_write_reg(struct file *file,
-					     const char __user *userbuf,
-					     size_t count, loff_t *ppos)
-{
-	struct iio_backend *back = file->private_data;
-	unsigned int val;
-	char buf[80];
-	ssize_t rc;
-	int ret;
-
-	rc = simple_write_to_buffer(buf, sizeof(buf), ppos, userbuf, count);
-	if (rc < 0)
-		return rc;
-
-	ret = sscanf(buf, "%i %i", &back->cached_reg_addr, &val);
-
-	switch (ret) {
-	case 1:
-		return count;
-	case 2:
-		ret = iio_backend_op_call(back, debugfs_reg_access,
-					  back->cached_reg_addr, val, NULL);
-		if (ret)
-			return ret;
-		return count;
-	default:
-		return -EINVAL;
-	}
-}
-
-static const struct file_operations iio_backend_debugfs_reg_fops = {
-	.open = simple_open,
-	.read = iio_backend_debugfs_read_reg,
-	.write = iio_backend_debugfs_write_reg,
-};
-
-static ssize_t iio_backend_debugfs_read_name(struct file *file,
-					     char __user *userbuf,
-					     size_t count, loff_t *ppos)
-{
-	struct iio_backend *back = file->private_data;
-	char name[128];
-	int len;
-
-	len = scnprintf(name, sizeof(name), "%s\n", back->name);
-
-	return simple_read_from_buffer(userbuf, count, ppos, name, len);
-}
-
-static const struct file_operations iio_backend_debugfs_name_fops = {
-	.open = simple_open,
-	.read = iio_backend_debugfs_read_name,
-};
-
-/**
- * iio_backend_debugfs_add - Add debugfs interfaces for Backends
- * @back: Backend device
- * @indio_dev: IIO device
- */
-void iio_backend_debugfs_add(struct iio_backend *back,
-			     struct iio_dev *indio_dev)
-{
-	struct dentry *d = iio_get_debugfs_dentry(indio_dev);
-	struct dentry *back_d;
-	char name[128];
-
-	if (!IS_ENABLED(CONFIG_DEBUG_FS) || !d)
-		return;
-	if (!back->ops->debugfs_reg_access && !back->name)
-		return;
-
-	snprintf(name, sizeof(name), "backend%d", back->idx);
-
-	back_d = debugfs_create_dir(name, d);
-	if (IS_ERR(back_d))
-		return;
-
-	if (back->ops->debugfs_reg_access)
-		debugfs_create_file("direct_reg_access", 0600, back_d, back,
-				    &iio_backend_debugfs_reg_fops);
-
-	if (back->name)
-		debugfs_create_file("name", 0400, back_d, back,
-				    &iio_backend_debugfs_name_fops);
-}
-EXPORT_SYMBOL_NS_GPL(iio_backend_debugfs_add, IIO_BACKEND);
-
-/**
- * iio_backend_debugfs_print_chan_status - Print channel status
- * @back: Backend device
- * @chan: Channel number
- * @buf: Buffer where to print the status
- * @len: Available space
- *
- * One usecase where this is useful is for testing test tones in a digital
- * interface and "ask" the backend to dump more details on why a test tone might
- * have errors.
- *
- * RETURNS:
- * Number of copied bytes on success, negative error code on failure.
- */
-ssize_t iio_backend_debugfs_print_chan_status(struct iio_backend *back,
-					      unsigned int chan, char *buf,
-					      size_t len)
-{
-	if (!IS_ENABLED(CONFIG_DEBUG_FS))
-		return -ENODEV;
-
-	return iio_backend_op_call(back, debugfs_print_chan_status, chan, buf,
-				   len);
-}
-EXPORT_SYMBOL_NS_GPL(iio_backend_debugfs_print_chan_status, IIO_BACKEND);
 
 /**
  * iio_backend_chan_enable - Enable a backend channel
@@ -292,29 +147,6 @@ static void __iio_backend_disable(void *back)
 }
 
 /**
- * iio_backend_disable - Backend disable
- * @back: Backend device
- */
-void iio_backend_disable(struct iio_backend *back)
-{
-	__iio_backend_disable(back);
-}
-EXPORT_SYMBOL_NS_GPL(iio_backend_disable, IIO_BACKEND);
-
-/**
- * iio_backend_enable - Backend enable
- * @back: Backend device
- *
- * RETURNS:
- * 0 on success, negative error number on failure.
- */
-int iio_backend_enable(struct iio_backend *back)
-{
-	return iio_backend_op_call(back, enable);
-}
-EXPORT_SYMBOL_NS_GPL(iio_backend_enable, IIO_BACKEND);
-
-/**
  * devm_iio_backend_enable - Device managed backend enable
  * @dev: Consumer device for the backend
  * @back: Backend device
@@ -326,7 +158,7 @@ int devm_iio_backend_enable(struct device *dev, struct iio_backend *back)
 {
 	int ret;
 
-	ret = iio_backend_enable(back);
+	ret = iio_backend_op_call(back, enable);
 	if (ret)
 		return ret;
 
@@ -525,25 +357,6 @@ int devm_iio_backend_request_buffer(struct device *dev,
 }
 EXPORT_SYMBOL_NS_GPL(devm_iio_backend_request_buffer, IIO_BACKEND);
 
-/**
- * iio_backend_read_raw - Read a channel attribute from a backend device.
- * @back:	Backend device
- * @chan:	IIO channel reference
- * @val:	First returned value
- * @val2:	Second returned value
- * @mask:	Specify the attribute to return
- *
- * RETURNS:
- * 0 on success, negative error number on failure.
- */
-int iio_backend_read_raw(struct iio_backend *back,
-			 struct iio_chan_spec const *chan, int *val, int *val2,
-			 long mask)
-{
-	return iio_backend_op_call(back, read_raw, chan, val, val2, mask);
-}
-EXPORT_SYMBOL_NS_GPL(iio_backend_read_raw, IIO_BACKEND);
-
 static struct iio_backend *iio_backend_from_indio_dev_parent(const struct device *dev)
 {
 	struct iio_backend *back = ERR_PTR(-ENODEV), *iter;
@@ -638,6 +451,7 @@ EXPORT_SYMBOL_NS_GPL(iio_backend_ext_info_set, IIO_BACKEND);
 
 /**
  * iio_backend_extend_chan_spec - Extend an IIO channel
+ * @indio_dev: IIO device
  * @back: Backend device
  * @chan: IIO channel
  *
@@ -647,7 +461,8 @@ EXPORT_SYMBOL_NS_GPL(iio_backend_ext_info_set, IIO_BACKEND);
  * RETURNS:
  * 0 on success, negative error number on failure.
  */
-int iio_backend_extend_chan_spec(struct iio_backend *back,
+int iio_backend_extend_chan_spec(struct iio_dev *indio_dev,
+				 struct iio_backend *back,
 				 struct iio_chan_spec *chan)
 {
 	const struct iio_chan_spec_ext_info *frontend_ext_info = chan->ext_info;
@@ -718,10 +533,19 @@ static int __devm_iio_backend_get(struct device *dev, struct iio_backend *back)
 	return 0;
 }
 
-static struct iio_backend *__devm_iio_backend_fwnode_get(struct device *dev, const char *name,
-							 struct fwnode_handle *fwnode)
+/**
+ * devm_iio_backend_get - Device managed backend device get
+ * @dev: Consumer device for the backend
+ * @name: Backend name
+ *
+ * Get's the backend associated with @dev.
+ *
+ * RETURNS:
+ * A backend pointer, negative error pointer otherwise.
+ */
+struct iio_backend *devm_iio_backend_get(struct device *dev, const char *name)
 {
-	struct fwnode_handle *fwnode_back;
+	struct fwnode_handle *fwnode;
 	struct iio_backend *back;
 	unsigned int index;
 	int ret;
@@ -736,65 +560,30 @@ static struct iio_backend *__devm_iio_backend_fwnode_get(struct device *dev, con
 		index = 0;
 	}
 
-	fwnode_back = fwnode_find_reference(fwnode, "io-backends", index);
-	if (IS_ERR(fwnode))
-		return dev_err_cast_probe(dev, fwnode,
-					  "Cannot get Firmware reference\n");
+	fwnode = fwnode_find_reference(dev_fwnode(dev), "io-backends", index);
+	if (IS_ERR(fwnode)) {
+		dev_err_probe(dev, PTR_ERR(fwnode),
+			      "Cannot get Firmware reference\n");
+		return ERR_CAST(fwnode);
+	}
 
 	guard(mutex)(&iio_back_lock);
 	list_for_each_entry(back, &iio_back_list, entry) {
-		if (!device_match_fwnode(back->dev, fwnode_back))
+		if (!device_match_fwnode(back->dev, fwnode))
 			continue;
 
-		fwnode_handle_put(fwnode_back);
+		fwnode_handle_put(fwnode);
 		ret = __devm_iio_backend_get(dev, back);
 		if (ret)
 			return ERR_PTR(ret);
 
-		if (name)
-			back->idx = index;
-
 		return back;
 	}
 
-	fwnode_handle_put(fwnode_back);
+	fwnode_handle_put(fwnode);
 	return ERR_PTR(-EPROBE_DEFER);
 }
-
-/**
- * devm_iio_backend_get - Device managed backend device get
- * @dev: Consumer device for the backend
- * @name: Backend name
- *
- * Get's the backend associated with @dev.
- *
- * RETURNS:
- * A backend pointer, negative error pointer otherwise.
- */
-struct iio_backend *devm_iio_backend_get(struct device *dev, const char *name)
-{
-	return __devm_iio_backend_fwnode_get(dev, name, dev_fwnode(dev));
-}
 EXPORT_SYMBOL_NS_GPL(devm_iio_backend_get, IIO_BACKEND);
-
-/**
- * devm_iio_backend_fwnode_get - Device managed backend firmware node get
- * @dev: Consumer device for the backend
- * @name: Backend name
- * @fwnode: Firmware node of the backend consumer
- *
- * Get's the backend associated with a firmware node.
- *
- * RETURNS:
- * A backend pointer, negative error pointer otherwise.
- */
-struct iio_backend *devm_iio_backend_fwnode_get(struct device *dev,
-						const char *name,
-						struct fwnode_handle *fwnode)
-{
-	return __devm_iio_backend_fwnode_get(dev, name, fwnode);
-}
-EXPORT_SYMBOL_NS_GPL(devm_iio_backend_fwnode_get, IIO_BACKEND);
 
 /**
  * __devm_iio_backend_get_from_fwnode_lookup - Device managed fwnode backend device get
@@ -852,20 +641,20 @@ static void iio_backend_unregister(void *arg)
 /**
  * devm_iio_backend_register - Device managed backend device register
  * @dev: Backend device being registered
- * @info: Backend info
+ * @ops: Backend ops
  * @priv: Device private data
  *
- * @info is mandatory. Not providing it results in -EINVAL.
+ * @ops is mandatory. Not providing it results in -EINVAL.
  *
  * RETURNS:
  * 0 on success, negative error number on failure.
  */
 int devm_iio_backend_register(struct device *dev,
-			      const struct iio_backend_info *info, void *priv)
+			      const struct iio_backend_ops *ops, void *priv)
 {
 	struct iio_backend *back;
 
-	if (!info || !info->ops)
+	if (!ops)
 		return dev_err_probe(dev, -EINVAL, "No backend ops given\n");
 
 	/*
@@ -878,8 +667,7 @@ int devm_iio_backend_register(struct device *dev,
 	if (!back)
 		return -ENOMEM;
 
-	back->ops = info->ops;
-	back->name = info->name;
+	back->ops = ops;
 	back->owner = dev->driver->owner;
 	back->dev = dev;
 	back->priv = priv;

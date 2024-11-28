@@ -330,7 +330,8 @@ static irqreturn_t stk8ba50_trigger_handler(int irq, void *p)
 			goto err;
 		}
 	} else {
-		iio_for_each_active_channel(indio_dev, bit) {
+		for_each_set_bit(bit, indio_dev->active_scan_mask,
+				 indio_dev->masklength) {
 			ret = stk8ba50_read_accel(data,
 						  stk8ba50_channel_table[bit]);
 			if (ret < 0)
@@ -524,7 +525,7 @@ static DEFINE_SIMPLE_DEV_PM_OPS(stk8ba50_pm_ops, stk8ba50_suspend,
 				stk8ba50_resume);
 
 static const struct i2c_device_id stk8ba50_i2c_id[] = {
-	{ "stk8ba50" },
+	{"stk8ba50", 0},
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, stk8ba50_i2c_id);

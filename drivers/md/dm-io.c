@@ -347,7 +347,7 @@ static void do_region(const blk_opf_t opf, unsigned int region,
 			break;
 		default:
 			num_bvecs = bio_max_segs(dm_sector_div_up(remaining,
-						(PAGE_SIZE >> SECTOR_SHIFT)) + 1);
+						(PAGE_SIZE >> SECTOR_SHIFT)));
 		}
 
 		bio = bio_alloc_bioset(where->bdev, num_bvecs, opf, GFP_NOIO,
@@ -384,12 +384,15 @@ static void do_region(const blk_opf_t opf, unsigned int region,
 
 static void dispatch_io(blk_opf_t opf, unsigned int num_regions,
 			struct dm_io_region *where, struct dpages *dp,
-			struct io *io, unsigned short ioprio)
+			struct io *io, int sync, unsigned short ioprio)
 {
 	int i;
 	struct dpages old_pages = *dp;
 
 	BUG_ON(num_regions > DM_IO_MAX_REGIONS);
+
+	if (sync)
+		opf |= REQ_SYNC;
 
 	/*
 	 * For multiple regions we need to be careful to rewind
@@ -406,26 +409,6 @@ static void dispatch_io(blk_opf_t opf, unsigned int num_regions,
 	 * the io being completed too early.
 	 */
 	dec_count(io, 0, 0);
-}
-
-static void async_io(struct dm_io_client *client, unsigned int num_regions,
-		     struct dm_io_region *where, blk_opf_t opf,
-		     struct dpages *dp, io_notify_fn fn, void *context,
-		     unsigned short ioprio)
-{
-	struct io *io;
-
-	io = mempool_alloc(&client->pool, GFP_NOIO);
-	io->error_bits = 0;
-	atomic_set(&io->count, 1); /* see dispatch_io() */
-	io->client = client;
-	io->callback = fn;
-	io->context = context;
-
-	io->vma_invalidate_address = dp->vma_invalidate_address;
-	io->vma_invalidate_size = dp->vma_invalidate_size;
-
-	dispatch_io(opf, num_regions, where, dp, io, ioprio);
 }
 
 struct sync_io {
@@ -445,12 +428,27 @@ static int sync_io(struct dm_io_client *client, unsigned int num_regions,
 		   struct dm_io_region *where, blk_opf_t opf, struct dpages *dp,
 		   unsigned long *error_bits, unsigned short ioprio)
 {
+	struct io *io;
 	struct sync_io sio;
+
+	if (num_regions > 1 && !op_is_write(opf)) {
+		WARN_ON(1);
+		return -EIO;
+	}
 
 	init_completion(&sio.wait);
 
-	async_io(client, num_regions, where, opf | REQ_SYNC, dp,
-		 sync_io_complete, &sio, ioprio);
+	io = mempool_alloc(&client->pool, GFP_NOIO);
+	io->error_bits = 0;
+	atomic_set(&io->count, 1); /* see dispatch_io() */
+	io->client = client;
+	io->callback = sync_io_complete;
+	io->context = &sio;
+
+	io->vma_invalidate_address = dp->vma_invalidate_address;
+	io->vma_invalidate_size = dp->vma_invalidate_size;
+
+	dispatch_io(opf, num_regions, where, dp, io, 1, ioprio);
 
 	wait_for_completion_io(&sio.wait);
 
@@ -458,6 +456,33 @@ static int sync_io(struct dm_io_client *client, unsigned int num_regions,
 		*error_bits = sio.error_bits;
 
 	return sio.error_bits ? -EIO : 0;
+}
+
+static int async_io(struct dm_io_client *client, unsigned int num_regions,
+		    struct dm_io_region *where, blk_opf_t opf,
+		    struct dpages *dp, io_notify_fn fn, void *context,
+		    unsigned short ioprio)
+{
+	struct io *io;
+
+	if (num_regions > 1 && !op_is_write(opf)) {
+		WARN_ON(1);
+		fn(1, context);
+		return -EIO;
+	}
+
+	io = mempool_alloc(&client->pool, GFP_NOIO);
+	io->error_bits = 0;
+	atomic_set(&io->count, 1); /* see dispatch_io() */
+	io->client = client;
+	io->callback = fn;
+	io->context = context;
+
+	io->vma_invalidate_address = dp->vma_invalidate_address;
+	io->vma_invalidate_size = dp->vma_invalidate_size;
+
+	dispatch_io(opf, num_regions, where, dp, io, 0, ioprio);
+	return 0;
 }
 
 static int dp_init(struct dm_io_request *io_req, struct dpages *dp,
@@ -504,11 +529,6 @@ int dm_io(struct dm_io_request *io_req, unsigned int num_regions,
 	int r;
 	struct dpages dp;
 
-	if (num_regions > 1 && !op_is_write(io_req->bi_opf)) {
-		WARN_ON(1);
-		return -EIO;
-	}
-
 	r = dp_init(io_req, &dp, (unsigned long)where->count << SECTOR_SHIFT);
 	if (r)
 		return r;
@@ -517,9 +537,9 @@ int dm_io(struct dm_io_request *io_req, unsigned int num_regions,
 		return sync_io(io_req->client, num_regions, where,
 			       io_req->bi_opf, &dp, sync_error_bits, ioprio);
 
-	async_io(io_req->client, num_regions, where, io_req->bi_opf, &dp,
-		 io_req->notify.fn, io_req->notify.context, ioprio);
-	return 0;
+	return async_io(io_req->client, num_regions, where,
+			io_req->bi_opf, &dp, io_req->notify.fn,
+			io_req->notify.context, ioprio);
 }
 EXPORT_SYMBOL(dm_io);
 

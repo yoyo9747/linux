@@ -414,5 +414,4 @@ static struct platform_driver vexpress_syscfg_driver = {
 	.probe = vexpress_syscfg_probe,
 };
 module_platform_driver(vexpress_syscfg_driver);
-MODULE_DESCRIPTION("Versatile Express configuration bus");
 MODULE_LICENSE("GPL v2");

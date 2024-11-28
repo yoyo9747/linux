@@ -33,6 +33,7 @@
 
 extern int dbg_level;
 extern int dbg_func;
+extern int mipicsi_flag;
 extern int pad_w;
 extern int pad_h;
 

@@ -8,7 +8,7 @@
  * Copyright (C) 2015 IBM Corporation
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <linux/interrupt.h>
 #include <linux/pci.h>

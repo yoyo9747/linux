@@ -229,7 +229,8 @@ static int nft_xfrm_get_dump(struct sk_buff *skb,
 	return 0;
 }
 
-static int nft_xfrm_validate(const struct nft_ctx *ctx, const struct nft_expr *expr)
+static int nft_xfrm_validate(const struct nft_ctx *ctx, const struct nft_expr *expr,
+			     const struct nft_data **data)
 {
 	const struct nft_xfrm *priv = nft_expr_priv(expr);
 	unsigned int hooks;

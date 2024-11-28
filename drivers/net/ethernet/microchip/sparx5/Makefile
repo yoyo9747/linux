@@ -18,4 +18,3 @@ sparx5-switch-$(CONFIG_DEBUG_FS) += sparx5_vcap_debugfs.o
 
 # Provide include files
 ccflags-y += -I$(srctree)/drivers/net/ethernet/microchip/vcap
-ccflags-y += -I$(srctree)/drivers/net/ethernet/microchip/fdma

@@ -402,7 +402,6 @@
 		rockchip,grf = <&grf>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&hdmi_ctl>;
-		#sound-dai-cells = <0>;
 		status = "disabled";
 
 		ports {

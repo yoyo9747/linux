@@ -292,9 +292,7 @@ static struct platform_driver clk_mt7988_infracfg_drv = {
 		.of_match_table = of_match_clk_mt7988_infracfg,
 	},
 	.probe = mtk_clk_simple_probe,
-	.remove = mtk_clk_simple_remove,
+	.remove_new = mtk_clk_simple_remove,
 };
 module_platform_driver(clk_mt7988_infracfg_drv);
-
-MODULE_DESCRIPTION("MediaTek MT7988 infracfg clocks driver");
 MODULE_LICENSE("GPL");

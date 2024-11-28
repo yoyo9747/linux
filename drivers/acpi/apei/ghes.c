@@ -27,6 +27,7 @@
 #include <linux/timer.h>
 #include <linux/cper.h>
 #include <linux/cleanup.h>
+#include <linux/cxl-event.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
 #include <linux/ratelimit.h>
@@ -49,7 +50,6 @@
 #include <acpi/apei.h>
 #include <asm/fixmap.h>
 #include <asm/tlbflush.h>
-#include <cxl/event.h>
 #include <ras/ras_event.h>
 
 #include "apei-internal.h"

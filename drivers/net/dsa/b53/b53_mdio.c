@@ -343,9 +343,10 @@ static int b53_mdio_probe(struct mdio_device *mdiodev)
 	dev_set_drvdata(&mdiodev->dev, dev);
 
 	ret = b53_switch_register(dev);
-	if (ret)
-		return dev_err_probe(&mdiodev->dev, ret,
-				     "failed to register switch\n");
+	if (ret) {
+		dev_err(&mdiodev->dev, "failed to register switch: %i\n", ret);
+		return ret;
+	}
 
 	return ret;
 }

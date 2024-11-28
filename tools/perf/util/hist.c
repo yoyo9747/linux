@@ -472,16 +472,8 @@ static int hist_entry__init(struct hist_entry *he,
 		memcpy(he->branch_info, template->branch_info,
 		       sizeof(*he->branch_info));
 
-		he->branch_info->from.ms.maps = maps__get(he->branch_info->from.ms.maps);
 		he->branch_info->from.ms.map = map__get(he->branch_info->from.ms.map);
-		he->branch_info->to.ms.maps = maps__get(he->branch_info->to.ms.maps);
 		he->branch_info->to.ms.map = map__get(he->branch_info->to.ms.map);
-	}
-
-	if (he->mem_info) {
-		he->mem_info = mem_info__clone(template->mem_info);
-		if (he->mem_info == NULL)
-			goto err_infos;
 	}
 
 	if (hist_entry__has_callchains(he) && symbol_conf.use_callchain)
@@ -628,6 +620,12 @@ static struct hist_entry *hists__findnew_entry(struct hists *hists,
 			if (symbol_conf.cumulate_callchain)
 				he_stat__add_period(he->stat_acc, period);
 
+			/*
+			 * This mem info was allocated from sample__resolve_mem
+			 * and will not be used anymore.
+			 */
+			mem_info__zput(entry->mem_info);
+
 			block_info__delete(entry->block_info);
 
 			kvm_info__zput(entry->kvm_info);
@@ -638,12 +636,7 @@ static struct hist_entry *hists__findnew_entry(struct hists *hists,
 			 * mis-adjust symbol addresses when computing
 			 * the history counter to increment.
 			 */
-			if (hists__has(hists, sym) && he->ms.map != entry->ms.map) {
-				if (he->ms.sym) {
-					u64 addr = he->ms.sym->start;
-					he->ms.sym = map__find_symbol(entry->ms.map, addr);
-				}
-
+			if (he->ms.map != entry->ms.map) {
 				map__put(he->ms.map);
 				he->ms.map = map__get(entry->ms.map);
 			}
@@ -746,7 +739,7 @@ __hists__add_entry(struct hists *hists,
 		.filtered = symbol__parent_filter(sym_parent) | al->filtered,
 		.hists	= hists,
 		.branch_info = bi,
-		.mem_info = mi,
+		.mem_info = mem_info__get(mi),
 		.kvm_info = ki,
 		.block_info = block_info,
 		.transaction = sample->transaction,
@@ -977,21 +970,10 @@ out:
 	return err;
 }
 
-static void branch_info__exit(struct branch_info *bi)
-{
-	map_symbol__exit(&bi->from.ms);
-	map_symbol__exit(&bi->to.ms);
-	zfree_srcline(&bi->srcline_from);
-	zfree_srcline(&bi->srcline_to);
-}
-
 static int
 iter_finish_branch_entry(struct hist_entry_iter *iter,
 			 struct addr_location *al __maybe_unused)
 {
-	for (int i = 0; i < iter->total; i++)
-		branch_info__exit(&iter->bi[i]);
-
 	zfree(&iter->bi);
 	iter->he = NULL;
 
@@ -1337,7 +1319,10 @@ void hist_entry__delete(struct hist_entry *he)
 	map_symbol__exit(&he->ms);
 
 	if (he->branch_info) {
-		branch_info__exit(he->branch_info);
+		map_symbol__exit(&he->branch_info->from.ms);
+		map_symbol__exit(&he->branch_info->to.ms);
+		zfree_srcline(&he->branch_info->srcline_from);
+		zfree_srcline(&he->branch_info->srcline_to);
 		zfree(&he->branch_info);
 	}
 
@@ -2385,11 +2370,6 @@ void hists__inc_nr_lost_samples(struct hists *hists, u32 lost)
 	hists->stats.nr_lost_samples += lost;
 }
 
-void hists__inc_nr_dropped_samples(struct hists *hists, u32 lost)
-{
-	hists->stats.nr_dropped_samples += lost;
-}
-
 static struct hist_entry *hists__add_dummy_entry(struct hists *hists,
 						 struct hist_entry *pair)
 {
@@ -2687,7 +2667,7 @@ int hists__unlink(struct hists *hists)
 
 void hist__account_cycles(struct branch_stack *bs, struct addr_location *al,
 			  struct perf_sample *sample, bool nonany_branch_mode,
-			  u64 *total_cycles, struct evsel *evsel)
+			  u64 *total_cycles)
 {
 	struct branch_info *bi;
 	struct branch_entry *entries = perf_sample__branch_entries(sample);
@@ -2711,8 +2691,7 @@ void hist__account_cycles(struct branch_stack *bs, struct addr_location *al,
 			for (int i = bs->nr - 1; i >= 0; i--) {
 				addr_map_symbol__account_cycles(&bi[i].from,
 					nonany_branch_mode ? NULL : prev,
-					bi[i].flags.cycles, evsel,
-					bi[i].branch_stack_cntr);
+					bi[i].flags.cycles);
 				prev = &bi[i].to;
 
 				if (total_cycles)
@@ -2727,31 +2706,25 @@ void hist__account_cycles(struct branch_stack *bs, struct addr_location *al,
 	}
 }
 
-size_t evlist__fprintf_nr_events(struct evlist *evlist, FILE *fp)
+size_t evlist__fprintf_nr_events(struct evlist *evlist, FILE *fp,
+				 bool skip_empty)
 {
 	struct evsel *pos;
 	size_t ret = 0;
 
 	evlist__for_each_entry(evlist, pos) {
 		struct hists *hists = evsel__hists(pos);
-		u64 total_samples = hists->stats.nr_samples;
 
-		total_samples += hists->stats.nr_lost_samples;
-		total_samples += hists->stats.nr_dropped_samples;
-
-		if (symbol_conf.skip_empty && total_samples == 0)
+		if (skip_empty && !hists->stats.nr_samples && !hists->stats.nr_lost_samples)
 			continue;
 
 		ret += fprintf(fp, "%s stats:\n", evsel__name(pos));
 		if (hists->stats.nr_samples)
-			ret += fprintf(fp, "%20s events: %10d\n",
+			ret += fprintf(fp, "%16s events: %10d\n",
 				       "SAMPLE", hists->stats.nr_samples);
 		if (hists->stats.nr_lost_samples)
-			ret += fprintf(fp, "%20s events: %10d\n",
+			ret += fprintf(fp, "%16s events: %10d\n",
 				       "LOST_SAMPLES", hists->stats.nr_lost_samples);
-		if (hists->stats.nr_dropped_samples)
-			ret += fprintf(fp, "%20s events: %10d\n",
-				       "LOST_SAMPLES (BPF)", hists->stats.nr_dropped_samples);
 	}
 
 	return ret;

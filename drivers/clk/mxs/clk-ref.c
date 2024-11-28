@@ -66,7 +66,12 @@ static long clk_ref_round_rate(struct clk_hw *hw, unsigned long rate,
 
 	tmp = tmp * 18 + rate / 2;
 	do_div(tmp, rate);
-	frac = clamp(tmp, 18, 35);
+	frac = tmp;
+
+	if (frac < 18)
+		frac = 18;
+	else if (frac > 35)
+		frac = 35;
 
 	tmp = parent_rate;
 	tmp *= 18;
@@ -86,7 +91,12 @@ static int clk_ref_set_rate(struct clk_hw *hw, unsigned long rate,
 
 	tmp = tmp * 18 + rate / 2;
 	do_div(tmp, rate);
-	frac = clamp(tmp, 18, 35);
+	frac = tmp;
+
+	if (frac < 18)
+		frac = 18;
+	else if (frac > 35)
+		frac = 35;
 
 	spin_lock_irqsave(&mxs_lock, flags);
 

@@ -106,8 +106,7 @@ int xe_guc_db_mgr_init(struct xe_guc_db_mgr *dbm, unsigned int count)
 	if (ret)
 		return ret;
 done:
-	xe_gt_dbg(dbm_to_gt(dbm), "using %u doorbell%s\n",
-		  dbm->count, str_plural(dbm->count));
+	xe_gt_dbg(dbm_to_gt(dbm), "using %u doorbell(s)\n", dbm->count);
 	return 0;
 }
 

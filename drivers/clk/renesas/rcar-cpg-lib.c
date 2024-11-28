@@ -22,7 +22,7 @@
 
 #include "rcar-cpg-lib.h"
 
-DEFINE_SPINLOCK(cpg_lock);
+spinlock_t cpg_lock;
 
 void cpg_reg_modify(void __iomem *reg, u32 clear, u32 set)
 {

@@ -77,16 +77,19 @@ u64 select_estimate_accuracy(struct timespec64 *tv)
 {
 	u64 ret;
 	struct timespec64 now;
-	u64 slack = current->timer_slack_ns;
 
-	if (slack == 0)
+	/*
+	 * Realtime tasks get a slack of 0 for obvious reasons.
+	 */
+
+	if (rt_task(current))
 		return 0;
 
 	ktime_get_ts64(&now);
 	now = timespec64_sub(*tv, now);
 	ret = __estimate_accuracy(&now);
-	if (ret < slack)
-		return slack;
+	if (ret < current->timer_slack_ns)
+		return current->timer_slack_ns;
 	return ret;
 }
 
@@ -529,10 +532,10 @@ static noinline_for_stack int do_select(int n, fd_set_bits *fds, struct timespec
 					continue;
 				mask = EPOLLNVAL;
 				f = fdget(i);
-				if (fd_file(f)) {
+				if (f.file) {
 					wait_key_set(wait, in, out, bit,
 						     busy_flag);
-					mask = vfs_poll(fd_file(f), wait);
+					mask = vfs_poll(f.file, wait);
 
 					fdput(f);
 				}
@@ -777,9 +780,7 @@ static inline int get_sigset_argpack(struct sigset_argpack *to,
 {
 	// the path is hot enough for overhead of copy_from_user() to matter
 	if (from) {
-		if (can_do_masked_user_access())
-			from = masked_user_access_begin(from);
-		else if (!user_read_access_begin(from, sizeof(*from)))
+		if (!user_read_access_begin(from, sizeof(*from)))
 			return -EFAULT;
 		unsafe_get_user(to->p, &from->p, Efault);
 		unsafe_get_user(to->size, &from->size, Efault);
@@ -839,7 +840,7 @@ SYSCALL_DEFINE1(old_select, struct sel_arg_struct __user *, arg)
 struct poll_list {
 	struct poll_list *next;
 	unsigned int len;
-	struct pollfd entries[] __counted_by(len);
+	struct pollfd entries[];
 };
 
 #define POLLFD_PER_PAGE  ((PAGE_SIZE-sizeof(struct poll_list)) / sizeof(struct pollfd))
@@ -863,13 +864,13 @@ static inline __poll_t do_pollfd(struct pollfd *pollfd, poll_table *pwait,
 		goto out;
 	mask = EPOLLNVAL;
 	f = fdget(fd);
-	if (!fd_file(f))
+	if (!f.file)
 		goto out;
 
 	/* userland u16 ->events contains POLL... bitmap */
 	filter = demangle_poll(pollfd->events) | EPOLLERR | EPOLLHUP;
 	pwait->_key = filter | busy_flag;
-	mask = vfs_poll(fd_file(f), pwait);
+	mask = vfs_poll(f.file, pwait);
 	if (mask & busy_flag)
 		*can_busy_poll = true;
 	mask &= filter;		/* Mask out unneeded events. */

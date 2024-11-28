@@ -430,8 +430,7 @@ int hfsplus_free_fork(struct super_block *sb, u32 cnid,
 		hfsplus_free_extents(sb, ext_entry, total_blocks - start,
 				     total_blocks);
 		total_blocks = start;
-		mutex_lock_nested(&fd.tree->tree_lock,
-			hfsplus_btree_lock_class(fd.tree));
+		mutex_lock(&fd.tree->tree_lock);
 	} while (total_blocks > blocks);
 	hfs_find_exit(&fd);
 
@@ -554,16 +553,16 @@ void hfsplus_file_truncate(struct inode *inode)
 
 	if (inode->i_size > hip->phys_size) {
 		struct address_space *mapping = inode->i_mapping;
-		struct folio *folio;
+		struct page *page;
 		void *fsdata = NULL;
 		loff_t size = inode->i_size;
 
 		res = hfsplus_write_begin(NULL, mapping, size, 0,
-					  &folio, &fsdata);
+					  &page, &fsdata);
 		if (res)
 			return;
 		res = generic_write_end(NULL, mapping, size, 0, 0,
-					folio, fsdata);
+					page, fsdata);
 		if (res < 0)
 			return;
 		mark_inode_dirty(inode);
@@ -593,8 +592,7 @@ void hfsplus_file_truncate(struct inode *inode)
 					     alloc_cnt, alloc_cnt - blk_cnt);
 			hfsplus_dump_extent(hip->first_extents);
 			hip->first_blocks = blk_cnt;
-			mutex_lock_nested(&fd.tree->tree_lock,
-				hfsplus_btree_lock_class(fd.tree));
+			mutex_lock(&fd.tree->tree_lock);
 			break;
 		}
 		res = __hfsplus_ext_cache_extent(&fd, inode, alloc_cnt);
@@ -608,8 +606,7 @@ void hfsplus_file_truncate(struct inode *inode)
 		hfsplus_free_extents(sb, hip->cached_extents,
 				     alloc_cnt - start, alloc_cnt - blk_cnt);
 		hfsplus_dump_extent(hip->cached_extents);
-		mutex_lock_nested(&fd.tree->tree_lock,
-				hfsplus_btree_lock_class(fd.tree));
+		mutex_lock(&fd.tree->tree_lock);
 		if (blk_cnt > start) {
 			hip->extent_state |= HFSPLUS_EXT_DIRTY;
 			break;

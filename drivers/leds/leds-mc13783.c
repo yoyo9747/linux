@@ -12,7 +12,6 @@
  *      Eric Miao <eric.miao@marvell.com>
  */
 
-#include <linux/cleanup.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
@@ -114,7 +113,7 @@ static struct mc13xxx_leds_platform_data __init *mc13xxx_led_probe_dt(
 {
 	struct mc13xxx_leds *leds = platform_get_drvdata(pdev);
 	struct mc13xxx_leds_platform_data *pdata;
-	struct device_node *child;
+	struct device_node *parent, *child;
 	struct device *dev = &pdev->dev;
 	int i = 0, ret = -ENODATA;
 
@@ -122,23 +121,24 @@ static struct mc13xxx_leds_platform_data __init *mc13xxx_led_probe_dt(
 	if (!pdata)
 		return ERR_PTR(-ENOMEM);
 
-	struct device_node *parent __free(device_node) =
-		of_get_child_by_name(dev_of_node(dev->parent), "leds");
+	parent = of_get_child_by_name(dev_of_node(dev->parent), "leds");
 	if (!parent)
-		return ERR_PTR(-ENODATA);
+		goto out_node_put;
 
 	ret = of_property_read_u32_array(parent, "led-control",
 					 pdata->led_control,
 					 leds->devtype->num_regs);
 	if (ret)
-		return ERR_PTR(ret);
+		goto out_node_put;
 
 	pdata->num_leds = of_get_available_child_count(parent);
 
 	pdata->led = devm_kcalloc(dev, pdata->num_leds, sizeof(*pdata->led),
 				  GFP_KERNEL);
-	if (!pdata->led)
-		return ERR_PTR(-ENOMEM);
+	if (!pdata->led) {
+		ret = -ENOMEM;
+		goto out_node_put;
+	}
 
 	for_each_available_child_of_node(parent, child) {
 		const char *str;
@@ -158,10 +158,12 @@ static struct mc13xxx_leds_platform_data __init *mc13xxx_led_probe_dt(
 	}
 
 	pdata->num_leds = i;
-	if (i <= 0)
-		return ERR_PTR(-ENODATA);
+	ret = i > 0 ? 0 : -ENODATA;
 
-	return pdata;
+out_node_put:
+	of_node_put(parent);
+
+	return ret ? ERR_PTR(ret) : pdata;
 }
 #else
 static inline struct mc13xxx_leds_platform_data __init *mc13xxx_led_probe_dt(

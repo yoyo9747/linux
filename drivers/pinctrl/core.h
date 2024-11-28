@@ -206,7 +206,7 @@ struct group_desc {
 	void *data;
 };
 
-/* Convenient macro to define a generic pin group descriptor */
+/* Convenience macro to define a generic pin group descriptor */
 #define PINCTRL_GROUP_DESC(_name, _pins, _num_pins, _data)	\
 (struct group_desc) {						\
 	.grp = PINCTRL_PINGROUP(_name, _pins, _num_pins),	\

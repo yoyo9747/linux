@@ -19,7 +19,7 @@
 struct patch_insn {
 	void *addr;
 	u32 *insns;
-	size_t len;
+	int ninsns;
 	atomic_t cpu_count;
 };
 
@@ -54,7 +54,7 @@ static __always_inline void *patch_map(void *addr, const unsigned int fixmap)
 	BUG_ON(!page);
 
 	return (void *)set_fixmap_offset(fixmap, page_to_phys(page) +
-					 offset_in_page(addr));
+					 (uintaddr & ~PAGE_MASK));
 }
 
 static void patch_unmap(int fixmap)
@@ -65,8 +65,8 @@ NOKPROBE_SYMBOL(patch_unmap);
 
 static int __patch_insn_set(void *addr, u8 c, size_t len)
 {
-	bool across_pages = (offset_in_page(addr) + len) > PAGE_SIZE;
 	void *waddr = addr;
+	bool across_pages = (((uintptr_t)addr & ~PAGE_MASK) + len) > PAGE_SIZE;
 
 	/*
 	 * Only two pages can be mapped at a time for writing.
@@ -110,8 +110,8 @@ NOKPROBE_SYMBOL(__patch_insn_set);
 
 static int __patch_insn_write(void *addr, const void *insn, size_t len)
 {
-	bool across_pages = (offset_in_page(addr) + len) > PAGE_SIZE;
 	void *waddr = addr;
+	bool across_pages = (((uintptr_t) addr & ~PAGE_MASK) + len) > PAGE_SIZE;
 	int ret;
 
 	/*
@@ -179,34 +179,31 @@ NOKPROBE_SYMBOL(__patch_insn_write);
 
 static int patch_insn_set(void *addr, u8 c, size_t len)
 {
+	size_t patched = 0;
 	size_t size;
-	int ret;
+	int ret = 0;
 
 	/*
 	 * __patch_insn_set() can only work on 2 pages at a time so call it in a
 	 * loop with len <= 2 * PAGE_SIZE.
 	 */
-	while (len) {
-		size = min(len, PAGE_SIZE * 2 - offset_in_page(addr));
-		ret = __patch_insn_set(addr, c, size);
-		if (ret)
-			return ret;
+	while (patched < len && !ret) {
+		size = min_t(size_t, PAGE_SIZE * 2 - offset_in_page(addr + patched), len - patched);
+		ret = __patch_insn_set(addr + patched, c, size);
 
-		addr += size;
-		len -= size;
+		patched += size;
 	}
 
-	return 0;
+	return ret;
 }
 NOKPROBE_SYMBOL(patch_insn_set);
 
 int patch_text_set_nosync(void *addr, u8 c, size_t len)
 {
+	u32 *tp = addr;
 	int ret;
 
-	ret = patch_insn_set(addr, c, len);
-	if (!ret)
-		flush_icache_range((uintptr_t)addr, (uintptr_t)addr + len);
+	ret = patch_insn_set(tp, c, len);
 
 	return ret;
 }
@@ -214,35 +211,31 @@ NOKPROBE_SYMBOL(patch_text_set_nosync);
 
 int patch_insn_write(void *addr, const void *insn, size_t len)
 {
+	size_t patched = 0;
 	size_t size;
-	int ret;
+	int ret = 0;
 
 	/*
 	 * Copy the instructions to the destination address, two pages at a time
 	 * because __patch_insn_write() can only handle len <= 2 * PAGE_SIZE.
 	 */
-	while (len) {
-		size = min(len, PAGE_SIZE * 2 - offset_in_page(addr));
-		ret = __patch_insn_write(addr, insn, size);
-		if (ret)
-			return ret;
+	while (patched < len && !ret) {
+		size = min_t(size_t, PAGE_SIZE * 2 - offset_in_page(addr + patched), len - patched);
+		ret = __patch_insn_write(addr + patched, insn + patched, size);
 
-		addr += size;
-		insn += size;
-		len -= size;
+		patched += size;
 	}
 
-	return 0;
+	return ret;
 }
 NOKPROBE_SYMBOL(patch_insn_write);
 
 int patch_text_nosync(void *addr, const void *insns, size_t len)
 {
+	u32 *tp = addr;
 	int ret;
 
-	ret = patch_insn_write(addr, insns, len);
-	if (!ret)
-		flush_icache_range((uintptr_t)addr, (uintptr_t)addr + len);
+	ret = patch_insn_write(tp, insns, len);
 
 	return ret;
 }
@@ -251,10 +244,14 @@ NOKPROBE_SYMBOL(patch_text_nosync);
 static int patch_text_cb(void *data)
 {
 	struct patch_insn *patch = data;
-	int ret = 0;
+	unsigned long len;
+	int i, ret = 0;
 
 	if (atomic_inc_return(&patch->cpu_count) == num_online_cpus()) {
-		ret = patch_insn_write(patch->addr, patch->insns, patch->len);
+		for (i = 0; ret == 0 && i < patch->ninsns; i++) {
+			len = GET_INSN_LENGTH(patch->insns[i]);
+			ret = patch_insn_write(patch->addr + i * len, &patch->insns[i], len);
+		}
 		/*
 		 * Make sure the patching store is effective *before* we
 		 * increment the counter which releases all waiting CPUs
@@ -274,13 +271,13 @@ static int patch_text_cb(void *data)
 }
 NOKPROBE_SYMBOL(patch_text_cb);
 
-int patch_text(void *addr, u32 *insns, size_t len)
+int patch_text(void *addr, u32 *insns, int ninsns)
 {
 	int ret;
 	struct patch_insn patch = {
 		.addr = addr,
 		.insns = insns,
-		.len = len,
+		.ninsns = ninsns,
 		.cpu_count = ATOMIC_INIT(0),
 	};
 

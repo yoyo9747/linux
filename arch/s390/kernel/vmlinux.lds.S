@@ -39,7 +39,7 @@ PHDRS {
 
 SECTIONS
 {
-	. = TEXT_OFFSET;
+	. = __START_KERNEL;
 	.text : {
 		_stext = .;		/* Start of text section */
 		_text = .;		/* Text and read-only data */
@@ -59,6 +59,14 @@ SECTIONS
 	} :text = 0x0700
 
 	RO_DATA(PAGE_SIZE)
+	.data.rel.ro : {
+		*(.data.rel.ro .data.rel.ro.*)
+	}
+	.got : {
+		__got_start = .;
+		*(.got)
+		__got_end = .;
+	}
 
 	. = ALIGN(PAGE_SIZE);
 	_sdata = .;		/* Start of data section */
@@ -71,15 +79,6 @@ SECTIONS
 	} :data
 	. = ALIGN(PAGE_SIZE);
 	__end_ro_after_init = .;
-
-	.data.rel.ro : {
-		*(.data.rel.ro .data.rel.ro.*)
-	}
-	.got : {
-		__got_start = .;
-		*(.got)
-		__got_end = .;
-	}
 
 	RW_DATA(0x100, PAGE_SIZE, THREAD_SIZE)
 	.data.rel : {
@@ -191,8 +190,6 @@ SECTIONS
 	. = ALIGN(PAGE_SIZE);
 	INIT_DATA_SECTION(0x100)
 
-	RUNTIME_CONST_VARIABLES
-
 	PERCPU_SECTION(0x100)
 
 	. = ALIGN(PAGE_SIZE);
@@ -222,8 +219,6 @@ SECTIONS
 		QUAD(init_mm)
 		QUAD(swapper_pg_dir)
 		QUAD(invalid_pg_dir)
-		QUAD(__alt_instructions)
-		QUAD(__alt_instructions_end)
 #ifdef CONFIG_KASAN
 		QUAD(kasan_early_shadow_page)
 		QUAD(kasan_early_shadow_pte)

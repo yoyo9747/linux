@@ -47,6 +47,7 @@ struct lpc18xx_gpio_pin_ic {
 struct lpc18xx_gpio_chip {
 	struct gpio_chip gpio;
 	void __iomem *base;
+	struct clk *clk;
 	struct lpc18xx_gpio_pin_ic *pin_ic;
 	spinlock_t lock;
 };
@@ -327,7 +328,6 @@ static int lpc18xx_gpio_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct lpc18xx_gpio_chip *gc;
 	int index, ret;
-	struct clk *clk;
 
 	gc = devm_kzalloc(dev, sizeof(*gc), GFP_KERNEL);
 	if (!gc)
@@ -352,10 +352,16 @@ static int lpc18xx_gpio_probe(struct platform_device *pdev)
 	if (IS_ERR(gc->base))
 		return PTR_ERR(gc->base);
 
-	clk = devm_clk_get_enabled(dev, NULL);
-	if (IS_ERR(clk)) {
+	gc->clk = devm_clk_get(dev, NULL);
+	if (IS_ERR(gc->clk)) {
 		dev_err(dev, "input clock not found\n");
-		return PTR_ERR(clk);
+		return PTR_ERR(gc->clk);
+	}
+
+	ret = clk_prepare_enable(gc->clk);
+	if (ret) {
+		dev_err(dev, "unable to enable clock\n");
+		return ret;
 	}
 
 	spin_lock_init(&gc->lock);
@@ -363,8 +369,11 @@ static int lpc18xx_gpio_probe(struct platform_device *pdev)
 	gc->gpio.parent = dev;
 
 	ret = devm_gpiochip_add_data(dev, &gc->gpio, gc);
-	if (ret)
-		return dev_err_probe(dev, ret, "failed to add gpio chip\n");
+	if (ret) {
+		dev_err(dev, "failed to add gpio chip\n");
+		clk_disable_unprepare(gc->clk);
+		return ret;
+	}
 
 	/* On error GPIO pin interrupt controller just won't be registered */
 	lpc18xx_gpio_pin_ic_probe(gc);
@@ -378,6 +387,8 @@ static void lpc18xx_gpio_remove(struct platform_device *pdev)
 
 	if (gc->pin_ic)
 		irq_domain_remove(gc->pin_ic->domain);
+
+	clk_disable_unprepare(gc->clk);
 }
 
 static const struct of_device_id lpc18xx_gpio_match[] = {

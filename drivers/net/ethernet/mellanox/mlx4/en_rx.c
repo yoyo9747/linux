@@ -82,10 +82,8 @@ static int mlx4_en_alloc_frags(struct mlx4_en_priv *priv,
 
 	for (i = 0; i < priv->num_frags; i++, frags++) {
 		if (!frags->page) {
-			if (mlx4_alloc_page(priv, frags, gfp)) {
-				ring->alloc_fail++;
+			if (mlx4_alloc_page(priv, frags, gfp))
 				return -ENOMEM;
-			}
 			ring->rx_alloc_pages++;
 		}
 		rx_desc->data[i].addr = cpu_to_be64(frags->dma +

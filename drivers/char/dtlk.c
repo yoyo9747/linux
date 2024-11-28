@@ -107,6 +107,7 @@ static const struct file_operations dtlk_fops =
 	.unlocked_ioctl	= dtlk_ioctl,
 	.open		= dtlk_open,
 	.release	= dtlk_release,
+	.llseek		= no_llseek,
 };
 
 /* local prototypes */
@@ -659,5 +660,4 @@ static char dtlk_write_tts(char ch)
 	return 0;
 }
 
-MODULE_DESCRIPTION("RC Systems DoubleTalk PC speech card driver");
 MODULE_LICENSE("GPL");

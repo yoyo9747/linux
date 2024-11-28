@@ -4,11 +4,12 @@
 #define BTRFS_EXTENT_MAP_H
 
 #include <linux/compiler_types.h>
-#include <linux/spinlock_types.h>
+#include <linux/rwlock_types.h>
 #include <linux/rbtree.h>
 #include <linux/list.h>
 #include <linux/refcount.h>
 #include "misc.h"
+#include "extent_map.h"
 #include "compression.h"
 
 struct btrfs_inode;
@@ -61,33 +62,46 @@ struct extent_map {
 	u64 len;
 
 	/*
-	 * The bytenr of the full on-disk extent.
+	 * The file offset of the original file extent before splitting.
 	 *
-	 * For regular extents it's btrfs_file_extent_item::disk_bytenr.
-	 * For holes it's EXTENT_MAP_HOLE and for inline extents it's
-	 * EXTENT_MAP_INLINE.
+	 * This is an in-memory only member, matching
+	 * extent_map::start - btrfs_file_extent_item::offset for
+	 * regular/preallocated extents. EXTENT_MAP_HOLE otherwise.
 	 */
-	u64 disk_bytenr;
+	u64 orig_start;
 
 	/*
 	 * The full on-disk extent length, matching
 	 * btrfs_file_extent_item::disk_num_bytes.
 	 */
-	u64 disk_num_bytes;
-
-	/*
-	 * Offset inside the decompressed extent.
-	 *
-	 * For regular extents it's btrfs_file_extent_item::offset.
-	 * For holes and inline extents it's 0.
-	 */
-	u64 offset;
+	u64 orig_block_len;
 
 	/*
 	 * The decompressed size of the whole on-disk extent, matching
 	 * btrfs_file_extent_item::ram_bytes.
 	 */
 	u64 ram_bytes;
+
+	/*
+	 * The on-disk logical bytenr for the file extent.
+	 *
+	 * For compressed extents it matches btrfs_file_extent_item::disk_bytenr.
+	 * For uncompressed extents it matches
+	 * btrfs_file_extent_item::disk_bytenr + btrfs_file_extent_item::offset
+	 *
+	 * For holes it is EXTENT_MAP_HOLE and for inline extents it is
+	 * EXTENT_MAP_INLINE.
+	 */
+	u64 block_start;
+
+	/*
+	 * The on-disk length for the file extent.
+	 *
+	 * For compressed extents it matches btrfs_file_extent_item::disk_num_bytes.
+	 * For uncompressed extents it matches extent_map::len.
+	 * For holes and inline extents it's -1 and shouldn't be used.
+	 */
+	u64 block_len;
 
 	/*
 	 * Generation of the extent map, for merged em it's the highest
@@ -101,7 +115,7 @@ struct extent_map {
 };
 
 struct extent_map_tree {
-	struct rb_root root;
+	struct rb_root_cached map;
 	struct list_head modified_extents;
 	rwlock_t lock;
 };
@@ -147,16 +161,6 @@ static inline bool extent_map_is_compressed(const struct extent_map *em)
 static inline int extent_map_in_tree(const struct extent_map *em)
 {
 	return !RB_EMPTY_NODE(&em->rb_node);
-}
-
-static inline u64 extent_map_block_start(const struct extent_map *em)
-{
-	if (em->disk_bytenr < EXTENT_MAP_LAST_BYTE) {
-		if (extent_map_is_compressed(em))
-			return em->disk_bytenr;
-		return em->disk_bytenr + em->offset;
-	}
-	return em->disk_bytenr;
 }
 
 static inline u64 extent_map_end(const struct extent_map *em)

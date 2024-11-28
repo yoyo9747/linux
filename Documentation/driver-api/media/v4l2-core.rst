@@ -26,4 +26,3 @@ Video4Linux devices
     v4l2-tuner
     v4l2-common
     v4l2-tveeprom
-    v4l2-jpeg

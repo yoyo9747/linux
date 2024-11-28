@@ -18,7 +18,6 @@ properties:
     enum:
       - ti,ads1015
       - ti,ads1115
-      - ti,tla2021
       - ti,tla2024
 
   reg:

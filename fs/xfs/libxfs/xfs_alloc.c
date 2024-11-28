@@ -27,7 +27,6 @@
 #include "xfs_ag_resv.h"
 #include "xfs_bmap.h"
 #include "xfs_health.h"
-#include "xfs_extfree_item.h"
 
 struct kmem_cache	*xfs_extfree_item_cache;
 
@@ -467,97 +466,6 @@ xfs_alloc_fix_len(
 }
 
 /*
- * Determine if the cursor points to the block that contains the right-most
- * block of records in the by-count btree. This block contains the largest
- * contiguous free extent in the AG, so if we modify a record in this block we
- * need to call xfs_alloc_fixup_longest() once the modifications are done to
- * ensure the agf->agf_longest field is kept up to date with the longest free
- * extent tracked by the by-count btree.
- */
-static bool
-xfs_alloc_cursor_at_lastrec(
-	struct xfs_btree_cur	*cnt_cur)
-{
-	struct xfs_btree_block	*block;
-	union xfs_btree_ptr	ptr;
-	struct xfs_buf		*bp;
-
-	block = xfs_btree_get_block(cnt_cur, 0, &bp);
-
-	xfs_btree_get_sibling(cnt_cur, block, &ptr, XFS_BB_RIGHTSIB);
-	return xfs_btree_ptr_is_null(cnt_cur, &ptr);
-}
-
-/*
- * Find the rightmost record of the cntbt, and return the longest free space
- * recorded in it. Simply set both the block number and the length to their
- * maximum values before searching.
- */
-static int
-xfs_cntbt_longest(
-	struct xfs_btree_cur	*cnt_cur,
-	xfs_extlen_t		*longest)
-{
-	struct xfs_alloc_rec_incore irec;
-	union xfs_btree_rec	    *rec;
-	int			    stat = 0;
-	int			    error;
-
-	memset(&cnt_cur->bc_rec, 0xFF, sizeof(cnt_cur->bc_rec));
-	error = xfs_btree_lookup(cnt_cur, XFS_LOOKUP_LE, &stat);
-	if (error)
-		return error;
-	if (!stat) {
-		/* totally empty tree */
-		*longest = 0;
-		return 0;
-	}
-
-	error = xfs_btree_get_rec(cnt_cur, &rec, &stat);
-	if (error)
-		return error;
-	if (XFS_IS_CORRUPT(cnt_cur->bc_mp, !stat)) {
-		xfs_btree_mark_sick(cnt_cur);
-		return -EFSCORRUPTED;
-	}
-
-	xfs_alloc_btrec_to_irec(rec, &irec);
-	*longest = irec.ar_blockcount;
-	return 0;
-}
-
-/*
- * Update the longest contiguous free extent in the AG from the by-count cursor
- * that is passed to us. This should be done at the end of any allocation or
- * freeing operation that touches the longest extent in the btree.
- *
- * Needing to update the longest extent can be determined by calling
- * xfs_alloc_cursor_at_lastrec() after the cursor is positioned for record
- * modification but before the modification begins.
- */
-static int
-xfs_alloc_fixup_longest(
-	struct xfs_btree_cur	*cnt_cur)
-{
-	struct xfs_perag	*pag = cnt_cur->bc_ag.pag;
-	struct xfs_buf		*bp = cnt_cur->bc_ag.agbp;
-	struct xfs_agf		*agf = bp->b_addr;
-	xfs_extlen_t		longest = 0;
-	int			error;
-
-	/* Lookup last rec in order to update AGF. */
-	error = xfs_cntbt_longest(cnt_cur, &longest);
-	if (error)
-		return error;
-
-	pag->pagf_longest = longest;
-	agf->agf_longest = cpu_to_be32(pag->pagf_longest);
-	xfs_alloc_log_agf(cnt_cur->bc_tp, bp, XFS_AGF_LONGEST);
-
-	return 0;
-}
-
-/*
  * Update the two btrees, logically removing from freespace the extent
  * starting at rbno, rlen blocks.  The extent is contained within the
  * actual (current) free extent fbno for flen blocks.
@@ -581,7 +489,6 @@ xfs_alloc_fixup_trees(
 	xfs_extlen_t	nflen1=0;	/* first new free length */
 	xfs_extlen_t	nflen2=0;	/* second new free length */
 	struct xfs_mount *mp;
-	bool		fixup_longest = false;
 
 	mp = cnt_cur->bc_mp;
 
@@ -670,10 +577,6 @@ xfs_alloc_fixup_trees(
 		nfbno2 = rbno + rlen;
 		nflen2 = (fbno + flen) - nfbno2;
 	}
-
-	if (xfs_alloc_cursor_at_lastrec(cnt_cur))
-		fixup_longest = true;
-
 	/*
 	 * Delete the entry from the by-size btree.
 	 */
@@ -751,10 +654,6 @@ xfs_alloc_fixup_trees(
 			return -EFSCORRUPTED;
 		}
 	}
-
-	if (fixup_longest)
-		return xfs_alloc_fixup_longest(cnt_cur);
-
 	return 0;
 }
 
@@ -2033,7 +1932,7 @@ out_nominleft:
 /*
  * Free the extent starting at agno/bno for length.
  */
-int
+STATIC int
 xfs_free_ag_extent(
 	struct xfs_trans		*tp,
 	struct xfs_buf			*agbp,
@@ -2057,7 +1956,6 @@ xfs_free_ag_extent(
 	int				i;
 	int				error;
 	struct xfs_perag		*pag = agbp->b_pag;
-	bool				fixup_longest = false;
 
 	bno_cur = cnt_cur = NULL;
 	mp = tp->t_mountp;
@@ -2321,13 +2219,8 @@ xfs_free_ag_extent(
 	}
 	xfs_btree_del_cursor(bno_cur, XFS_BTREE_NOERROR);
 	bno_cur = NULL;
-
 	/*
 	 * In all cases we need to insert the new freespace in the by-size tree.
-	 *
-	 * If this new freespace is being inserted in the block that contains
-	 * the largest free space in the btree, make sure we also fix up the
-	 * agf->agf-longest tracker field.
 	 */
 	if ((error = xfs_alloc_lookup_eq(cnt_cur, nbno, nlen, &i)))
 		goto error0;
@@ -2336,8 +2229,6 @@ xfs_free_ag_extent(
 		error = -EFSCORRUPTED;
 		goto error0;
 	}
-	if (xfs_alloc_cursor_at_lastrec(cnt_cur))
-		fixup_longest = true;
 	if ((error = xfs_btree_insert(cnt_cur, &i)))
 		goto error0;
 	if (XFS_IS_CORRUPT(mp, i != 1)) {
@@ -2345,12 +2236,6 @@ xfs_free_ag_extent(
 		error = -EFSCORRUPTED;
 		goto error0;
 	}
-	if (fixup_longest) {
-		error = xfs_alloc_fixup_longest(cnt_cur);
-		if (error)
-			goto error0;
-	}
-
 	xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
 	cnt_cur = NULL;
 
@@ -2537,6 +2422,32 @@ xfs_alloc_space_available(
 	return true;
 }
 
+int
+xfs_free_agfl_block(
+	struct xfs_trans	*tp,
+	xfs_agnumber_t		agno,
+	xfs_agblock_t		agbno,
+	struct xfs_buf		*agbp,
+	struct xfs_owner_info	*oinfo)
+{
+	int			error;
+	struct xfs_buf		*bp;
+
+	error = xfs_free_ag_extent(tp, agbp, agno, agbno, 1, oinfo,
+				   XFS_AG_RESV_AGFL);
+	if (error)
+		return error;
+
+	error = xfs_trans_get_buf(tp, tp->t_mountp->m_ddev_targp,
+			XFS_AGB_TO_DADDR(tp->t_mountp, agno, agbno),
+			tp->t_mountp->m_bsize, 0, &bp);
+	if (error)
+		return error;
+	xfs_trans_binval(tp, bp);
+
+	return 0;
+}
+
 /*
  * Check the agfl fields of the agf for inconsistency or corruption.
  *
@@ -2625,6 +2536,48 @@ xfs_agfl_reset(
 }
 
 /*
+ * Defer an AGFL block free. This is effectively equivalent to
+ * xfs_free_extent_later() with some special handling particular to AGFL blocks.
+ *
+ * Deferring AGFL frees helps prevent log reservation overruns due to too many
+ * allocation operations in a transaction. AGFL frees are prone to this problem
+ * because for one they are always freed one at a time. Further, an immediate
+ * AGFL block free can cause a btree join and require another block free before
+ * the real allocation can proceed. Deferring the free disconnects freeing up
+ * the AGFL slot from freeing the block.
+ */
+static int
+xfs_defer_agfl_block(
+	struct xfs_trans		*tp,
+	xfs_agnumber_t			agno,
+	xfs_agblock_t			agbno,
+	struct xfs_owner_info		*oinfo)
+{
+	struct xfs_mount		*mp = tp->t_mountp;
+	struct xfs_extent_free_item	*xefi;
+	xfs_fsblock_t			fsbno = XFS_AGB_TO_FSB(mp, agno, agbno);
+
+	ASSERT(xfs_extfree_item_cache != NULL);
+	ASSERT(oinfo != NULL);
+
+	if (XFS_IS_CORRUPT(mp, !xfs_verify_fsbno(mp, fsbno)))
+		return -EFSCORRUPTED;
+
+	xefi = kmem_cache_zalloc(xfs_extfree_item_cache,
+			       GFP_KERNEL | __GFP_NOFAIL);
+	xefi->xefi_startblock = fsbno;
+	xefi->xefi_blockcount = 1;
+	xefi->xefi_owner = oinfo->oi_owner;
+	xefi->xefi_agresv = XFS_AG_RESV_AGFL;
+
+	trace_xfs_agfl_free_defer(mp, agno, 0, agbno, 1);
+
+	xfs_extent_free_get_group(mp, xefi);
+	xfs_defer_add(tp, &xefi->xefi_list, &xfs_agfl_free_defer_type);
+	return 0;
+}
+
+/*
  * Add the extent to the list of extents to be free at transaction end.
  * The list is maintained sorted (by block number).
  */
@@ -2635,15 +2588,28 @@ xfs_defer_extent_free(
 	xfs_filblks_t			len,
 	const struct xfs_owner_info	*oinfo,
 	enum xfs_ag_resv_type		type,
-	unsigned int			free_flags,
+	bool				skip_discard,
 	struct xfs_defer_pending	**dfpp)
 {
 	struct xfs_extent_free_item	*xefi;
 	struct xfs_mount		*mp = tp->t_mountp;
+#ifdef DEBUG
+	xfs_agnumber_t			agno;
+	xfs_agblock_t			agbno;
 
+	ASSERT(bno != NULLFSBLOCK);
+	ASSERT(len > 0);
 	ASSERT(len <= XFS_MAX_BMBT_EXTLEN);
 	ASSERT(!isnullstartblock(bno));
-	ASSERT(!(free_flags & ~XFS_FREE_EXTENT_ALL_FLAGS));
+	agno = XFS_FSB_TO_AGNO(mp, bno);
+	agbno = XFS_FSB_TO_AGBNO(mp, bno);
+	ASSERT(agno < mp->m_sb.sb_agcount);
+	ASSERT(agbno < mp->m_sb.sb_agblocks);
+	ASSERT(len < mp->m_sb.sb_agblocks);
+	ASSERT(agbno + len <= mp->m_sb.sb_agblocks);
+#endif
+	ASSERT(xfs_extfree_item_cache != NULL);
+	ASSERT(type != XFS_AG_RESV_AGFL);
 
 	if (XFS_IS_CORRUPT(mp, !xfs_verify_fsbext(mp, bno, len)))
 		return -EFSCORRUPTED;
@@ -2653,7 +2619,7 @@ xfs_defer_extent_free(
 	xefi->xefi_startblock = bno;
 	xefi->xefi_blockcount = (xfs_extlen_t)len;
 	xefi->xefi_agresv = type;
-	if (free_flags & XFS_FREE_EXTENT_SKIP_DISCARD)
+	if (skip_discard)
 		xefi->xefi_flags |= XFS_EFI_SKIP_DISCARD;
 	if (oinfo) {
 		ASSERT(oinfo->oi_offset == 0);
@@ -2666,8 +2632,12 @@ xfs_defer_extent_free(
 	} else {
 		xefi->xefi_owner = XFS_RMAP_OWN_NULL;
 	}
+	trace_xfs_bmap_free_defer(mp,
+			XFS_FSB_TO_AGNO(tp->t_mountp, bno), 0,
+			XFS_FSB_TO_AGBNO(tp->t_mountp, bno), len);
 
-	xfs_extent_free_defer_add(tp, xefi, dfpp);
+	xfs_extent_free_get_group(mp, xefi);
+	*dfpp = xfs_defer_add(tp, &xefi->xefi_list, &xfs_extent_free_defer_type);
 	return 0;
 }
 
@@ -2678,11 +2648,11 @@ xfs_free_extent_later(
 	xfs_filblks_t			len,
 	const struct xfs_owner_info	*oinfo,
 	enum xfs_ag_resv_type		type,
-	unsigned int			free_flags)
+	bool				skip_discard)
 {
 	struct xfs_defer_pending	*dontcare = NULL;
 
-	return xfs_defer_extent_free(tp, bno, len, oinfo, type, free_flags,
+	return xfs_defer_extent_free(tp, bno, len, oinfo, type, skip_discard,
 			&dontcare);
 }
 
@@ -2707,13 +2677,13 @@ xfs_free_extent_later(
 int
 xfs_alloc_schedule_autoreap(
 	const struct xfs_alloc_arg	*args,
-	unsigned int			free_flags,
+	bool				skip_discard,
 	struct xfs_alloc_autoreap	*aarp)
 {
 	int				error;
 
 	error = xfs_defer_extent_free(args->tp, args->fsbno, args->len,
-			&args->oinfo, args->resv, free_flags, &aarp->dfp);
+			&args->oinfo, args->resv, skip_discard, &aarp->dfp);
 	if (error)
 		return error;
 
@@ -2925,21 +2895,8 @@ xfs_alloc_fix_freelist(
 		if (error)
 			goto out_agbp_relse;
 
-		/*
-		 * Defer the AGFL block free.
-		 *
-		 * This helps to prevent log reservation overruns due to too
-		 * many allocation operations in a transaction. AGFL frees are
-		 * prone to this problem because for one they are always freed
-		 * one at a time.  Further, an immediate AGFL block free can
-		 * cause a btree join and require another block free before the
-		 * real allocation can proceed.
-		 * Deferring the free disconnects freeing up the AGFL slot from
-		 * freeing the block.
-		 */
-		error = xfs_free_extent_later(tp,
-				XFS_AGB_TO_FSB(mp, args->agno, bno), 1,
-				&targs.oinfo, XFS_AG_RESV_AGFL, 0);
+		/* defer agfl frees */
+		error = xfs_defer_agfl_block(tp, args->agno, bno, &targs.oinfo);
 		if (error)
 			goto out_agbp_relse;
 	}

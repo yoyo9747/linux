@@ -2360,7 +2360,7 @@ int cayman_init(struct radeon_device *rdev)
 	/* Initialize surface registers */
 	radeon_surface_init(rdev);
 	/* Initialize clocks */
-	radeon_get_clock_info(rdev_to_drm(rdev));
+	radeon_get_clock_info(rdev->ddev);
 	/* Fence driver */
 	radeon_fence_driver_init(rdev);
 	/* initialize memory controller */

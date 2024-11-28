@@ -91,9 +91,6 @@ static u32 sun50i_h616_efuse_xlate(u32 speedbin)
 	case 0x5d00:
 		value = 0;
 		break;
-	case 0x6c00:
-		value = 5;
-		break;
 	default:
 		pr_warn("sun50i-cpufreq-nvmem: unknown speed bin 0x%x, using default bin 0\n",
 			speedbin & 0xffff);
@@ -134,23 +131,25 @@ static const struct of_device_id cpu_opp_match_list[] = {
 static bool dt_has_supported_hw(void)
 {
 	bool has_opp_supported_hw = false;
+	struct device_node *np, *opp;
 	struct device *cpu_dev;
 
 	cpu_dev = get_cpu_device(0);
 	if (!cpu_dev)
 		return false;
 
-	struct device_node *np __free(device_node) =
-		dev_pm_opp_of_get_opp_desc_node(cpu_dev);
+	np = dev_pm_opp_of_get_opp_desc_node(cpu_dev);
 	if (!np)
 		return false;
 
-	for_each_child_of_node_scoped(np, opp) {
-		if (of_property_present(opp, "opp-supported-hw")) {
+	for_each_child_of_node(np, opp) {
+		if (of_find_property(opp, "opp-supported-hw", NULL)) {
 			has_opp_supported_hw = true;
 			break;
 		}
 	}
+
+	of_node_put(np);
 
 	return has_opp_supported_hw;
 }
@@ -166,6 +165,7 @@ static int sun50i_cpufreq_get_efuse(void)
 	const struct sunxi_cpufreq_data *opp_data;
 	struct nvmem_cell *speedbin_nvmem;
 	const struct of_device_id *match;
+	struct device_node *np;
 	struct device *cpu_dev;
 	u32 *speedbin;
 	int ret;
@@ -174,18 +174,19 @@ static int sun50i_cpufreq_get_efuse(void)
 	if (!cpu_dev)
 		return -ENODEV;
 
-	struct device_node *np __free(device_node) =
-		dev_pm_opp_of_get_opp_desc_node(cpu_dev);
+	np = dev_pm_opp_of_get_opp_desc_node(cpu_dev);
 	if (!np)
 		return -ENOENT;
 
 	match = of_match_node(cpu_opp_match_list, np);
-	if (!match)
+	if (!match) {
+		of_node_put(np);
 		return -ENOENT;
-
+	}
 	opp_data = match->data;
 
 	speedbin_nvmem = of_nvmem_cell_get(np, NULL);
+	of_node_put(np);
 	if (IS_ERR(speedbin_nvmem))
 		return dev_err_probe(cpu_dev, PTR_ERR(speedbin_nvmem),
 				     "Could not get nvmem cell\n");
@@ -300,9 +301,14 @@ MODULE_DEVICE_TABLE(of, sun50i_cpufreq_match_list);
 
 static const struct of_device_id *sun50i_cpufreq_match_node(void)
 {
-	struct device_node *np __free(device_node) = of_find_node_by_path("/");
+	const struct of_device_id *match;
+	struct device_node *np;
 
-	return of_match_node(sun50i_cpufreq_match_list, np);
+	np = of_find_node_by_path("/");
+	match = of_match_node(sun50i_cpufreq_match_list, np);
+	of_node_put(np);
+
+	return match;
 }
 
 /*

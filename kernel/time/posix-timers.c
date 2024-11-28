@@ -277,17 +277,10 @@ void posixtimer_rearm(struct kernel_siginfo *info)
 	unlock_timer(timr, flags);
 }
 
-int posix_timer_queue_signal(struct k_itimer *timr)
+int posix_timer_event(struct k_itimer *timr, int si_private)
 {
-	int ret, si_private = 0;
 	enum pid_type type;
-
-	lockdep_assert_held(&timr->it_lock);
-
-	timr->it_active = 0;
-	if (timr->it_interval)
-		si_private = ++timr->it_requeue_pending;
-
+	int ret;
 	/*
 	 * FIXME: if ->sigq is queued we can race with
 	 * dequeue_signal()->posixtimer_rearm().
@@ -316,13 +309,19 @@ int posix_timer_queue_signal(struct k_itimer *timr)
  */
 static enum hrtimer_restart posix_timer_fn(struct hrtimer *timer)
 {
-	struct k_itimer *timr = container_of(timer, struct k_itimer, it.real.timer);
 	enum hrtimer_restart ret = HRTIMER_NORESTART;
+	struct k_itimer *timr;
 	unsigned long flags;
+	int si_private = 0;
 
+	timr = container_of(timer, struct k_itimer, it.real.timer);
 	spin_lock_irqsave(&timr->it_lock, flags);
 
-	if (posix_timer_queue_signal(timr)) {
+	timr->it_active = 0;
+	if (timr->it_interval != 0)
+		si_private = ++timr->it_requeue_pending;
+
+	if (posix_timer_event(timr, si_private)) {
 		/*
 		 * The signal was not queued due to SIG_IGN. As a
 		 * consequence the timer is not going to be rearmed from
@@ -339,14 +338,14 @@ static enum hrtimer_restart posix_timer_fn(struct hrtimer *timer)
 			 * change to the signal handling code.
 			 *
 			 * For now let timers with an interval less than a
-			 * jiffy expire every jiffy and recheck for a
+			 * jiffie expire every jiffie and recheck for a
 			 * valid signal handler.
 			 *
 			 * This avoids interrupt starvation in case of a
 			 * very small interval, which would expire the
 			 * timer immediately again.
 			 *
-			 * Moving now ahead of time by one jiffy tricks
+			 * Moving now ahead of time by one jiffie tricks
 			 * hrtimer_forward() to expire the timer later,
 			 * while it still maintains the overrun accuracy
 			 * for the price of a slight inconsistency in the
@@ -516,7 +515,7 @@ static int do_timer_create(clockid_t which_clock, struct sigevent *event,
 	spin_lock_irq(&current->sighand->siglock);
 	/* This makes the timer valid in the hash table */
 	WRITE_ONCE(new_timer->it_signal, current->signal);
-	hlist_add_head(&new_timer->list, &current->signal->posix_timers);
+	list_add(&new_timer->list, &current->signal->posix_timers);
 	spin_unlock_irq(&current->sighand->siglock);
 	/*
 	 * After unlocking sighand::siglock @new_timer is subject to
@@ -857,23 +856,6 @@ static struct k_itimer *timer_wait_running(struct k_itimer *timer,
 	return lock_timer(timer_id, flags);
 }
 
-/*
- * Set up the new interval and reset the signal delivery data
- */
-void posix_timer_set_common(struct k_itimer *timer, struct itimerspec64 *new_setting)
-{
-	if (new_setting->it_value.tv_sec || new_setting->it_value.tv_nsec)
-		timer->it_interval = timespec64_to_ktime(new_setting->it_interval);
-	else
-		timer->it_interval = 0;
-
-	/* Prevent reloading in case there is a signal pending */
-	timer->it_requeue_pending = (timer->it_requeue_pending + 2) & ~REQUEUE_PENDING;
-	/* Reset overrun accounting */
-	timer->it_overrun_last = 0;
-	timer->it_overrun = -1LL;
-}
-
 /* Set a POSIX.1b interval timer. */
 int common_timer_set(struct k_itimer *timr, int flags,
 		     struct itimerspec64 *new_setting,
@@ -896,12 +878,15 @@ int common_timer_set(struct k_itimer *timr, int flags,
 		return TIMER_RETRY;
 
 	timr->it_active = 0;
-	posix_timer_set_common(timr, new_setting);
+	timr->it_requeue_pending = (timr->it_requeue_pending + 2) &
+		~REQUEUE_PENDING;
+	timr->it_overrun_last = 0;
 
-	/* Keep timer disarmed when it_value is zero */
+	/* Switch off the timer when it_value is zero */
 	if (!new_setting->it_value.tv_sec && !new_setting->it_value.tv_nsec)
 		return 0;
 
+	timr->it_interval = timespec64_to_ktime(new_setting->it_interval);
 	expires = timespec64_to_ktime(new_setting->it_value);
 	if (flags & TIMER_ABSTIME)
 		expires = timens_ktime_to_host(timr->it_clock, expires);
@@ -919,7 +904,7 @@ static int do_timer_settime(timer_t timer_id, int tmr_flags,
 	const struct k_clock *kc;
 	struct k_itimer *timr;
 	unsigned long flags;
-	int error;
+	int error = 0;
 
 	if (!timespec64_valid(&new_spec64->it_interval) ||
 	    !timespec64_valid(&new_spec64->it_value))
@@ -932,9 +917,6 @@ static int do_timer_settime(timer_t timer_id, int tmr_flags,
 retry:
 	if (!timr)
 		return -EINVAL;
-
-	if (old_spec64)
-		old_spec64->it_interval = ktime_to_timespec64(timr->it_interval);
 
 	kc = timr->kclock;
 	if (WARN_ON_ONCE(!kc || !kc->timer_set))
@@ -1039,7 +1021,7 @@ retry_delete:
 	}
 
 	spin_lock(&current->sighand->siglock);
-	hlist_del(&timer->list);
+	list_del(&timer->list);
 	spin_unlock(&current->sighand->siglock);
 	/*
 	 * A concurrent lookup could check timer::it_signal lockless. It
@@ -1089,7 +1071,7 @@ retry_delete:
 
 		goto retry_delete;
 	}
-	hlist_del(&timer->list);
+	list_del(&timer->list);
 
 	/*
 	 * Setting timer::it_signal to NULL is technically not required
@@ -1110,19 +1092,22 @@ retry_delete:
  */
 void exit_itimers(struct task_struct *tsk)
 {
-	struct hlist_head timers;
+	struct list_head timers;
+	struct k_itimer *tmr;
 
-	if (hlist_empty(&tsk->signal->posix_timers))
+	if (list_empty(&tsk->signal->posix_timers))
 		return;
 
 	/* Protect against concurrent read via /proc/$PID/timers */
 	spin_lock_irq(&tsk->sighand->siglock);
-	hlist_move_list(&tsk->signal->posix_timers, &timers);
+	list_replace_init(&tsk->signal->posix_timers, &timers);
 	spin_unlock_irq(&tsk->sighand->siglock);
 
 	/* The timers are not longer accessible via tsk::signal */
-	while (!hlist_empty(&timers))
-		itimer_delete(hlist_entry(timers.first, struct k_itimer, list));
+	while (!list_empty(&timers)) {
+		tmr = list_first_entry(&timers, struct k_itimer, list);
+		itimer_delete(tmr);
+	}
 }
 
 SYSCALL_DEFINE2(clock_settime, const clockid_t, which_clock,

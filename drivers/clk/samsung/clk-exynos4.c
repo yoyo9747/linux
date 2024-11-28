@@ -1040,20 +1040,19 @@ static unsigned long __init exynos4_get_xom(void)
 static void __init exynos4_clk_register_finpll(struct samsung_clk_provider *ctx)
 {
 	struct samsung_fixed_rate_clock fclk;
-	unsigned long finpll_f;
-	unsigned int parent;
+	struct clk *clk;
+	unsigned long finpll_f = 24000000;
 	char *parent_name;
 	unsigned int xom = exynos4_get_xom();
 
 	parent_name = xom & 1 ? "xusbxti" : "xxti";
-	parent = xom & 1 ? CLK_XUSBXTI : CLK_XXTI;
-
-	finpll_f = clk_hw_get_rate(ctx->clk_data.hws[parent]);
-	if (!finpll_f) {
+	clk = clk_get(NULL, parent_name);
+	if (IS_ERR(clk)) {
 		pr_err("%s: failed to lookup parent clock %s, assuming "
 			"fin_pll clock frequency is 24MHz\n", __func__,
 			parent_name);
-		finpll_f = 24000000;
+	} else {
+		finpll_f = clk_get_rate(clk);
 	}
 
 	fclk.id = CLK_FIN_PLL;

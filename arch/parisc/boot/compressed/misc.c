@@ -6,7 +6,7 @@
 
 #include <linux/uaccess.h>
 #include <linux/elf.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <asm/page.h>
 #include "sizes.h"
 

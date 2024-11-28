@@ -1000,7 +1000,7 @@ static int evm_inode_copy_up_xattr(struct dentry *src, const char *name)
 	case EVM_XATTR_HMAC:
 	case EVM_IMA_XATTR_DIGSIG:
 	default:
-		rc = -ECANCELED; /* discard */
+		rc = 1; /* discard */
 	}
 
 	kfree(xattr_data);

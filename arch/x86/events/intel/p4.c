@@ -919,7 +919,7 @@ static void p4_pmu_disable_all(void)
 	struct cpu_hw_events *cpuc = this_cpu_ptr(&cpu_hw_events);
 	int idx;
 
-	for_each_set_bit(idx, x86_pmu.cntr_mask, X86_PMC_IDX_MAX) {
+	for (idx = 0; idx < x86_pmu.num_counters; idx++) {
 		struct perf_event *event = cpuc->events[idx];
 		if (!test_bit(idx, cpuc->active_mask))
 			continue;
@@ -998,7 +998,7 @@ static void p4_pmu_enable_all(int added)
 	struct cpu_hw_events *cpuc = this_cpu_ptr(&cpu_hw_events);
 	int idx;
 
-	for_each_set_bit(idx, x86_pmu.cntr_mask, X86_PMC_IDX_MAX) {
+	for (idx = 0; idx < x86_pmu.num_counters; idx++) {
 		struct perf_event *event = cpuc->events[idx];
 		if (!test_bit(idx, cpuc->active_mask))
 			continue;
@@ -1040,7 +1040,7 @@ static int p4_pmu_handle_irq(struct pt_regs *regs)
 
 	cpuc = this_cpu_ptr(&cpu_hw_events);
 
-	for_each_set_bit(idx, x86_pmu.cntr_mask, X86_PMC_IDX_MAX) {
+	for (idx = 0; idx < x86_pmu.num_counters; idx++) {
 		int overflow;
 
 		if (!test_bit(idx, cpuc->active_mask)) {
@@ -1353,7 +1353,7 @@ static __initconst const struct x86_pmu p4_pmu = {
 	 * though leave it restricted at moment assuming
 	 * HT is on
 	 */
-	.cntr_mask64		= GENMASK_ULL(ARCH_P4_MAX_CCCR - 1, 0),
+	.num_counters		= ARCH_P4_MAX_CCCR,
 	.apic			= 1,
 	.cntval_bits		= ARCH_P4_CNTRVAL_BITS,
 	.cntval_mask		= ARCH_P4_CNTRVAL_MASK,
@@ -1395,7 +1395,7 @@ __init int p4_pmu_init(void)
 	 *
 	 * Solve this by zero'ing out the registers to mimic a reset.
 	 */
-	for_each_set_bit(i, x86_pmu.cntr_mask, X86_PMC_IDX_MAX) {
+	for (i = 0; i < x86_pmu.num_counters; i++) {
 		reg = x86_pmu_config_addr(i);
 		wrmsrl_safe(reg, 0ULL);
 	}

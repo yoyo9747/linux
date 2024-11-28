@@ -76,7 +76,6 @@ properties:
   clock-frequency: true
   current-speed: true
   overrun-throttle-ms: true
-  wakeup-source: true
 
 required:
   - compatible

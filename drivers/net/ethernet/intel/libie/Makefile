@@ -3,4 +3,4 @@
 
 obj-$(CONFIG_LIBIE)	+= libie.o
 
-libie-y			:= rx.o
+libie-objs		+= rx.o

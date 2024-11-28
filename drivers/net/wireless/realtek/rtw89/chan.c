@@ -124,12 +124,12 @@ void rtw89_chan_create(struct rtw89_chan *chan, u8 center_chan, u8 primary_chan,
 }
 
 bool rtw89_assign_entity_chan(struct rtw89_dev *rtwdev,
-			      enum rtw89_chanctx_idx idx,
+			      enum rtw89_sub_entity_idx idx,
 			      const struct rtw89_chan *new)
 {
 	struct rtw89_hal *hal = &rtwdev->hal;
-	struct rtw89_chan *chan = &hal->chanctx[idx].chan;
-	struct rtw89_chan_rcd *rcd = &hal->chanctx[idx].rcd;
+	struct rtw89_chan *chan = &hal->sub[idx].chan;
+	struct rtw89_chan_rcd *rcd = &hal->sub[idx].rcd;
 	bool band_changed;
 
 	rcd->prev_primary_channel = chan->primary_channel;
@@ -141,59 +141,37 @@ bool rtw89_assign_entity_chan(struct rtw89_dev *rtwdev,
 	return band_changed;
 }
 
-int rtw89_iterate_entity_chan(struct rtw89_dev *rtwdev,
-			      int (*iterator)(const struct rtw89_chan *chan,
-					      void *data),
-			      void *data)
-{
-	struct rtw89_hal *hal = &rtwdev->hal;
-	const struct rtw89_chan *chan;
-	int ret;
-	u8 idx;
-
-	lockdep_assert_held(&rtwdev->mutex);
-
-	for_each_set_bit(idx,  hal->entity_map, NUM_OF_RTW89_CHANCTX) {
-		chan = rtw89_chan_get(rtwdev, idx);
-		ret = iterator(chan, data);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
-}
-
 static void __rtw89_config_entity_chandef(struct rtw89_dev *rtwdev,
-					  enum rtw89_chanctx_idx idx,
+					  enum rtw89_sub_entity_idx idx,
 					  const struct cfg80211_chan_def *chandef,
 					  bool from_stack)
 {
 	struct rtw89_hal *hal = &rtwdev->hal;
 
-	hal->chanctx[idx].chandef = *chandef;
+	hal->sub[idx].chandef = *chandef;
 
 	if (from_stack)
 		set_bit(idx, hal->entity_map);
 }
 
 void rtw89_config_entity_chandef(struct rtw89_dev *rtwdev,
-				 enum rtw89_chanctx_idx idx,
+				 enum rtw89_sub_entity_idx idx,
 				 const struct cfg80211_chan_def *chandef)
 {
 	__rtw89_config_entity_chandef(rtwdev, idx, chandef, true);
 }
 
 void rtw89_config_roc_chandef(struct rtw89_dev *rtwdev,
-			      enum rtw89_chanctx_idx idx,
+			      enum rtw89_sub_entity_idx idx,
 			      const struct cfg80211_chan_def *chandef)
 {
 	struct rtw89_hal *hal = &rtwdev->hal;
-	enum rtw89_chanctx_idx cur;
+	enum rtw89_sub_entity_idx cur;
 
 	if (chandef) {
-		cur = atomic_cmpxchg(&hal->roc_chanctx_idx,
-				     RTW89_CHANCTX_IDLE, idx);
-		if (cur != RTW89_CHANCTX_IDLE) {
+		cur = atomic_cmpxchg(&hal->roc_entity_idx,
+				     RTW89_SUB_ENTITY_IDLE, idx);
+		if (cur != RTW89_SUB_ENTITY_IDLE) {
 			rtw89_debug(rtwdev, RTW89_DBG_TXRX,
 				    "ROC still processing on entity %d\n", idx);
 			return;
@@ -201,12 +179,12 @@ void rtw89_config_roc_chandef(struct rtw89_dev *rtwdev,
 
 		hal->roc_chandef = *chandef;
 	} else {
-		cur = atomic_cmpxchg(&hal->roc_chanctx_idx, idx,
-				     RTW89_CHANCTX_IDLE);
+		cur = atomic_cmpxchg(&hal->roc_entity_idx, idx,
+				     RTW89_SUB_ENTITY_IDLE);
 		if (cur == idx)
 			return;
 
-		if (cur == RTW89_CHANCTX_IDLE)
+		if (cur == RTW89_SUB_ENTITY_IDLE)
 			rtw89_debug(rtwdev, RTW89_DBG_TXRX,
 				    "ROC already finished on entity %d\n", idx);
 		else
@@ -220,7 +198,7 @@ static void rtw89_config_default_chandef(struct rtw89_dev *rtwdev)
 	struct cfg80211_chan_def chandef = {0};
 
 	rtw89_get_default_chandef(&chandef);
-	__rtw89_config_entity_chandef(rtwdev, RTW89_CHANCTX_0, &chandef, false);
+	__rtw89_config_entity_chandef(rtwdev, RTW89_SUB_ENTITY_0, &chandef, false);
 }
 
 void rtw89_entity_init(struct rtw89_dev *rtwdev)
@@ -228,9 +206,9 @@ void rtw89_entity_init(struct rtw89_dev *rtwdev)
 	struct rtw89_hal *hal = &rtwdev->hal;
 
 	hal->entity_pause = false;
-	bitmap_zero(hal->entity_map, NUM_OF_RTW89_CHANCTX);
+	bitmap_zero(hal->entity_map, NUM_OF_RTW89_SUB_ENTITY);
 	bitmap_zero(hal->changes, NUM_OF_RTW89_CHANCTX_CHANGES);
-	atomic_set(&hal->roc_chanctx_idx, RTW89_CHANCTX_IDLE);
+	atomic_set(&hal->roc_entity_idx, RTW89_SUB_ENTITY_IDLE);
 	rtw89_config_default_chandef(rtwdev);
 }
 
@@ -242,8 +220,8 @@ static void rtw89_entity_calculate_weight(struct rtw89_dev *rtwdev,
 	struct rtw89_vif *rtwvif;
 	int idx;
 
-	for_each_set_bit(idx, hal->entity_map, NUM_OF_RTW89_CHANCTX) {
-		cfg = hal->chanctx[idx].cfg;
+	for_each_set_bit(idx, hal->entity_map, NUM_OF_RTW89_SUB_ENTITY) {
+		cfg = hal->sub[idx].cfg;
 		if (!cfg) {
 			/* doesn't run with chanctx ops; one channel at most */
 			w->active_chanctxs = 1;
@@ -262,7 +240,7 @@ static void rtw89_entity_calculate_weight(struct rtw89_dev *rtwdev,
 
 enum rtw89_entity_mode rtw89_entity_recalc(struct rtw89_dev *rtwdev)
 {
-	DECLARE_BITMAP(recalc_map, NUM_OF_RTW89_CHANCTX) = {};
+	DECLARE_BITMAP(recalc_map, NUM_OF_RTW89_SUB_ENTITY) = {};
 	struct rtw89_hal *hal = &rtwdev->hal;
 	const struct cfg80211_chan_def *chandef;
 	struct rtw89_entity_weight w = {};
@@ -272,23 +250,23 @@ enum rtw89_entity_mode rtw89_entity_recalc(struct rtw89_dev *rtwdev)
 
 	lockdep_assert_held(&rtwdev->mutex);
 
-	bitmap_copy(recalc_map, hal->entity_map, NUM_OF_RTW89_CHANCTX);
+	bitmap_copy(recalc_map, hal->entity_map, NUM_OF_RTW89_SUB_ENTITY);
 
 	rtw89_entity_calculate_weight(rtwdev, &w);
 	switch (w.active_chanctxs) {
 	default:
 		rtw89_warn(rtwdev, "unknown ent chanctxs weight: %d\n",
 			   w.active_chanctxs);
-		bitmap_zero(recalc_map, NUM_OF_RTW89_CHANCTX);
+		bitmap_zero(recalc_map, NUM_OF_RTW89_SUB_ENTITY);
 		fallthrough;
 	case 0:
 		rtw89_config_default_chandef(rtwdev);
-		set_bit(RTW89_CHANCTX_0, recalc_map);
+		set_bit(RTW89_SUB_ENTITY_0, recalc_map);
 		fallthrough;
 	case 1:
 		mode = RTW89_ENTITY_MODE_SCC;
 		break;
-	case 2 ... NUM_OF_RTW89_CHANCTX:
+	case 2 ... NUM_OF_RTW89_SUB_ENTITY:
 		if (w.active_roles != NUM_OF_RTW89_MCC_ROLES) {
 			rtw89_debug(rtwdev, RTW89_DBG_CHAN,
 				    "unhandled ent: %d chanctxs %d roles\n",
@@ -304,7 +282,7 @@ enum rtw89_entity_mode rtw89_entity_recalc(struct rtw89_dev *rtwdev)
 		break;
 	}
 
-	for_each_set_bit(idx, recalc_map, NUM_OF_RTW89_CHANCTX) {
+	for_each_set_bit(idx, recalc_map, NUM_OF_RTW89_SUB_ENTITY) {
 		chandef = rtw89_chandef_get(rtwdev, idx);
 		rtw89_get_channel_params(chandef, &chan);
 		if (chan.channel == 0) {
@@ -650,7 +628,7 @@ static int rtw89_mcc_fill_role(struct rtw89_dev *rtwdev,
 
 	role->duration = role->beacon_interval / 2;
 
-	chan = rtw89_chan_get(rtwdev, rtwvif->chanctx_idx);
+	chan = rtw89_chan_get(rtwdev, rtwvif->sub_entity_idx);
 	role->is_2ghz = chan->band_type == RTW89_BAND_2G;
 	role->is_go = rtwvif->wifi_role == RTW89_WIFI_ROLE_P2P_GO;
 	role->is_gc = rtwvif->wifi_role == RTW89_WIFI_ROLE_P2P_CLIENT;
@@ -678,10 +656,10 @@ static void rtw89_mcc_fill_bt_role(struct rtw89_dev *rtwdev)
 }
 
 struct rtw89_mcc_fill_role_selector {
-	struct rtw89_vif *bind_vif[NUM_OF_RTW89_CHANCTX];
+	struct rtw89_vif *bind_vif[NUM_OF_RTW89_SUB_ENTITY];
 };
 
-static_assert((u8)NUM_OF_RTW89_CHANCTX >= NUM_OF_RTW89_MCC_ROLES);
+static_assert((u8)NUM_OF_RTW89_SUB_ENTITY >= NUM_OF_RTW89_MCC_ROLES);
 
 static int rtw89_mcc_fill_role_iterator(struct rtw89_dev *rtwdev,
 					struct rtw89_mcc_role *mcc_role,
@@ -719,14 +697,14 @@ static int rtw89_mcc_fill_all_roles(struct rtw89_dev *rtwdev)
 		if (!rtwvif->chanctx_assigned)
 			continue;
 
-		if (sel.bind_vif[rtwvif->chanctx_idx]) {
+		if (sel.bind_vif[rtwvif->sub_entity_idx]) {
 			rtw89_warn(rtwdev,
 				   "MCC skip extra vif <macid %d> on chanctx[%d]\n",
-				   rtwvif->mac_id, rtwvif->chanctx_idx);
+				   rtwvif->mac_id, rtwvif->sub_entity_idx);
 			continue;
 		}
 
-		sel.bind_vif[rtwvif->chanctx_idx] = rtwvif;
+		sel.bind_vif[rtwvif->sub_entity_idx] = rtwvif;
 	}
 
 	ret = rtw89_iterate_mcc_roles(rtwdev, rtw89_mcc_fill_role_iterator, &sel);
@@ -1390,7 +1368,7 @@ static int __mcc_fw_add_role(struct rtw89_dev *rtwdev, struct rtw89_mcc_role *ro
 	const struct rtw89_chan *chan;
 	int ret;
 
-	chan = rtw89_chan_get(rtwdev, role->rtwvif->chanctx_idx);
+	chan = rtw89_chan_get(rtwdev, role->rtwvif->sub_entity_idx);
 	req.central_ch_seg0 = chan->channel;
 	req.primary_ch = chan->primary_channel;
 	req.bandwidth = chan->band_width;
@@ -1448,7 +1426,7 @@ void __mrc_fw_add_role(struct rtw89_dev *rtwdev, struct rtw89_mcc_role *role,
 	slot_arg->duration = role->duration;
 	slot_arg->role_num = 1;
 
-	chan = rtw89_chan_get(rtwdev, role->rtwvif->chanctx_idx);
+	chan = rtw89_chan_get(rtwdev, role->rtwvif->sub_entity_idx);
 
 	slot_arg->roles[0].role_type = RTW89_H2C_MRC_ROLE_WIFI;
 	slot_arg->roles[0].is_master = role == ref;
@@ -1934,53 +1912,22 @@ static int rtw89_mcc_start(struct rtw89_dev *rtwdev)
 	return 0;
 }
 
-struct rtw89_mcc_stop_sel {
-	u8 mac_id;
-	u8 slot_idx;
-};
-
-static void rtw89_mcc_stop_sel_fill(struct rtw89_mcc_stop_sel *sel,
-				    const struct rtw89_mcc_role *mcc_role)
-{
-	sel->mac_id = mcc_role->rtwvif->mac_id;
-	sel->slot_idx = mcc_role->slot_idx;
-}
-
-static int rtw89_mcc_stop_sel_iterator(struct rtw89_dev *rtwdev,
-				       struct rtw89_mcc_role *mcc_role,
-				       unsigned int ordered_idx,
-				       void *data)
-{
-	struct rtw89_mcc_stop_sel *sel = data;
-
-	if (!mcc_role->rtwvif->chanctx_assigned)
-		return 0;
-
-	rtw89_mcc_stop_sel_fill(sel, mcc_role);
-	return 1; /* break iteration */
-}
-
 static void rtw89_mcc_stop(struct rtw89_dev *rtwdev)
 {
 	struct rtw89_mcc_info *mcc = &rtwdev->mcc;
 	struct rtw89_mcc_role *ref = &mcc->role_ref;
-	struct rtw89_mcc_stop_sel sel;
 	int ret;
 
-	/* by default, stop at ref */
-	rtw89_mcc_stop_sel_fill(&sel, ref);
-	rtw89_iterate_mcc_roles(rtwdev, rtw89_mcc_stop_sel_iterator, &sel);
-
-	rtw89_debug(rtwdev, RTW89_DBG_CHAN, "MCC stop at <macid %d>\n", sel.mac_id);
+	rtw89_debug(rtwdev, RTW89_DBG_CHAN, "MCC stop\n");
 
 	if (rtw89_concurrent_via_mrc(rtwdev)) {
-		ret = rtw89_fw_h2c_mrc_del(rtwdev, mcc->group, sel.slot_idx);
+		ret = rtw89_fw_h2c_mrc_del(rtwdev, mcc->group);
 		if (ret)
 			rtw89_debug(rtwdev, RTW89_DBG_CHAN,
 				    "MRC h2c failed to trigger del: %d\n", ret);
 	} else {
 		ret = rtw89_fw_h2c_stop_mcc(rtwdev, mcc->group,
-					    sel.mac_id, true);
+					    ref->rtwvif->mac_id, true);
 		if (ret)
 			rtw89_debug(rtwdev, RTW89_DBG_CHAN,
 				    "MCC h2c failed to trigger stop: %d\n", ret);
@@ -2370,36 +2317,39 @@ void rtw89_chanctx_proceed(struct rtw89_dev *rtwdev)
 	rtw89_queue_chanctx_work(rtwdev);
 }
 
-static void rtw89_swap_chanctx(struct rtw89_dev *rtwdev,
-			       enum rtw89_chanctx_idx idx1,
-			       enum rtw89_chanctx_idx idx2)
+static void rtw89_swap_sub_entity(struct rtw89_dev *rtwdev,
+				  enum rtw89_sub_entity_idx idx1,
+				  enum rtw89_sub_entity_idx idx2)
 {
 	struct rtw89_hal *hal = &rtwdev->hal;
+	struct rtw89_sub_entity tmp;
 	struct rtw89_vif *rtwvif;
 	u8 cur;
 
 	if (idx1 == idx2)
 		return;
 
-	hal->chanctx[idx1].cfg->idx = idx2;
-	hal->chanctx[idx2].cfg->idx = idx1;
+	hal->sub[idx1].cfg->idx = idx2;
+	hal->sub[idx2].cfg->idx = idx1;
 
-	swap(hal->chanctx[idx1], hal->chanctx[idx2]);
+	tmp = hal->sub[idx1];
+	hal->sub[idx1] = hal->sub[idx2];
+	hal->sub[idx2] = tmp;
 
 	rtw89_for_each_rtwvif(rtwdev, rtwvif) {
 		if (!rtwvif->chanctx_assigned)
 			continue;
-		if (rtwvif->chanctx_idx == idx1)
-			rtwvif->chanctx_idx = idx2;
-		else if (rtwvif->chanctx_idx == idx2)
-			rtwvif->chanctx_idx = idx1;
+		if (rtwvif->sub_entity_idx == idx1)
+			rtwvif->sub_entity_idx = idx2;
+		else if (rtwvif->sub_entity_idx == idx2)
+			rtwvif->sub_entity_idx = idx1;
 	}
 
-	cur = atomic_read(&hal->roc_chanctx_idx);
+	cur = atomic_read(&hal->roc_entity_idx);
 	if (cur == idx1)
-		atomic_set(&hal->roc_chanctx_idx, idx2);
+		atomic_set(&hal->roc_entity_idx, idx2);
 	else if (cur == idx2)
-		atomic_set(&hal->roc_chanctx_idx, idx1);
+		atomic_set(&hal->roc_entity_idx, idx1);
 }
 
 int rtw89_chanctx_ops_add(struct rtw89_dev *rtwdev,
@@ -2410,14 +2360,14 @@ int rtw89_chanctx_ops_add(struct rtw89_dev *rtwdev,
 	const struct rtw89_chip_info *chip = rtwdev->chip;
 	u8 idx;
 
-	idx = find_first_zero_bit(hal->entity_map, NUM_OF_RTW89_CHANCTX);
+	idx = find_first_zero_bit(hal->entity_map, NUM_OF_RTW89_SUB_ENTITY);
 	if (idx >= chip->support_chanctx_num)
 		return -ENOENT;
 
 	rtw89_config_entity_chandef(rtwdev, idx, &ctx->def);
 	cfg->idx = idx;
 	cfg->ref_count = 0;
-	hal->chanctx[idx].cfg = cfg;
+	hal->sub[idx].cfg = cfg;
 	return 0;
 }
 
@@ -2450,19 +2400,19 @@ int rtw89_chanctx_ops_assign_vif(struct rtw89_dev *rtwdev,
 	struct rtw89_chanctx_cfg *cfg = (struct rtw89_chanctx_cfg *)ctx->drv_priv;
 	struct rtw89_entity_weight w = {};
 
-	rtwvif->chanctx_idx = cfg->idx;
+	rtwvif->sub_entity_idx = cfg->idx;
 	rtwvif->chanctx_assigned = true;
 	cfg->ref_count++;
 
-	if (cfg->idx == RTW89_CHANCTX_0)
+	if (cfg->idx == RTW89_SUB_ENTITY_0)
 		goto out;
 
 	rtw89_entity_calculate_weight(rtwdev, &w);
 	if (w.active_chanctxs != 1)
 		goto out;
 
-	/* put the first active chanctx at RTW89_CHANCTX_0 */
-	rtw89_swap_chanctx(rtwdev, cfg->idx, RTW89_CHANCTX_0);
+	/* put the first active chanctx at RTW89_SUB_ENTITY_0 */
+	rtw89_swap_sub_entity(rtwdev, cfg->idx, RTW89_SUB_ENTITY_0);
 
 out:
 	return rtw89_set_channel(rtwdev);
@@ -2474,60 +2424,47 @@ void rtw89_chanctx_ops_unassign_vif(struct rtw89_dev *rtwdev,
 {
 	struct rtw89_chanctx_cfg *cfg = (struct rtw89_chanctx_cfg *)ctx->drv_priv;
 	struct rtw89_hal *hal = &rtwdev->hal;
-	enum rtw89_chanctx_idx roll;
+	struct rtw89_entity_weight w = {};
+	enum rtw89_sub_entity_idx roll;
 	enum rtw89_entity_mode cur;
-	enum rtw89_entity_mode new;
-	int ret;
 
-	rtwvif->chanctx_idx = RTW89_CHANCTX_0;
+	rtwvif->sub_entity_idx = RTW89_SUB_ENTITY_0;
 	rtwvif->chanctx_assigned = false;
 	cfg->ref_count--;
 
 	if (cfg->ref_count != 0)
 		goto out;
 
-	if (cfg->idx != RTW89_CHANCTX_0)
+	if (cfg->idx != RTW89_SUB_ENTITY_0)
 		goto out;
 
-	roll = find_next_bit(hal->entity_map, NUM_OF_RTW89_CHANCTX,
+	roll = find_next_bit(hal->entity_map, NUM_OF_RTW89_SUB_ENTITY,
 			     cfg->idx + 1);
 	/* Follow rtw89_config_default_chandef() when rtw89_entity_recalc(). */
-	if (roll == NUM_OF_RTW89_CHANCTX)
+	if (roll == NUM_OF_RTW89_SUB_ENTITY)
 		goto out;
 
-	/* RTW89_CHANCTX_0 is going to release, and another exists.
-	 * Make another roll down to RTW89_CHANCTX_0 to replace.
+	/* RTW89_SUB_ENTITY_0 is going to release, and another exists.
+	 * Make another roll down to RTW89_SUB_ENTITY_0 to replace.
 	 */
-	rtw89_swap_chanctx(rtwdev, cfg->idx, roll);
+	rtw89_swap_sub_entity(rtwdev, cfg->idx, roll);
 
 out:
-	if (!hal->entity_pause) {
-		cur = rtw89_get_entity_mode(rtwdev);
-		switch (cur) {
-		case RTW89_ENTITY_MODE_MCC:
-			rtw89_mcc_stop(rtwdev);
-			break;
-		default:
-			break;
-		}
-	}
+	rtw89_entity_calculate_weight(rtwdev, &w);
 
-	ret = rtw89_set_channel(rtwdev);
-	if (ret)
-		return;
-
-	if (hal->entity_pause)
-		return;
-
-	new = rtw89_get_entity_mode(rtwdev);
-	switch (new) {
+	cur = rtw89_get_entity_mode(rtwdev);
+	switch (cur) {
 	case RTW89_ENTITY_MODE_MCC:
-		/* re-plan MCC for chanctx changes. */
-		ret = rtw89_mcc_start(rtwdev);
-		if (ret)
-			rtw89_warn(rtwdev, "failed to start MCC: %d\n", ret);
+		/* If still multi-roles, re-plan MCC for chanctx changes.
+		 * Otherwise, just stop MCC.
+		 */
+		rtw89_mcc_stop(rtwdev);
+		if (w.active_roles == NUM_OF_RTW89_MCC_ROLES)
+			rtw89_mcc_start(rtwdev);
 		break;
 	default:
 		break;
 	}
+
+	rtw89_set_channel(rtwdev);
 }

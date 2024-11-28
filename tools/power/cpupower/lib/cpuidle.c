@@ -116,7 +116,6 @@ enum idlestate_value {
 	IDLESTATE_USAGE,
 	IDLESTATE_POWER,
 	IDLESTATE_LATENCY,
-	IDLESTATE_RESIDENCY,
 	IDLESTATE_TIME,
 	IDLESTATE_DISABLE,
 	MAX_IDLESTATE_VALUE_FILES
@@ -126,7 +125,6 @@ static const char *idlestate_value_files[MAX_IDLESTATE_VALUE_FILES] = {
 	[IDLESTATE_USAGE] = "usage",
 	[IDLESTATE_POWER] = "power",
 	[IDLESTATE_LATENCY] = "latency",
-	[IDLESTATE_RESIDENCY] = "residency",
 	[IDLESTATE_TIME]  = "time",
 	[IDLESTATE_DISABLE]  = "disable",
 };
@@ -254,12 +252,6 @@ unsigned long cpuidle_state_latency(unsigned int cpu,
 					  unsigned int idlestate)
 {
 	return cpuidle_state_get_one_value(cpu, idlestate, IDLESTATE_LATENCY);
-}
-
-unsigned long cpuidle_state_residency(unsigned int cpu,
-					  unsigned int idlestate)
-{
-	return cpuidle_state_get_one_value(cpu, idlestate, IDLESTATE_RESIDENCY);
 }
 
 unsigned long cpuidle_state_usage(unsigned int cpu,

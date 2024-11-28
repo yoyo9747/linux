@@ -423,14 +423,14 @@
 	status = "okay";
 
 	/* U26 temperature sensor placed near SoC */
-	temp1: temperature-sensor@4c {
-		compatible = "ti,tmp75c";
+	temp1: nct75@4c {
+		compatible = "lm75";
 		reg = <0x4c>;
 	};
 
 	/* U27 temperature sensor placed near RTC battery */
-	temp2: temperature-sensor@4d {
-		compatible = "ti,tmp75c";
+	temp2: nct75@4d {
+		compatible = "lm75";
 		reg = <0x4d>;
 	};
 

@@ -6,6 +6,7 @@
  ******************************************************************************/
 #include <linux/etherdevice.h>
 #include <drv_types.h>
+#include <rtw_debug.h>
 #include <hal_btcoex.h>
 #include <linux/jiffies.h>
 

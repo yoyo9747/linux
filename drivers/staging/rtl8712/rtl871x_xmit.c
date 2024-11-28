@@ -117,9 +117,12 @@ int _r8712_init_xmit_priv(struct xmit_priv *pxmitpriv,
 	/*init xmit_buf*/
 	_init_queue(&pxmitpriv->free_xmitbuf_queue);
 	_init_queue(&pxmitpriv->pending_xmitbuf_queue);
-	pxmitpriv->pxmitbuf = kmalloc(NR_XMITBUFF * sizeof(struct xmit_buf), GFP_ATOMIC);
-	if (!pxmitpriv->pxmitbuf)
+	pxmitpriv->pallocated_xmitbuf =
+		kmalloc(NR_XMITBUFF * sizeof(struct xmit_buf) + 4, GFP_ATOMIC);
+	if (!pxmitpriv->pallocated_xmitbuf)
 		goto clean_up_frame_buf;
+	pxmitpriv->pxmitbuf = pxmitpriv->pallocated_xmitbuf + 4 -
+			      ((addr_t)(pxmitpriv->pallocated_xmitbuf) & 3);
 	pxmitbuf = (struct xmit_buf *)pxmitpriv->pxmitbuf;
 	for (i = 0; i < NR_XMITBUFF; i++) {
 		INIT_LIST_HEAD(&pxmitbuf->list);
@@ -162,8 +165,8 @@ clean_up_alloc_buf:
 		for (k = 0; k < 8; k++)		/* delete xmit urb's */
 			usb_free_urb(pxmitbuf->pxmit_urb[k]);
 	}
-	kfree(pxmitpriv->pxmitbuf);
-	pxmitpriv->pxmitbuf = NULL;
+	kfree(pxmitpriv->pallocated_xmitbuf);
+	pxmitpriv->pallocated_xmitbuf = NULL;
 clean_up_frame_buf:
 	kfree(pxmitpriv->pallocated_frame_buf);
 	pxmitpriv->pallocated_frame_buf = NULL;
@@ -190,7 +193,7 @@ void _free_xmit_priv(struct xmit_priv *pxmitpriv)
 		pxmitbuf++;
 	}
 	kfree(pxmitpriv->pallocated_frame_buf);
-	kfree(pxmitpriv->pxmitbuf);
+	kfree(pxmitpriv->pallocated_xmitbuf);
 	free_hwxmits(padapter);
 }
 

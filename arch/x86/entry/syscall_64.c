@@ -8,12 +8,8 @@
 #include <asm/syscall.h>
 
 #define __SYSCALL(nr, sym) extern long __x64_##sym(const struct pt_regs *);
-#define __SYSCALL_NORETURN(nr, sym) extern long __noreturn __x64_##sym(const struct pt_regs *);
 #include <asm/syscalls_64.h>
-#undef  __SYSCALL
-
-#undef  __SYSCALL_NORETURN
-#define __SYSCALL_NORETURN __SYSCALL
+#undef __SYSCALL
 
 /*
  * The sys_call_table[] is no longer used for system calls, but
@@ -24,9 +20,10 @@
 const sys_call_ptr_t sys_call_table[] = {
 #include <asm/syscalls_64.h>
 };
-#undef  __SYSCALL
+#undef __SYSCALL
 
 #define __SYSCALL(nr, sym) case nr: return __x64_##sym(regs);
+
 long x64_sys_call(const struct pt_regs *regs, unsigned int nr)
 {
 	switch (nr) {

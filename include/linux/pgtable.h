@@ -447,12 +447,6 @@ static inline void arch_check_zapped_pmd(struct vm_area_struct *vma,
 }
 #endif
 
-#ifndef arch_check_zapped_pud
-static inline void arch_check_zapped_pud(struct vm_area_struct *vma, pud_t pud)
-{
-}
-#endif
-
 #ifndef __HAVE_ARCH_PTEP_GET_AND_CLEAR
 static inline pte_t ptep_get_and_clear(struct mm_struct *mm,
 				       unsigned long address,
@@ -735,18 +729,13 @@ static inline void clear_full_ptes(struct mm_struct *mm, unsigned long addr,
  * fault. This function updates TLB only, do nothing with cache or others.
  * It is the difference with function update_mmu_cache.
  */
-#ifndef update_mmu_tlb_range
-static inline void update_mmu_tlb_range(struct vm_area_struct *vma,
-				unsigned long address, pte_t *ptep, unsigned int nr)
-{
-}
-#endif
-
+#ifndef __HAVE_ARCH_UPDATE_MMU_TLB
 static inline void update_mmu_tlb(struct vm_area_struct *vma,
 				unsigned long address, pte_t *ptep)
 {
-	update_mmu_tlb_range(vma, address, ptep, 1);
 }
+#define __HAVE_ARCH_UPDATE_MMU_TLB
+#endif
 
 /*
  * Some architectures may be able to avoid expensive synchronization
@@ -1095,15 +1084,6 @@ static inline int pgd_same(pgd_t pgd_a, pgd_t pgd_b)
 })
 
 #ifndef __HAVE_ARCH_DO_SWAP_PAGE
-static inline void arch_do_swap_page_nr(struct mm_struct *mm,
-				     struct vm_area_struct *vma,
-				     unsigned long addr,
-				     pte_t pte, pte_t oldpte,
-				     int nr)
-{
-
-}
-#else
 /*
  * Some architectures support metadata associated with a page. When a
  * page is being swapped out, this metadata must be saved so it can be
@@ -1112,17 +1092,12 @@ static inline void arch_do_swap_page_nr(struct mm_struct *mm,
  * page as metadata for the page. arch_do_swap_page() can restore this
  * metadata when a page is swapped back in.
  */
-static inline void arch_do_swap_page_nr(struct mm_struct *mm,
-					struct vm_area_struct *vma,
-					unsigned long addr,
-					pte_t pte, pte_t oldpte,
-					int nr)
+static inline void arch_do_swap_page(struct mm_struct *mm,
+				     struct vm_area_struct *vma,
+				     unsigned long addr,
+				     pte_t pte, pte_t oldpte)
 {
-	for (int i = 0; i < nr; i++) {
-		arch_do_swap_page(vma->vm_mm, vma, addr + i * PAGE_SIZE,
-				pte_advance_pfn(pte, i),
-				pte_advance_pfn(oldpte, i));
-	}
+
 }
 #endif
 
@@ -1913,11 +1888,8 @@ typedef unsigned int pgtbl_mod_mask;
 #ifndef pmd_leaf_size
 #define pmd_leaf_size(x) PMD_SIZE
 #endif
-#ifndef __pte_leaf_size
 #ifndef pte_leaf_size
 #define pte_leaf_size(x) PAGE_SIZE
-#endif
-#define __pte_leaf_size(x,y) pte_leaf_size(y)
 #endif
 
 /*
@@ -1954,18 +1926,6 @@ typedef unsigned int pgtbl_mod_mask;
 
 #ifndef MAX_PTRS_PER_P4D
 #define MAX_PTRS_PER_P4D PTRS_PER_P4D
-#endif
-
-#ifndef pte_pgprot
-#define pte_pgprot(x) ((pgprot_t) {0})
-#endif
-
-#ifndef pmd_pgprot
-#define pmd_pgprot(x) ((pgprot_t) {0})
-#endif
-
-#ifndef pud_pgprot
-#define pud_pgprot(x) ((pgprot_t) {0})
 #endif
 
 /* description of effects of mapping type and prot in current implementation.

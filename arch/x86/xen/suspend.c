@@ -15,6 +15,8 @@
 #include <asm/fixmap.h>
 
 #include "xen-ops.h"
+#include "mmu.h"
+#include "pmu.h"
 
 static DEFINE_PER_CPU(u64, spec_ctrl);
 

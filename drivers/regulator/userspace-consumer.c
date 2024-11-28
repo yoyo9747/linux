@@ -158,8 +158,10 @@ static int regulator_userspace_consumer_probe(struct platform_device *pdev)
 
 	ret = devm_regulator_bulk_get_exclusive(&pdev->dev, drvdata->num_supplies,
 						drvdata->supplies);
-	if (ret)
-		return dev_err_probe(&pdev->dev, ret, "Failed to get supplies\n");
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to get supplies: %d\n", ret);
+		return ret;
+	}
 
 	platform_set_drvdata(pdev, drvdata);
 

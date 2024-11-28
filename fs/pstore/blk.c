@@ -241,7 +241,7 @@ err:
 /* get information of pstore/blk */
 int pstore_blk_get_config(struct pstore_blk_config *info)
 {
-	strscpy(info->device, blkdev);
+	strncpy(info->device, blkdev, 80);
 	info->max_reason = max_reason;
 	info->kmsg_size = check_size(kmsg_size, 4096);
 	info->pmsg_size = check_size(pmsg_size, 4096);

@@ -12,6 +12,8 @@
 
 #define OTX2_DEFAULT_ACTION	0x1
 
+static int otx2_mcam_entry_init(struct otx2_nic *pfvf);
+
 struct otx2_flow {
 	struct ethtool_rx_flow_spec flow_spec;
 	struct list_head list;
@@ -159,7 +161,7 @@ exit:
 }
 EXPORT_SYMBOL(otx2_alloc_mcam_entries);
 
-int otx2_mcam_entry_init(struct otx2_nic *pfvf)
+static int otx2_mcam_entry_init(struct otx2_nic *pfvf)
 {
 	struct otx2_flow_config *flow_cfg = pfvf->flow_cfg;
 	struct npc_get_field_status_req *freq;
@@ -170,7 +172,7 @@ int otx2_mcam_entry_init(struct otx2_nic *pfvf)
 	int ent, count;
 
 	vf_vlan_max_flows = pfvf->total_vfs * OTX2_PER_VF_VLAN_FLOWS;
-	count = flow_cfg->ucast_flt_cnt +
+	count = OTX2_MAX_UNICAST_FLOWS +
 			OTX2_MAX_VLAN_FLOWS + vf_vlan_max_flows;
 
 	flow_cfg->def_ent = devm_kmalloc_array(pfvf->dev, count,
@@ -212,7 +214,7 @@ int otx2_mcam_entry_init(struct otx2_nic *pfvf)
 	flow_cfg->vf_vlan_offset = 0;
 	flow_cfg->unicast_offset = vf_vlan_max_flows;
 	flow_cfg->rx_vlan_offset = flow_cfg->unicast_offset +
-					flow_cfg->ucast_flt_cnt;
+					OTX2_MAX_UNICAST_FLOWS;
 	pfvf->flags |= OTX2_FLAG_UCAST_FLTR_SUPPORT;
 
 	/* Check if NPC_DMAC field is supported
@@ -253,7 +255,6 @@ int otx2_mcam_entry_init(struct otx2_nic *pfvf)
 	refcount_set(&flow_cfg->mark_flows, 1);
 	return 0;
 }
-EXPORT_SYMBOL(otx2_mcam_entry_init);
 
 /* TODO : revisit on size */
 #define OTX2_DMAC_FLTR_BITMAP_SZ (4 * 2048 + 32)
@@ -301,8 +302,6 @@ int otx2_mcam_flow_init(struct otx2_nic *pf)
 	INIT_LIST_HEAD(&pf->flow_cfg->flow_list);
 	INIT_LIST_HEAD(&pf->flow_cfg->flow_list_tc);
 
-	pf->flow_cfg->ucast_flt_cnt = OTX2_DEFAULT_UNICAST_FLOWS;
-
 	/* Allocate bare minimum number of MCAM entries needed for
 	 * unicast and ntuple filters.
 	 */
@@ -315,7 +314,7 @@ int otx2_mcam_flow_init(struct otx2_nic *pf)
 		return 0;
 
 	pf->mac_table = devm_kzalloc(pf->dev, sizeof(struct otx2_mac_table)
-					* pf->flow_cfg->ucast_flt_cnt, GFP_KERNEL);
+					* OTX2_MAX_UNICAST_FLOWS, GFP_KERNEL);
 	if (!pf->mac_table)
 		return -ENOMEM;
 
@@ -357,7 +356,7 @@ static int otx2_do_add_macfilter(struct otx2_nic *pf, const u8 *mac)
 		return -ENOMEM;
 
 	/* dont have free mcam entries or uc list is greater than alloted */
-	if (netdev_uc_count(pf->netdev) > pf->flow_cfg->ucast_flt_cnt)
+	if (netdev_uc_count(pf->netdev) > OTX2_MAX_UNICAST_FLOWS)
 		return -ENOMEM;
 
 	mutex_lock(&pf->mbox.lock);
@@ -368,7 +367,7 @@ static int otx2_do_add_macfilter(struct otx2_nic *pf, const u8 *mac)
 	}
 
 	/* unicast offset starts with 32 0..31 for ntuple */
-	for (i = 0; i <  pf->flow_cfg->ucast_flt_cnt; i++) {
+	for (i = 0; i <  OTX2_MAX_UNICAST_FLOWS; i++) {
 		if (pf->mac_table[i].inuse)
 			continue;
 		ether_addr_copy(pf->mac_table[i].addr, mac);
@@ -411,7 +410,7 @@ static bool otx2_get_mcamentry_for_mac(struct otx2_nic *pf, const u8 *mac,
 {
 	int i;
 
-	for (i = 0; i < pf->flow_cfg->ucast_flt_cnt; i++) {
+	for (i = 0; i < OTX2_MAX_UNICAST_FLOWS; i++) {
 		if (!pf->mac_table[i].inuse)
 			continue;
 
@@ -1395,7 +1394,6 @@ int otx2_destroy_mcam_flows(struct otx2_nic *pfvf)
 	}
 
 	pfvf->flags &= ~OTX2_FLAG_MCAM_ENTRIES_ALLOC;
-	flow_cfg->max_flows = 0;
 	mutex_unlock(&pfvf->mbox.lock);
 
 	return 0;

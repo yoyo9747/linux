@@ -583,7 +583,7 @@ EXPORT_SYMBOL(queued_spin_lock_slowpath);
 #include "qspinlock_paravirt.h"
 #include "qspinlock.c"
 
-bool nopvspin;
+bool nopvspin __initdata;
 static __init int parse_nopvspin(char *arg)
 {
 	nopvspin = true;

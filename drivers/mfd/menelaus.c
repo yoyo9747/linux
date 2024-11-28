@@ -29,6 +29,7 @@
 #include <linux/bcd.h>
 #include <linux/slab.h>
 #include <linux/mfd/menelaus.h>
+#include <linux/gpio.h>
 
 #include <asm/mach/irq.h>
 
@@ -1230,7 +1231,7 @@ static void menelaus_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id menelaus_id[] = {
-	{ "menelaus" },
+	{ "menelaus", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, menelaus_id);

@@ -212,6 +212,7 @@ static void gmc_v8_0_mc_resume(struct amdgpu_device *adev)
 static int gmc_v8_0_init_microcode(struct amdgpu_device *adev)
 {
 	const char *chip_name;
+	char fw_name[30];
 	int err;
 
 	DRM_DEBUG("\n");
@@ -254,9 +255,10 @@ static int gmc_v8_0_init_microcode(struct amdgpu_device *adev)
 		return -EINVAL;
 	}
 
-	err = amdgpu_ucode_request(adev, &adev->gmc.fw, "amdgpu/%s_mc.bin", chip_name);
+	snprintf(fw_name, sizeof(fw_name), "amdgpu/%s_mc.bin", chip_name);
+	err = amdgpu_ucode_request(adev, &adev->gmc.fw, fw_name);
 	if (err) {
-		pr_err("mc: Failed to load firmware \"%s_mc.bin\"\n", chip_name);
+		pr_err("mc: Failed to load firmware \"%s\"\n", fw_name);
 		amdgpu_ucode_release(&adev->gmc.fw);
 	}
 	return err;

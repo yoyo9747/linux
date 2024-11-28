@@ -14,7 +14,7 @@
 #include <linux/module.h>
 #include <linux/string.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 typedef void (sha1_block_fn)(struct sha1_state *sst, u8 const *src, int blocks);
 

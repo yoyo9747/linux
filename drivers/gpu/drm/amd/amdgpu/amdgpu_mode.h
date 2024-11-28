@@ -51,7 +51,6 @@ struct amdgpu_encoder;
 struct amdgpu_router;
 struct amdgpu_hpd;
 struct edid;
-struct drm_edid;
 
 #define to_amdgpu_crtc(x) container_of(x, struct amdgpu_crtc, base)
 #define to_amdgpu_connector(x) container_of(x, struct amdgpu_connector, base)
@@ -301,7 +300,6 @@ struct amdgpu_framebuffer {
 
 	uint64_t tiling_flags;
 	bool tmz_surface;
-	bool gfx12_dcc;
 
 	/* caching for later use */
 	uint64_t address;
@@ -327,7 +325,8 @@ struct amdgpu_mode_info {
 	/* FMT dithering */
 	struct drm_property *dither_property;
 	/* hardcoded DFP edid from BIOS */
-	const struct drm_edid *bios_hardcoded_edid;
+	struct edid *bios_hardcoded_edid;
+	int bios_hardcoded_edid_size;
 
 	/* firmware flags */
 	u32 firmware_flags;

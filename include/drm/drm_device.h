@@ -213,9 +213,8 @@ struct drm_device {
 	 * This can be set to true it the hardware has a working vblank counter
 	 * with high-precision timestamping (otherwise there are races) and the
 	 * driver uses drm_crtc_vblank_on() and drm_crtc_vblank_off()
-	 * appropriately. Also, see @max_vblank_count,
-	 * &drm_crtc_funcs.get_vblank_counter and
-	 * &drm_vblank_crtc_config.disable_immediate.
+	 * appropriately. See also @max_vblank_count and
+	 * &drm_crtc_funcs.get_vblank_counter.
 	 */
 	bool vblank_disable_immediate;
 

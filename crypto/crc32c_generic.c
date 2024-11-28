@@ -30,7 +30,7 @@
  * Copyright (c) 2008 Herbert Xu <herbert@gondor.apana.org.au>
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <crypto/internal/hash.h>
 #include <linux/init.h>
 #include <linux/module.h>

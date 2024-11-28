@@ -1614,5 +1614,4 @@ static struct i2c_driver mt9m114_driver = {
 module_i2c_driver(mt9m114_driver);
 
 MODULE_AUTHOR("Shuguang Gong <Shuguang.gong@intel.com>");
-MODULE_DESCRIPTION("Aptina mt9m114 sensor support module");
 MODULE_LICENSE("GPL");

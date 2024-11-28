@@ -90,6 +90,8 @@ PMD Page Table Helpers
 +---------------------------+--------------------------------------------------+
 | pmd_leaf                  | Tests a leaf mapped PMD                          |
 +---------------------------+--------------------------------------------------+
+| pmd_huge                  | Tests a HugeTLB mapped PMD                       |
++---------------------------+--------------------------------------------------+
 | pmd_trans_huge            | Tests a Transparent Huge Page (THP) at PMD       |
 +---------------------------+--------------------------------------------------+
 | pmd_present               | Tests whether pmd_page() points to valid memory  |
@@ -166,6 +168,8 @@ PUD Page Table Helpers
 | pud_bad                   | Tests a non-table mapped PUD                     |
 +---------------------------+--------------------------------------------------+
 | pud_leaf                  | Tests a leaf mapped PUD                          |
++---------------------------+--------------------------------------------------+
+| pud_huge                  | Tests a HugeTLB mapped PUD                       |
 +---------------------------+--------------------------------------------------+
 | pud_trans_huge            | Tests a Transparent Huge Page (THP) at PUD       |
 +---------------------------+--------------------------------------------------+

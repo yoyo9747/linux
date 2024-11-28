@@ -9,6 +9,9 @@
 
 static int run_test(int cgroup_fd, int server_fd, bool classid)
 {
+	struct network_helper_opts opts = {
+		.must_fail = true,
+	};
 	struct connect4_dropper *skel;
 	int fd, err = 0;
 
@@ -29,16 +32,11 @@ static int run_test(int cgroup_fd, int server_fd, bool classid)
 		goto out;
 	}
 
-	errno = 0;
-	fd = connect_to_fd_opts(server_fd, NULL);
-	if (fd >= 0) {
-		log_err("Unexpected success to connect to server");
+	fd = connect_to_fd_opts(server_fd, &opts);
+	if (fd < 0)
 		err = -1;
+	else
 		close(fd);
-	} else if (errno != EPERM) {
-		log_err("Unexpected errno from connect to server");
-		err = -1;
-	}
 out:
 	connect4_dropper__destroy(skel);
 	return err;

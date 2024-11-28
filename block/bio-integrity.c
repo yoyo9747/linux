@@ -22,17 +22,9 @@ void blk_flush_integrity(void)
 	flush_workqueue(kintegrityd_wq);
 }
 
-/**
- * bio_integrity_free - Free bio integrity payload
- * @bio:	bio containing bip to be freed
- *
- * Description: Free the integrity portion of a bio.
- */
-void bio_integrity_free(struct bio *bio)
+static void __bio_integrity_free(struct bio_set *bs,
+				 struct bio_integrity_payload *bip)
 {
-	struct bio_integrity_payload *bip = bio_integrity(bio);
-	struct bio_set *bs = bio->bi_pool;
-
 	if (bs && mempool_initialized(&bs->bio_integrity_pool)) {
 		if (bip->bip_vec)
 			bvec_free(&bs->bvec_integrity_pool, bip->bip_vec,
@@ -41,8 +33,6 @@ void bio_integrity_free(struct bio *bio)
 	} else {
 		kfree(bip);
 	}
-	bio->bi_integrity = NULL;
-	bio->bi_opf &= ~REQ_INTEGRITY;
 }
 
 /**
@@ -86,7 +76,7 @@ struct bio_integrity_payload *bio_integrity_alloc(struct bio *bio,
 					  &bip->bip_max_vcnt, gfp_mask);
 		if (!bip->bip_vec)
 			goto err;
-	} else if (nr_vecs) {
+	} else {
 		bip->bip_vec = bip->bip_inline_vecs;
 	}
 
@@ -96,10 +86,7 @@ struct bio_integrity_payload *bio_integrity_alloc(struct bio *bio,
 
 	return bip;
 err:
-	if (bs && mempool_initialized(&bs->bio_integrity_pool))
-		mempool_free(bip, &bs->bio_integrity_pool);
-	else
-		kfree(bip);
+	__bio_integrity_free(bs, bip);
 	return ERR_PTR(-ENOMEM);
 }
 EXPORT_SYMBOL(bio_integrity_alloc);
@@ -131,26 +118,63 @@ static void bio_integrity_uncopy_user(struct bio_integrity_payload *bip)
 	bio_integrity_unpin_bvec(copy, nr_vecs, true);
 }
 
-/**
- * bio_integrity_unmap_user - Unmap user integrity payload
- * @bio:	bio containing bip to be unmapped
- *
- * Unmap the user mapped integrity portion of a bio.
- */
-void bio_integrity_unmap_user(struct bio *bio)
+static void bio_integrity_unmap_user(struct bio_integrity_payload *bip)
 {
-	struct bio_integrity_payload *bip = bio_integrity(bio);
+	bool dirty = bio_data_dir(bip->bip_bio) == READ;
 
 	if (bip->bip_flags & BIP_COPY_USER) {
-		if (bio_data_dir(bio) == READ)
+		if (dirty)
 			bio_integrity_uncopy_user(bip);
 		kfree(bvec_virt(bip->bip_vec));
 		return;
 	}
 
-	bio_integrity_unpin_bvec(bip->bip_vec, bip->bip_max_vcnt,
-			bio_data_dir(bio) == READ);
+	bio_integrity_unpin_bvec(bip->bip_vec, bip->bip_max_vcnt, dirty);
 }
+
+/**
+ * bio_integrity_free - Free bio integrity payload
+ * @bio:	bio containing bip to be freed
+ *
+ * Description: Used to free the integrity portion of a bio. Usually
+ * called from bio_free().
+ */
+void bio_integrity_free(struct bio *bio)
+{
+	struct bio_integrity_payload *bip = bio_integrity(bio);
+	struct bio_set *bs = bio->bi_pool;
+
+	if (bip->bip_flags & BIP_INTEGRITY_USER)
+		return;
+	if (bip->bip_flags & BIP_BLOCK_INTEGRITY)
+		kfree(bvec_virt(bip->bip_vec));
+
+	__bio_integrity_free(bs, bip);
+	bio->bi_integrity = NULL;
+	bio->bi_opf &= ~REQ_INTEGRITY;
+}
+
+/**
+ * bio_integrity_unmap_free_user - Unmap and free bio user integrity payload
+ * @bio:	bio containing bip to be unmapped and freed
+ *
+ * Description: Used to unmap and free the user mapped integrity portion of a
+ * bio. Submitter attaching the user integrity buffer is responsible for
+ * unmapping and freeing it during completion.
+ */
+void bio_integrity_unmap_free_user(struct bio *bio)
+{
+	struct bio_integrity_payload *bip = bio_integrity(bio);
+	struct bio_set *bs = bio->bi_pool;
+
+	if (WARN_ON_ONCE(!(bip->bip_flags & BIP_INTEGRITY_USER)))
+		return;
+	bio_integrity_unmap_user(bip);
+	__bio_integrity_free(bs, bip);
+	bio->bi_integrity = NULL;
+	bio->bi_opf &= ~REQ_INTEGRITY;
+}
+EXPORT_SYMBOL(bio_integrity_unmap_free_user);
 
 /**
  * bio_integrity_add_page - Attach integrity metadata
@@ -166,6 +190,10 @@ int bio_integrity_add_page(struct bio *bio, struct page *page,
 {
 	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 	struct bio_integrity_payload *bip = bio_integrity(bio);
+
+	if (((bip->bip_iter.bi_size + len) >> SECTOR_SHIFT) >
+	    queue_max_hw_sectors(q))
+		return 0;
 
 	if (bip->bip_vcnt > 0) {
 		struct bio_vec *bv = &bip->bip_vec[bip->bip_vcnt - 1];
@@ -246,9 +274,8 @@ static int bio_integrity_copy_user(struct bio *bio, struct bio_vec *bvec,
 		goto free_bip;
 	}
 
-	bip->bip_flags |= BIP_COPY_USER;
+	bip->bip_flags |= BIP_INTEGRITY_USER | BIP_COPY_USER;
 	bip->bip_iter.bi_sector = seed;
-	bip->bip_vcnt = nr_vecs;
 	return 0;
 free_bip:
 	bio_integrity_free(bio);
@@ -267,9 +294,9 @@ static int bio_integrity_init_user(struct bio *bio, struct bio_vec *bvec,
 		return PTR_ERR(bip);
 
 	memcpy(bip->bip_vec, bvec, nr_vecs * sizeof(*bvec));
+	bip->bip_flags |= BIP_INTEGRITY_USER;
 	bip->bip_iter.bi_sector = seed;
 	bip->bip_iter.bi_size = len;
-	bip->bip_vcnt = nr_vecs;
 	return 0;
 }
 
@@ -307,7 +334,7 @@ int bio_integrity_map_user(struct bio *bio, void __user *ubuf, ssize_t bytes,
 			   u32 seed)
 {
 	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
-	unsigned int align = blk_lim_dma_alignment_and_pad(&q->limits);
+	unsigned int align = q->dma_pad_mask | queue_dma_alignment(q);
 	struct page *stack_pages[UIO_FASTIOV], **pages = stack_pages;
 	struct bio_vec stack_vec[UIO_FASTIOV], *bvec = stack_vec;
 	unsigned int direction, nr_bvecs;
@@ -367,6 +394,45 @@ free_bvec:
 		kfree(bvec);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(bio_integrity_map_user);
+
+/**
+ * bio_integrity_process - Process integrity metadata for a bio
+ * @bio:	bio to generate/verify integrity metadata for
+ * @proc_iter:  iterator to process
+ * @proc_fn:	Pointer to the relevant processing function
+ */
+static blk_status_t bio_integrity_process(struct bio *bio,
+		struct bvec_iter *proc_iter, integrity_processing_fn *proc_fn)
+{
+	struct blk_integrity *bi = blk_get_integrity(bio->bi_bdev->bd_disk);
+	struct blk_integrity_iter iter;
+	struct bvec_iter bviter;
+	struct bio_vec bv;
+	struct bio_integrity_payload *bip = bio_integrity(bio);
+	blk_status_t ret = BLK_STS_OK;
+
+	iter.disk_name = bio->bi_bdev->bd_disk->disk_name;
+	iter.interval = 1 << bi->interval_exp;
+	iter.tuple_size = bi->tuple_size;
+	iter.seed = proc_iter->bi_sector;
+	iter.prot_buf = bvec_virt(bip->bip_vec);
+	iter.pi_offset = bi->pi_offset;
+
+	__bio_for_each_segment(bv, bio, bviter, *proc_iter) {
+		void *kaddr = bvec_kmap_local(&bv);
+
+		iter.data_buf = kaddr;
+		iter.data_size = bv.bv_len;
+		ret = proc_fn(&iter);
+		kunmap_local(kaddr);
+
+		if (ret)
+			break;
+
+	}
+	return ret;
+}
 
 /**
  * bio_integrity_prep - Prepare bio for integrity I/O
@@ -384,11 +450,15 @@ bool bio_integrity_prep(struct bio *bio)
 {
 	struct bio_integrity_payload *bip;
 	struct blk_integrity *bi = blk_get_integrity(bio->bi_bdev->bd_disk);
-	unsigned int len;
 	void *buf;
-	gfp_t gfp = GFP_NOIO;
+	unsigned long start, end;
+	unsigned int len, nr_pages;
+	unsigned int bytes, offset, i;
 
 	if (!bi)
+		return true;
+
+	if (bio_op(bio) != REQ_OP_READ && bio_op(bio) != REQ_OP_WRITE)
 		return true;
 
 	if (!bio_sectors(bio))
@@ -398,36 +468,32 @@ bool bio_integrity_prep(struct bio *bio)
 	if (bio_integrity(bio))
 		return true;
 
-	switch (bio_op(bio)) {
-	case REQ_OP_READ:
-		if (bi->flags & BLK_INTEGRITY_NOVERIFY)
+	if (bio_data_dir(bio) == READ) {
+		if (!bi->profile->verify_fn ||
+		    !(bi->flags & BLK_INTEGRITY_VERIFY))
 			return true;
-		break;
-	case REQ_OP_WRITE:
-		if (bi->flags & BLK_INTEGRITY_NOGENERATE)
+	} else {
+		if (!bi->profile->generate_fn ||
+		    !(bi->flags & BLK_INTEGRITY_GENERATE))
 			return true;
-
-		/*
-		 * Zero the memory allocated to not leak uninitialized kernel
-		 * memory to disk for non-integrity metadata where nothing else
-		 * initializes the memory.
-		 */
-		if (bi->csum_type == BLK_INTEGRITY_CSUM_NONE)
-			gfp |= __GFP_ZERO;
-		break;
-	default:
-		return true;
 	}
 
 	/* Allocate kernel buffer for protection data */
 	len = bio_integrity_bytes(bi, bio_sectors(bio));
-	buf = kmalloc(len, gfp);
+	buf = kmalloc(len, GFP_NOIO);
 	if (unlikely(buf == NULL)) {
+		printk(KERN_ERR "could not allocate integrity buffer\n");
 		goto err_end_io;
 	}
 
-	bip = bio_integrity_alloc(bio, GFP_NOIO, 1);
+	end = (((unsigned long) buf) + len + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	start = ((unsigned long) buf) >> PAGE_SHIFT;
+	nr_pages = end - start;
+
+	/* Allocate bio integrity payload and integrity vectors */
+	bip = bio_integrity_alloc(bio, GFP_NOIO, nr_pages);
 	if (IS_ERR(bip)) {
+		printk(KERN_ERR "could not allocate data integrity bioset\n");
 		kfree(buf);
 		goto err_end_io;
 	}
@@ -435,20 +501,35 @@ bool bio_integrity_prep(struct bio *bio)
 	bip->bip_flags |= BIP_BLOCK_INTEGRITY;
 	bip_set_seed(bip, bio->bi_iter.bi_sector);
 
-	if (bi->csum_type == BLK_INTEGRITY_CSUM_IP)
+	if (bi->flags & BLK_INTEGRITY_IP_CHECKSUM)
 		bip->bip_flags |= BIP_IP_CHECKSUM;
 
-	if (bio_integrity_add_page(bio, virt_to_page(buf), len,
-			offset_in_page(buf)) < len) {
-		printk(KERN_ERR "could not attach integrity payload\n");
-		goto err_end_io;
+	/* Map it */
+	offset = offset_in_page(buf);
+	for (i = 0; i < nr_pages && len > 0; i++) {
+		bytes = PAGE_SIZE - offset;
+
+		if (bytes > len)
+			bytes = len;
+
+		if (bio_integrity_add_page(bio, virt_to_page(buf),
+					   bytes, offset) < bytes) {
+			printk(KERN_ERR "could not attach integrity payload\n");
+			goto err_end_io;
+		}
+
+		buf += bytes;
+		len -= bytes;
+		offset = 0;
 	}
 
 	/* Auto-generate integrity metadata if this is a write */
-	if (bio_data_dir(bio) == WRITE)
-		blk_integrity_generate(bio);
-	else
+	if (bio_data_dir(bio) == WRITE) {
+		bio_integrity_process(bio, &bio->bi_iter,
+				      bi->profile->generate_fn);
+	} else {
 		bip->bio_iter = bio->bi_iter;
+	}
 	return true;
 
 err_end_io:
@@ -471,10 +552,15 @@ static void bio_integrity_verify_fn(struct work_struct *work)
 	struct bio_integrity_payload *bip =
 		container_of(work, struct bio_integrity_payload, bip_work);
 	struct bio *bio = bip->bip_bio;
+	struct blk_integrity *bi = blk_get_integrity(bio->bi_bdev->bd_disk);
 
-	blk_integrity_verify(bio);
-
-	kfree(bvec_virt(bip->bip_vec));
+	/*
+	 * At the moment verify is called bio's iterator was advanced
+	 * during split and completion, we need to rewind iterator to
+	 * it's original position.
+	 */
+	bio->bi_status = bio_integrity_process(bio, &bip->bio_iter,
+						bi->profile->verify_fn);
 	bio_integrity_free(bio);
 	bio_endio(bio);
 }
@@ -495,13 +581,13 @@ bool __bio_integrity_endio(struct bio *bio)
 	struct blk_integrity *bi = blk_get_integrity(bio->bi_bdev->bd_disk);
 	struct bio_integrity_payload *bip = bio_integrity(bio);
 
-	if (bio_op(bio) == REQ_OP_READ && !bio->bi_status && bi->csum_type) {
+	if (bio_op(bio) == REQ_OP_READ && !bio->bi_status &&
+	    (bip->bip_flags & BIP_BLOCK_INTEGRITY) && bi->profile->verify_fn) {
 		INIT_WORK(&bip->bip_work, bio_integrity_verify_fn);
 		queue_work(kintegrityd_wq, &bip->bip_work);
 		return false;
 	}
 
-	kfree(bvec_virt(bip->bip_vec));
 	bio_integrity_free(bio);
 	return true;
 }
@@ -556,11 +642,14 @@ int bio_integrity_clone(struct bio *bio, struct bio *bio_src,
 
 	BUG_ON(bip_src == NULL);
 
-	bip = bio_integrity_alloc(bio, gfp_mask, 0);
+	bip = bio_integrity_alloc(bio, gfp_mask, bip_src->bip_vcnt);
 	if (IS_ERR(bip))
 		return PTR_ERR(bip);
 
-	bip->bip_vec = bip_src->bip_vec;
+	memcpy(bip->bip_vec, bip_src->bip_vec,
+	       bip_src->bip_vcnt * sizeof(struct bio_vec));
+
+	bip->bip_vcnt = bip_src->bip_vcnt;
 	bip->bip_iter = bip_src->bip_iter;
 	bip->bip_flags = bip_src->bip_flags & ~BIP_BLOCK_INTEGRITY;
 

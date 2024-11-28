@@ -1,5 +1,5 @@
-perf-util-y += util/
-perf-test-y += tests/
+perf-y += util/
+perf-y += tests/
 
 ifdef SHELLCHECK
   SHELL_TESTS := entry/syscalls/syscalltbl.sh
@@ -13,4 +13,4 @@ $(OUTPUT)%.shellcheck_log: %
 	$(call rule_mkdir)
 	$(Q)$(call echo-cmd,test)shellcheck -a -S warning "$<" > $@ || (cat $@ && rm $@ && false)
 
-perf-test-y += $(TEST_LOGS)
+perf-y += $(TEST_LOGS)

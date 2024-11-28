@@ -79,8 +79,6 @@ static int kmemleak_test_init(void)
 			per_cpu(kmemleak_test_pointer, i));
 	}
 
-	pr_info("__alloc_percpu(64, 4) = %p\n", __alloc_percpu(64, 4));
-
 	return 0;
 }
 module_init(kmemleak_test_init);
@@ -98,5 +96,4 @@ static void __exit kmemleak_test_exit(void)
 }
 module_exit(kmemleak_test_exit);
 
-MODULE_DESCRIPTION("Sample module to leak memory for kmemleak testing");
 MODULE_LICENSE("GPL");

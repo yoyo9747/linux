@@ -61,17 +61,15 @@ static void nvmet_bdev_ns_enable_integrity(struct nvmet_ns *ns)
 {
 	struct blk_integrity *bi = bdev_get_integrity(ns->bdev);
 
-	if (!bi)
-		return;
-
-	if (bi->csum_type == BLK_INTEGRITY_CSUM_CRC) {
+	if (bi) {
 		ns->metadata_size = bi->tuple_size;
-		if (bi->flags & BLK_INTEGRITY_REF_TAG)
+		if (bi->profile == &t10_pi_type1_crc)
 			ns->pi_type = NVME_NS_DPS_PI_TYPE1;
-		else
+		else if (bi->profile == &t10_pi_type3_crc)
 			ns->pi_type = NVME_NS_DPS_PI_TYPE3;
-	} else {
-		ns->metadata_size = 0;
+		else
+			/* Unsupported metadata type */
+			ns->metadata_size = 0;
 	}
 }
 
@@ -104,7 +102,7 @@ int nvmet_bdev_ns_enable(struct nvmet_ns *ns)
 
 	ns->pi_type = 0;
 	ns->metadata_size = 0;
-	if (IS_ENABLED(CONFIG_BLK_DEV_INTEGRITY))
+	if (IS_ENABLED(CONFIG_BLK_DEV_INTEGRITY_T10))
 		nvmet_bdev_ns_enable_integrity(ns);
 
 	if (bdev_is_zoned(ns->bdev)) {
@@ -137,11 +135,11 @@ u16 blk_to_nvme_status(struct nvmet_req *req, blk_status_t blk_sts)
 	 */
 	switch (blk_sts) {
 	case BLK_STS_NOSPC:
-		status = NVME_SC_CAP_EXCEEDED | NVME_STATUS_DNR;
+		status = NVME_SC_CAP_EXCEEDED | NVME_SC_DNR;
 		req->error_loc = offsetof(struct nvme_rw_command, length);
 		break;
 	case BLK_STS_TARGET:
-		status = NVME_SC_LBA_RANGE | NVME_STATUS_DNR;
+		status = NVME_SC_LBA_RANGE | NVME_SC_DNR;
 		req->error_loc = offsetof(struct nvme_rw_command, slba);
 		break;
 	case BLK_STS_NOTSUPP:
@@ -149,10 +147,10 @@ u16 blk_to_nvme_status(struct nvmet_req *req, blk_status_t blk_sts)
 		switch (req->cmd->common.opcode) {
 		case nvme_cmd_dsm:
 		case nvme_cmd_write_zeroes:
-			status = NVME_SC_ONCS_NOT_SUPPORTED | NVME_STATUS_DNR;
+			status = NVME_SC_ONCS_NOT_SUPPORTED | NVME_SC_DNR;
 			break;
 		default:
-			status = NVME_SC_INVALID_OPCODE | NVME_STATUS_DNR;
+			status = NVME_SC_INVALID_OPCODE | NVME_SC_DNR;
 		}
 		break;
 	case BLK_STS_MEDIUM:
@@ -161,7 +159,7 @@ u16 blk_to_nvme_status(struct nvmet_req *req, blk_status_t blk_sts)
 		break;
 	case BLK_STS_IOERR:
 	default:
-		status = NVME_SC_INTERNAL | NVME_STATUS_DNR;
+		status = NVME_SC_INTERNAL | NVME_SC_DNR;
 		req->error_loc = offsetof(struct nvme_common_command, opcode);
 	}
 
@@ -358,7 +356,7 @@ u16 nvmet_bdev_flush(struct nvmet_req *req)
 		return 0;
 
 	if (blkdev_issue_flush(req->ns->bdev))
-		return NVME_SC_INTERNAL | NVME_STATUS_DNR;
+		return NVME_SC_INTERNAL | NVME_SC_DNR;
 	return 0;
 }
 

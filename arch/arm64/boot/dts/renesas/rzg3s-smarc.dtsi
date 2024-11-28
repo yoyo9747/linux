@@ -11,7 +11,6 @@
 
 / {
 	aliases {
-		i2c0 = &i2c0;
 		serial0 = &scif0;
 		mmc1 = &sdhi1;
 	};
@@ -65,12 +64,6 @@
 		gpios-states = <1>;
 		states = <3300000 1>, <1800000 0>;
 	};
-};
-
-&i2c0 {
-	status = "okay";
-
-	clock-frequency = <1000000>;
 };
 
 &pinctrl {

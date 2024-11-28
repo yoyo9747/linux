@@ -70,7 +70,7 @@ static const unsigned int meson_bit_strides[] = {
  * Return:	0 on success, a negative value on error
  */
 static int meson_get_bank(struct meson_pinctrl *pc, unsigned int pin,
-			  const struct meson_bank **bank)
+			  struct meson_bank **bank)
 {
 	int i;
 
@@ -94,12 +94,11 @@ static int meson_get_bank(struct meson_pinctrl *pc, unsigned int pin,
  * @reg:	the computed register offset
  * @bit:	the computed bit
  */
-static void meson_calc_reg_and_bit(const struct meson_bank *bank,
-				   unsigned int pin,
+static void meson_calc_reg_and_bit(struct meson_bank *bank, unsigned int pin,
 				   enum meson_reg_type reg_type,
 				   unsigned int *reg, unsigned int *bit)
 {
-	const struct meson_reg_desc *desc = &bank->regs[reg_type];
+	struct meson_reg_desc *desc = &bank->regs[reg_type];
 
 	*bit = (desc->bit + pin - bank->first) * meson_bit_strides[reg_type];
 	*reg = (desc->reg + (*bit / 32)) * 4;
@@ -182,7 +181,7 @@ static int meson_pinconf_set_gpio_bit(struct meson_pinctrl *pc,
 				      unsigned int reg_type,
 				      bool arg)
 {
-	const struct meson_bank *bank;
+	struct meson_bank *bank;
 	unsigned int reg, bit;
 	int ret;
 
@@ -199,7 +198,7 @@ static int meson_pinconf_get_gpio_bit(struct meson_pinctrl *pc,
 				      unsigned int pin,
 				      unsigned int reg_type)
 {
-	const struct meson_bank *bank;
+	struct meson_bank *bank;
 	unsigned int reg, bit, val;
 	int ret;
 
@@ -262,7 +261,7 @@ static int meson_pinconf_set_output_drive(struct meson_pinctrl *pc,
 static int meson_pinconf_disable_bias(struct meson_pinctrl *pc,
 				      unsigned int pin)
 {
-	const struct meson_bank *bank;
+	struct meson_bank *bank;
 	unsigned int reg, bit = 0;
 	int ret;
 
@@ -281,7 +280,7 @@ static int meson_pinconf_disable_bias(struct meson_pinctrl *pc,
 static int meson_pinconf_enable_bias(struct meson_pinctrl *pc, unsigned int pin,
 				     bool pull_up)
 {
-	const struct meson_bank *bank;
+	struct meson_bank *bank;
 	unsigned int reg, bit, val = 0;
 	int ret;
 
@@ -309,7 +308,7 @@ static int meson_pinconf_set_drive_strength(struct meson_pinctrl *pc,
 					    unsigned int pin,
 					    u16 drive_strength_ua)
 {
-	const struct meson_bank *bank;
+	struct meson_bank *bank;
 	unsigned int reg, bit, ds_val;
 	int ret;
 
@@ -400,7 +399,7 @@ static int meson_pinconf_set(struct pinctrl_dev *pcdev, unsigned int pin,
 
 static int meson_pinconf_get_pull(struct meson_pinctrl *pc, unsigned int pin)
 {
-	const struct meson_bank *bank;
+	struct meson_bank *bank;
 	unsigned int reg, bit, val;
 	int ret, conf;
 
@@ -436,7 +435,7 @@ static int meson_pinconf_get_drive_strength(struct meson_pinctrl *pc,
 					    unsigned int pin,
 					    u16 *drive_strength_ua)
 {
-	const struct meson_bank *bank;
+	struct meson_bank *bank;
 	unsigned int reg, bit;
 	unsigned int val;
 	int ret;
@@ -529,7 +528,7 @@ static int meson_pinconf_group_set(struct pinctrl_dev *pcdev,
 				   unsigned long *configs, unsigned num_configs)
 {
 	struct meson_pinctrl *pc = pinctrl_dev_get_drvdata(pcdev);
-	const struct meson_pmx_group *group = &pc->data->groups[num_group];
+	struct meson_pmx_group *group = &pc->data->groups[num_group];
 	int i;
 
 	dev_dbg(pc->dev, "set pinconf for group %s\n", group->name);
@@ -588,8 +587,8 @@ static void meson_gpio_set(struct gpio_chip *chip, unsigned gpio, int value)
 static int meson_gpio_get(struct gpio_chip *chip, unsigned gpio)
 {
 	struct meson_pinctrl *pc = gpiochip_get_data(chip);
-	const struct meson_bank *bank;
 	unsigned int reg, bit, val;
+	struct meson_bank *bank;
 	int ret;
 
 	ret = meson_get_bank(pc, gpio, &bank);
@@ -768,5 +767,4 @@ int meson_pinctrl_probe(struct platform_device *pdev)
 }
 EXPORT_SYMBOL_GPL(meson_pinctrl_probe);
 
-MODULE_DESCRIPTION("Amlogic Meson SoCs core pinctrl driver");
 MODULE_LICENSE("GPL v2");

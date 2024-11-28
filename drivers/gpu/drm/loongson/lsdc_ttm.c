@@ -341,12 +341,16 @@ void lsdc_bo_unpin(struct lsdc_bo *lbo)
 
 void lsdc_bo_ref(struct lsdc_bo *lbo)
 {
-	drm_gem_object_get(&lbo->tbo.base);
+	struct ttm_buffer_object *tbo = &lbo->tbo;
+
+	ttm_bo_get(tbo);
 }
 
 void lsdc_bo_unref(struct lsdc_bo *lbo)
 {
-	drm_gem_object_put(&lbo->tbo.base);
+	struct ttm_buffer_object *tbo = &lbo->tbo;
+
+	ttm_bo_put(tbo);
 }
 
 int lsdc_bo_kmap(struct lsdc_bo *lbo)

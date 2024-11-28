@@ -115,5 +115,4 @@ static struct i2c_driver rt4831_driver = {
 module_i2c_driver(rt4831_driver);
 
 MODULE_AUTHOR("ChiYuan Huang <cy_huang@richtek.com>");
-MODULE_DESCRIPTION("Richtek RT4831 core driver");
 MODULE_LICENSE("GPL v2");

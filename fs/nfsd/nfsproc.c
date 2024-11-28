@@ -13,31 +13,6 @@
 
 #define NFSDDBG_FACILITY		NFSDDBG_PROC
 
-static __be32 nfsd_map_status(__be32 status)
-{
-	switch (status) {
-	case nfs_ok:
-		break;
-	case nfserr_nofilehandle:
-	case nfserr_badhandle:
-		status = nfserr_stale;
-		break;
-	case nfserr_wrongsec:
-	case nfserr_xdev:
-	case nfserr_file_open:
-		status = nfserr_acces;
-		break;
-	case nfserr_symlink_not_dir:
-		status = nfserr_notdir;
-		break;
-	case nfserr_symlink:
-	case nfserr_wrong_type:
-		status = nfserr_inval;
-		break;
-	}
-	return status;
-}
-
 static __be32
 nfsd_proc_null(struct svc_rqst *rqstp)
 {
@@ -63,7 +38,6 @@ nfsd_proc_getattr(struct svc_rqst *rqstp)
 		goto out;
 	resp->status = fh_getattr(&resp->fh, &resp->stat);
 out:
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -135,7 +109,6 @@ nfsd_proc_setattr(struct svc_rqst *rqstp)
 
 	resp->status = fh_getattr(&resp->fh, &resp->stat);
 out:
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -170,7 +143,6 @@ nfsd_proc_lookup(struct svc_rqst *rqstp)
 
 	resp->status = fh_getattr(&resp->fh, &resp->stat);
 out:
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -192,7 +164,6 @@ nfsd_proc_readlink(struct svc_rqst *rqstp)
 				     page_address(resp->page), &resp->len);
 
 	fh_put(&argp->fh);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -229,7 +200,6 @@ nfsd_proc_read(struct svc_rqst *rqstp)
 		resp->status = fh_getattr(&resp->fh, &resp->stat);
 	else if (resp->status == nfserr_jukebox)
 		set_bit(RQ_DROPME, &rqstp->rq_flags);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -265,7 +235,6 @@ nfsd_proc_write(struct svc_rqst *rqstp)
 		resp->status = fh_getattr(&resp->fh, &resp->stat);
 	else if (resp->status == nfserr_jukebox)
 		set_bit(RQ_DROPME, &rqstp->rq_flags);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -362,11 +331,10 @@ nfsd_proc_create(struct svc_rqst *rqstp)
 					 *   echo thing > device-special-file-or-pipe
 					 * by doing a CREATE with type==0
 					 */
-					resp->status = nfsd_permission(
-						&rqstp->rq_cred,
-						newfhp->fh_export,
-						newfhp->fh_dentry,
-						NFSD_MAY_WRITE|NFSD_MAY_LOCAL_ACCESS);
+					resp->status = nfsd_permission(rqstp,
+								 newfhp->fh_export,
+								 newfhp->fh_dentry,
+								 NFSD_MAY_WRITE|NFSD_MAY_LOCAL_ACCESS);
 					if (resp->status && resp->status != nfserr_rofs)
 						goto out_unlock;
 				}
@@ -435,7 +403,6 @@ done:
 		goto out;
 	resp->status = fh_getattr(&resp->fh, &resp->stat);
 out:
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -452,7 +419,6 @@ nfsd_proc_remove(struct svc_rqst *rqstp)
 	resp->status = nfsd_unlink(rqstp, &argp->fh, -S_IFDIR,
 				   argp->name, argp->len);
 	fh_put(&argp->fh);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -471,7 +437,6 @@ nfsd_proc_rename(struct svc_rqst *rqstp)
 				   &argp->tfh, argp->tname, argp->tlen);
 	fh_put(&argp->ffh);
 	fh_put(&argp->tfh);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -492,7 +457,6 @@ nfsd_proc_link(struct svc_rqst *rqstp)
 				 &argp->ffh);
 	fh_put(&argp->ffh);
 	fh_put(&argp->tfh);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -531,7 +495,6 @@ nfsd_proc_symlink(struct svc_rqst *rqstp)
 	fh_put(&argp->ffh);
 	fh_put(&newfh);
 out:
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -565,7 +528,6 @@ nfsd_proc_mkdir(struct svc_rqst *rqstp)
 
 	resp->status = fh_getattr(&resp->fh, &resp->stat);
 out:
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -583,7 +545,6 @@ nfsd_proc_rmdir(struct svc_rqst *rqstp)
 	resp->status = nfsd_unlink(rqstp, &argp->fh, S_IFDIR,
 				   argp->name, argp->len);
 	fh_put(&argp->fh);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -629,7 +590,6 @@ nfsd_proc_readdir(struct svc_rqst *rqstp)
 	nfssvc_encode_nfscookie(resp, offset);
 
 	fh_put(&argp->fh);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 
@@ -647,7 +607,6 @@ nfsd_proc_statfs(struct svc_rqst *rqstp)
 	resp->status = nfsd_statfs(rqstp, &argp->fh, &resp->stats,
 				   NFSD_MAY_BYPASS_GSS_ON_ROOT);
 	fh_put(&argp->fh);
-	resp->status = nfsd_map_status(resp->status);
 	return rpc_success;
 }
 

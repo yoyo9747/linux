@@ -227,10 +227,10 @@ test_lag_slave()
 	RET=0
 
 	tc filter add dev $swp1 ingress pref 999 \
-		proto 802.1q flower vlan_ethtype arp \
+		proto 802.1q flower vlan_ethtype arp $tcflags \
 		action pass
 	mirror_install $swp1 ingress gt4 \
-		"proto 802.1q flower vlan_id 333"
+		"proto 802.1q flower vlan_id 333 $tcflags"
 
 	# Test connectivity through $up_dev when $down_dev is set down.
 	ip link set dev $down_dev down
@@ -239,7 +239,7 @@ test_lag_slave()
 	setup_wait_dev $host_dev
 	$ARPING -I br1 192.0.2.130 -qfc 1
 	sleep 2
-	mirror_test vrf-h1 192.0.2.1 192.0.2.18 $host_dev 1 ">= 10"
+	mirror_test vrf-h1 192.0.2.1 192.0.2.18 $host_dev 1 10
 
 	# Test lack of connectivity when both slaves are down.
 	ip link set dev $up_dev down
@@ -252,7 +252,7 @@ test_lag_slave()
 	mirror_uninstall $swp1 ingress
 	tc filter del dev $swp1 ingress pref 999
 
-	log_test "$what"
+	log_test "$what ($tcflags)"
 }
 
 test_mirror_gretap_first()
@@ -265,11 +265,30 @@ test_mirror_gretap_second()
 	test_lag_slave $h4 $swp4 $swp3 "mirror to gretap: LAG second slave"
 }
 
+test_all()
+{
+	slow_path_trap_install $swp1 ingress
+	slow_path_trap_install $swp1 egress
+
+	tests_run
+
+	slow_path_trap_uninstall $swp1 egress
+	slow_path_trap_uninstall $swp1 ingress
+}
+
 trap cleanup EXIT
 
 setup_prepare
 setup_wait
 
-tests_run
+tcflags="skip_hw"
+test_all
+
+if ! tc_offload_check; then
+	echo "WARN: Could not test offloaded functionality"
+else
+	tcflags="skip_sw"
+	test_all
+fi
 
 exit $EXIT_STATUS

@@ -941,7 +941,6 @@
 
 &pcie {
 	status = "okay";
-	phys = <&psgtr 0 PHY_TYPE_PCIE 0 0>;
 };
 
 &psgtr {

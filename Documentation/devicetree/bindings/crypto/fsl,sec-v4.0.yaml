@@ -137,10 +137,7 @@ patternProperties:
           - const: fsl,sec-v4.0-rtic
 
       reg:
-        items:
-          - description: RTIC control and status register space.
-          - description: RTIC recoverable error indication register space.
-        minItems: 1
+        maxItems: 1
 
       ranges:
         maxItems: 1

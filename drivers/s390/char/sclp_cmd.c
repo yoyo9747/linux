@@ -31,9 +31,6 @@
 
 #include "sclp.h"
 
-#define SCLP_CMDW_ASSIGN_STORAGE	0x000d0001
-#define SCLP_CMDW_UNASSIGN_STORAGE	0x000c0001
-
 static void sclp_sync_callback(struct sclp_req *req, void *data)
 {
 	struct completion *completion = data;
@@ -228,7 +225,7 @@ static int sclp_assign_storage(u16 rn)
 	unsigned long long start;
 	int rc;
 
-	rc = do_assign_storage(SCLP_CMDW_ASSIGN_STORAGE, rn);
+	rc = do_assign_storage(0x000d0001, rn);
 	if (rc)
 		return rc;
 	start = rn2addr(rn);
@@ -238,7 +235,7 @@ static int sclp_assign_storage(u16 rn)
 
 static int sclp_unassign_storage(u16 rn)
 {
-	return do_assign_storage(SCLP_CMDW_UNASSIGN_STORAGE, rn);
+	return do_assign_storage(0x000c0001, rn);
 }
 
 struct attach_storage_sccb {

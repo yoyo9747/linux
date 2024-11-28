@@ -26,13 +26,12 @@ LIB	:= $(LIBDIR)/libaotst.a
 LDLIBS	+= $(LIB) -pthread
 LIBDEPS	:= lib/aolib.h Makefile
 
-CFLAGS	+= -Wall -O2 -g -fno-strict-aliasing
+CFLAGS	:= -Wall -O2 -g -D_GNU_SOURCE -fno-strict-aliasing
 CFLAGS	+= $(KHDR_INCLUDES)
 CFLAGS	+= -iquote ./lib/ -I ../../../../include/
 
 # Library
-LIBSRC	:= ftrace.c ftrace-tcp.c kconfig.c netlink.c
-LIBSRC	+= proc.c repair.c setup.c sock.c utils.c
+LIBSRC	:= kconfig.c netlink.c proc.c repair.c setup.c sock.c utils.c
 LIBOBJ	:= $(LIBSRC:%.c=$(LIBDIR)/%.o)
 EXTRA_CLEAN += $(LIBOBJ) $(LIB)
 

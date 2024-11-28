@@ -36,7 +36,7 @@
 #include <linux/pm_wakeirq.h>
 #include <linux/property.h>
 #include <linux/regulator/consumer.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "elan_i2c.h"
 
@@ -1356,8 +1356,6 @@ static int elan_suspend(struct device *dev)
 	}
 
 err:
-	if (ret)
-		enable_irq(client->irq);
 	mutex_unlock(&data->sysfs_mutex);
 	return ret;
 }

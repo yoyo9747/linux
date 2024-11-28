@@ -1223,5 +1223,4 @@ static void __exit test_kmod_exit(void)
 module_exit(test_kmod_exit);
 
 MODULE_AUTHOR("Luis R. Rodriguez <mcgrof@kernel.org>");
-MODULE_DESCRIPTION("kmod stress test driver");
 MODULE_LICENSE("GPL");

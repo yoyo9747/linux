@@ -9,6 +9,14 @@
 #include "fs_dr.h"
 #include "dr_types.h"
 
+static bool dr_is_fw_term_table(struct mlx5_flow_table *ft)
+{
+	if (ft->flags & MLX5_FLOW_TABLE_TERMINATION)
+		return true;
+
+	return false;
+}
+
 static int mlx5_cmd_dr_update_root_ft(struct mlx5_flow_root_namespace *ns,
 				      struct mlx5_flow_table *ft,
 				      u32 underlay_qpn,
@@ -62,7 +70,7 @@ static int mlx5_cmd_dr_create_flow_table(struct mlx5_flow_root_namespace *ns,
 	u32 flags;
 	int err;
 
-	if (mlx5_fs_cmd_is_fw_term_table(ft))
+	if (dr_is_fw_term_table(ft))
 		return mlx5_fs_cmd_get_fw_cmds()->create_flow_table(ns, ft,
 								    ft_attr,
 								    next_ft);
@@ -102,7 +110,7 @@ static int mlx5_cmd_dr_destroy_flow_table(struct mlx5_flow_root_namespace *ns,
 	struct mlx5dr_action *action = ft->fs_dr_table.miss_action;
 	int err;
 
-	if (mlx5_fs_cmd_is_fw_term_table(ft))
+	if (dr_is_fw_term_table(ft))
 		return mlx5_fs_cmd_get_fw_cmds()->destroy_flow_table(ns, ft);
 
 	err = mlx5dr_table_destroy(ft->fs_dr_table.dr_table);
@@ -127,7 +135,7 @@ static int mlx5_cmd_dr_modify_flow_table(struct mlx5_flow_root_namespace *ns,
 					 struct mlx5_flow_table *ft,
 					 struct mlx5_flow_table *next_ft)
 {
-	if (mlx5_fs_cmd_is_fw_term_table(ft))
+	if (dr_is_fw_term_table(ft))
 		return mlx5_fs_cmd_get_fw_cmds()->modify_flow_table(ns, ft, next_ft);
 
 	return set_miss_action(ns, ft, next_ft);
@@ -146,7 +154,7 @@ static int mlx5_cmd_dr_create_flow_group(struct mlx5_flow_root_namespace *ns,
 					    match_criteria_enable);
 	struct mlx5dr_match_parameters mask;
 
-	if (mlx5_fs_cmd_is_fw_term_table(ft))
+	if (dr_is_fw_term_table(ft))
 		return mlx5_fs_cmd_get_fw_cmds()->create_flow_group(ns, ft, in,
 								    fg);
 
@@ -171,7 +179,7 @@ static int mlx5_cmd_dr_destroy_flow_group(struct mlx5_flow_root_namespace *ns,
 					  struct mlx5_flow_table *ft,
 					  struct mlx5_flow_group *fg)
 {
-	if (mlx5_fs_cmd_is_fw_term_table(ft))
+	if (dr_is_fw_term_table(ft))
 		return mlx5_fs_cmd_get_fw_cmds()->destroy_flow_group(ns, ft, fg);
 
 	return mlx5dr_matcher_destroy(fg->fs_dr_matcher.dr_matcher);
@@ -271,7 +279,7 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 	int err = 0;
 	int i;
 
-	if (mlx5_fs_cmd_is_fw_term_table(ft))
+	if (dr_is_fw_term_table(ft))
 		return mlx5_fs_cmd_get_fw_cmds()->create_fte(ns, ft, group, fte);
 
 	actions = kcalloc(MLX5_FLOW_CONTEXT_ACTION_MAX, sizeof(*actions),
@@ -298,12 +306,12 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 	match_sz = sizeof(fte->val);
 
 	/* Drop reformat action bit if destination vport set with reformat */
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_FWD_DEST) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_FWD_DEST) {
 		list_for_each_entry(dst, &fte->node.children, node.list) {
 			if (!contain_vport_reformat_action(dst))
 				continue;
 
-			fte->act_dests.action.action &= ~MLX5_FLOW_CONTEXT_ACTION_PACKET_REFORMAT;
+			fte->action.action &= ~MLX5_FLOW_CONTEXT_ACTION_PACKET_REFORMAT;
 			break;
 		}
 	}
@@ -313,7 +321,7 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 	 * TX: modify header -> push vlan -> encap
 	 * RX: decap -> pop vlan -> modify header
 	 */
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_DECAP) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_DECAP) {
 		enum mlx5dr_action_reformat_type decap_type =
 			DR_ACTION_REFORMAT_TYP_TNL_L2_TO_L2;
 
@@ -329,26 +337,26 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		actions[num_actions++] = tmp_action;
 	}
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_PACKET_REFORMAT) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_PACKET_REFORMAT) {
 		bool is_decap;
 
-		if (fte->act_dests.action.pkt_reformat->owner == MLX5_FLOW_RESOURCE_OWNER_FW) {
+		if (fte->action.pkt_reformat->owner == MLX5_FLOW_RESOURCE_OWNER_FW) {
 			err = -EINVAL;
 			mlx5dr_err(domain, "FW-owned reformat can't be used in SW rule\n");
 			goto free_actions;
 		}
 
-		is_decap = fte->act_dests.action.pkt_reformat->reformat_type ==
+		is_decap = fte->action.pkt_reformat->reformat_type ==
 			   MLX5_REFORMAT_TYPE_L3_TUNNEL_TO_L2;
 
 		if (is_decap)
 			actions[num_actions++] =
-				fte->act_dests.action.pkt_reformat->action.dr_action;
+				fte->action.pkt_reformat->action.dr_action;
 		else
 			delay_encap_set = true;
 	}
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_VLAN_POP) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_VLAN_POP) {
 		tmp_action =
 			mlx5dr_action_create_pop_vlan();
 		if (!tmp_action) {
@@ -359,7 +367,7 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		actions[num_actions++] = tmp_action;
 	}
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_VLAN_POP_2) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_VLAN_POP_2) {
 		tmp_action =
 			mlx5dr_action_create_pop_vlan();
 		if (!tmp_action) {
@@ -370,12 +378,12 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		actions[num_actions++] = tmp_action;
 	}
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_MOD_HDR)
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_MOD_HDR)
 		actions[num_actions++] =
-			fte->act_dests.action.modify_hdr->action.dr_action;
+			fte->action.modify_hdr->action.dr_action;
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_VLAN_PUSH) {
-		tmp_action = create_action_push_vlan(domain, &fte->act_dests.action.vlan[0]);
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_VLAN_PUSH) {
+		tmp_action = create_action_push_vlan(domain, &fte->action.vlan[0]);
 		if (!tmp_action) {
 			err = -ENOMEM;
 			goto free_actions;
@@ -384,8 +392,8 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		actions[num_actions++] = tmp_action;
 	}
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_VLAN_PUSH_2) {
-		tmp_action = create_action_push_vlan(domain, &fte->act_dests.action.vlan[1]);
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_VLAN_PUSH_2) {
+		tmp_action = create_action_push_vlan(domain, &fte->action.vlan[1]);
 		if (!tmp_action) {
 			err = -ENOMEM;
 			goto free_actions;
@@ -396,11 +404,11 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 
 	if (delay_encap_set)
 		actions[num_actions++] =
-			fte->act_dests.action.pkt_reformat->action.dr_action;
+			fte->action.pkt_reformat->action.dr_action;
 
 	/* The order of the actions below is not important */
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_DROP) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_DROP) {
 		tmp_action = mlx5dr_action_create_drop();
 		if (!tmp_action) {
 			err = -ENOMEM;
@@ -410,9 +418,9 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		term_actions[num_term_actions++].dest = tmp_action;
 	}
 
-	if (fte->act_dests.flow_context.flow_tag) {
+	if (fte->flow_context.flow_tag) {
 		tmp_action =
-			mlx5dr_action_create_tag(fte->act_dests.flow_context.flow_tag);
+			mlx5dr_action_create_tag(fte->flow_context.flow_tag);
 		if (!tmp_action) {
 			err = -ENOMEM;
 			goto free_actions;
@@ -421,7 +429,7 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		actions[num_actions++] = tmp_action;
 	}
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_FWD_DEST) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_FWD_DEST) {
 		list_for_each_entry(dst, &fte->node.children, node.list) {
 			enum mlx5_flow_destination_type type = dst->dest_attr.type;
 			u32 id;
@@ -502,7 +510,7 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		}
 	}
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_COUNT) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_COUNT) {
 		list_for_each_entry(dst, &fte->node.children, node.list) {
 			u32 id;
 
@@ -529,21 +537,19 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		}
 	}
 
-	if (fte->act_dests.action.action & MLX5_FLOW_CONTEXT_ACTION_EXECUTE_ASO) {
-		struct mlx5_flow_act *action = &fte->act_dests.action;
-
-		if (fte->act_dests.action.exe_aso.type != MLX5_EXE_ASO_FLOW_METER) {
+	if (fte->action.action & MLX5_FLOW_CONTEXT_ACTION_EXECUTE_ASO) {
+		if (fte->action.exe_aso.type != MLX5_EXE_ASO_FLOW_METER) {
 			err = -EOPNOTSUPP;
 			goto free_actions;
 		}
 
 		tmp_action =
 			mlx5dr_action_create_aso(domain,
-						 action->exe_aso.object_id,
-						 action->exe_aso.return_reg_id,
-						 action->exe_aso.type,
-						 action->exe_aso.flow_meter.init_color,
-						 action->exe_aso.flow_meter.meter_idx);
+						 fte->action.exe_aso.object_id,
+						 fte->action.exe_aso.return_reg_id,
+						 fte->action.exe_aso.type,
+						 fte->action.exe_aso.flow_meter.init_color,
+						 fte->action.exe_aso.flow_meter.meter_idx);
 		if (!tmp_action) {
 			err = -ENOMEM;
 			goto free_actions;
@@ -570,8 +576,8 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 		actions[num_actions++] = term_actions->dest;
 	} else if (num_term_actions > 1) {
 		bool ignore_flow_level =
-			!!(fte->act_dests.action.flags & FLOW_ACT_IGNORE_FLOW_LEVEL);
-		u32 flow_source = fte->act_dests.flow_context.flow_source;
+			!!(fte->action.flags & FLOW_ACT_IGNORE_FLOW_LEVEL);
+		u32 flow_source = fte->flow_context.flow_source;
 
 		if (num_actions == MLX5_FLOW_CONTEXT_ACTION_MAX ||
 		    fs_dr_num_actions == MLX5_FLOW_CONTEXT_ACTION_MAX) {
@@ -595,7 +601,7 @@ static int mlx5_cmd_dr_create_fte(struct mlx5_flow_root_namespace *ns,
 				  &params,
 				  num_actions,
 				  actions,
-				  fte->act_dests.flow_context.flow_source);
+				  fte->flow_context.flow_source);
 	if (!rule) {
 		err = -EINVAL;
 		goto free_actions;
@@ -734,7 +740,7 @@ static int mlx5_cmd_dr_delete_fte(struct mlx5_flow_root_namespace *ns,
 	int err;
 	int i;
 
-	if (mlx5_fs_cmd_is_fw_term_table(ft))
+	if (dr_is_fw_term_table(ft))
 		return mlx5_fs_cmd_get_fw_cmds()->delete_fte(ns, ft, fte);
 
 	err = mlx5dr_rule_destroy(rule->dr_rule);
@@ -759,7 +765,7 @@ static int mlx5_cmd_dr_update_fte(struct mlx5_flow_root_namespace *ns,
 	struct fs_fte fte_tmp = {};
 	int ret;
 
-	if (mlx5_fs_cmd_is_fw_term_table(ft))
+	if (dr_is_fw_term_table(ft))
 		return mlx5_fs_cmd_get_fw_cmds()->update_fte(ns, ft, group, modify_mask, fte);
 
 	/* Backup current dr rule details */
@@ -813,11 +819,11 @@ static int mlx5_cmd_dr_destroy_ns(struct mlx5_flow_root_namespace *ns)
 static u32 mlx5_cmd_dr_get_capabilities(struct mlx5_flow_root_namespace *ns,
 					enum fs_flow_table_type ft_type)
 {
-	u32 steering_caps = MLX5_FLOW_STEERING_CAP_DUPLICATE_MATCH;
+	u32 steering_caps = 0;
 
 	if (ft_type != FS_FT_FDB ||
 	    MLX5_CAP_GEN(ns->dev, steering_format_version) == MLX5_STEERING_FORMAT_CONNECTX_5)
-		return steering_caps;
+		return 0;
 
 	steering_caps |= MLX5_FLOW_STEERING_CAP_VLAN_PUSH_ON_RX;
 	steering_caps |= MLX5_FLOW_STEERING_CAP_VLAN_POP_ON_TX;

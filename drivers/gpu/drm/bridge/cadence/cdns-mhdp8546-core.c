@@ -47,7 +47,7 @@
 #include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "cdns-mhdp8546-core.h"
 #include "cdns-mhdp8546-hdcp.h"
@@ -1696,6 +1696,11 @@ static int cdns_mhdp_connector_init(struct cdns_mhdp_device *mhdp)
 	struct drm_connector *conn = &mhdp->connector;
 	struct drm_bridge *bridge = &mhdp->bridge;
 	int ret;
+
+	if (!bridge->encoder) {
+		dev_err(mhdp->dev, "Parent encoder object not found");
+		return -ENODEV;
+	}
 
 	conn->polled = DRM_CONNECTOR_POLL_HPD;
 

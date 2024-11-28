@@ -18,7 +18,7 @@
 #include <linux/random.h>
 #include <linux/slab.h>
 #include <linux/atomic.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/if_vlan.h>
 #include <net/switchdev.h>
 #include <trace/events/bridge.h>
@@ -1469,10 +1469,12 @@ int br_fdb_external_learn_add(struct net_bridge *br, struct net_bridge_port *p,
 			modified = true;
 		}
 
-		if (test_and_set_bit(BR_FDB_ADDED_BY_EXT_LEARN, &fdb->flags)) {
+		if (test_bit(BR_FDB_ADDED_BY_EXT_LEARN, &fdb->flags)) {
 			/* Refresh entry */
 			fdb->used = jiffies;
-		} else {
+		} else if (!test_bit(BR_FDB_ADDED_BY_USER, &fdb->flags)) {
+			/* Take over SW learned entry */
+			set_bit(BR_FDB_ADDED_BY_EXT_LEARN, &fdb->flags);
 			modified = true;
 		}
 

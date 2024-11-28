@@ -18,7 +18,6 @@ from linux import utils
 from linux import tasks
 from linux import lists
 from linux import vfs
-from linux import rbtree
 from struct import *
 
 
@@ -173,7 +172,8 @@ values of that process namespace"""
         gdb.write("{:^18} {:^15} {:>9} {} {} options\n".format(
                   "mount", "super_block", "devname", "pathname", "fstype"))
 
-        for mnt in rbtree.rb_inorder_for_each_entry(namespace['mounts'], mount_ptr_type, "mnt_node"):
+        for mnt in lists.list_for_each_entry(namespace['list'],
+                                             mount_ptr_type, "mnt_list"):
             devname = mnt['mnt_devname'].string()
             devname = devname if devname else "none"
 

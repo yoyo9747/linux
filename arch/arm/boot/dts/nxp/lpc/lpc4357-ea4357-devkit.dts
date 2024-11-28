@@ -482,8 +482,8 @@
 		reg = <0x1d>;
 	};
 
-	temperature-sensor@48 {
-		compatible = "national,lm75b";
+	lm75@48 {
+		compatible = "nxp,lm75";
 		reg = <0x48>;
 	};
 

@@ -16,10 +16,13 @@
 #ifndef __GPIO_PRIVATE_H_INCLUDED__
 #define __GPIO_PRIVATE_H_INCLUDED__
 
-#include "assert_support.h"
+#include "gpio_public.h"
+
 #include "device_access.h"
 
-static inline void gpio_reg_store(
+#include "assert_support.h"
+
+STORAGE_CLASS_GPIO_C void gpio_reg_store(
     const gpio_ID_t	ID,
     const unsigned int		reg,
     const hrt_data			value)
@@ -30,7 +33,7 @@ static inline void gpio_reg_store(
 	return;
 }
 
-static inline hrt_data gpio_reg_load(
+STORAGE_CLASS_GPIO_C hrt_data gpio_reg_load(
     const gpio_ID_t	ID,
     const unsigned int		reg)
 {

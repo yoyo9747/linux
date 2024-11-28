@@ -18,7 +18,7 @@
 #define __RADIOTAP_H
 
 #include <linux/kernel.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 /**
  * struct ieee80211_radiotap_header - base radiotap header
@@ -582,7 +582,6 @@ enum ieee80211_radiotap_eht_usig_tb {
 /**
  * ieee80211_get_radiotap_len - get radiotap header length
  * @data: pointer to the header
- * Return: the radiotap header length
  */
 static inline u16 ieee80211_get_radiotap_len(const char *data)
 {

@@ -24,7 +24,6 @@ struct irq_domain_ops;
 #define _LINUX
 #endif
 #include <acpi/acpi.h>
-#include <acpi/acpi_numa.h>
 
 #ifdef	CONFIG_ACPI
 
@@ -36,6 +35,7 @@ struct irq_domain_ops;
 
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
+#include <acpi/acpi_numa.h>
 #include <acpi/acpi_io.h>
 #include <asm/acpi.h>
 
@@ -107,7 +107,6 @@ enum acpi_irq_model_id {
 	ACPI_IRQ_MODEL_PLATFORM,
 	ACPI_IRQ_MODEL_GIC,
 	ACPI_IRQ_MODEL_LPIC,
-	ACPI_IRQ_MODEL_RINTC,
 	ACPI_IRQ_MODEL_COUNT
 };
 
@@ -238,6 +237,11 @@ acpi_table_parse_cedt(enum acpi_cedt_type id,
 int acpi_parse_mcfg (struct acpi_table_header *header);
 void acpi_table_print_madt_entry (struct acpi_subtable_header *madt);
 
+static inline bool acpi_gicc_is_usable(struct acpi_madt_generic_interrupt *gicc)
+{
+	return gicc->flags & ACPI_MADT_ENABLED;
+}
+
 #if defined(CONFIG_X86) || defined(CONFIG_LOONGARCH)
 void acpi_numa_processor_affinity_init (struct acpi_srat_cpu_affinity *pa);
 #else
@@ -260,12 +264,6 @@ static inline void
 acpi_numa_gicc_affinity_init(struct acpi_srat_gicc_affinity *pa) { }
 #endif
 
-#ifdef CONFIG_RISCV
-void acpi_numa_rintc_affinity_init(struct acpi_srat_rintc_affinity *pa);
-#else
-static inline void acpi_numa_rintc_affinity_init(struct acpi_srat_rintc_affinity *pa) { }
-#endif
-
 #ifndef PHYS_CPUID_INVALID
 typedef u32 phys_cpuid_t;
 #define PHYS_CPUID_INVALID (phys_cpuid_t)(-1)
@@ -280,9 +278,6 @@ static inline bool invalid_phys_cpuid(phys_cpuid_t phys_id)
 {
 	return phys_id == PHYS_CPUID_INVALID;
 }
-
-
-int __init acpi_get_madt_revision(void);
 
 /* Validate the processor object's proc_id */
 bool acpi_duplicate_processor_id(int proc_id);
@@ -308,8 +303,6 @@ int acpi_map_cpu(acpi_handle handle, phys_cpuid_t physid, u32 acpi_id,
 		 int *pcpu);
 int acpi_unmap_cpu(int cpu);
 #endif /* CONFIG_ACPI_HOTPLUG_CPU */
-
-acpi_handle acpi_get_processor_handle(int cpu);
 
 #ifdef CONFIG_ACPI_HOTPLUG_IOAPIC
 int acpi_get_ioapic_id(acpi_handle handle, u32 gsi_base, u64 *phys_addr);
@@ -363,7 +356,6 @@ void acpi_unregister_gsi (u32 gsi);
 
 struct pci_dev;
 
-struct acpi_prt_entry *acpi_pci_irq_lookup(struct pci_dev *dev, int pin);
 int acpi_pci_irq_enable (struct pci_dev *dev);
 void acpi_penalize_isa_irq(int irq, int active);
 bool acpi_isa_irq_available(int irq);
@@ -388,7 +380,7 @@ extern bool acpi_is_pnp_device(struct acpi_device *);
 
 #if defined(CONFIG_ACPI_WMI) || defined(CONFIG_ACPI_WMI_MODULE)
 
-typedef void (*wmi_notify_handler) (union acpi_object *data, void *context);
+typedef void (*wmi_notify_handler) (u32 value, void *context);
 
 int wmi_instance_count(const char *guid);
 
@@ -403,6 +395,7 @@ extern acpi_status wmi_set_block(const char *guid, u8 instance,
 extern acpi_status wmi_install_notify_handler(const char *guid,
 					wmi_notify_handler handler, void *data);
 extern acpi_status wmi_remove_notify_handler(const char *guid);
+extern acpi_status wmi_get_event_data(u32 event, struct acpi_buffer *out);
 extern bool wmi_has_guid(const char *guid);
 extern char *wmi_get_acpi_device_uid(const char *guid);
 
@@ -583,7 +576,6 @@ acpi_status acpi_run_osc(acpi_handle handle, struct acpi_osc_context *context);
 #define OSC_SB_CPC_FLEXIBLE_ADR_SPACE		0x00004000
 #define OSC_SB_GENERIC_INITIATOR_SUPPORT	0x00020000
 #define OSC_SB_NATIVE_USB4_SUPPORT		0x00040000
-#define OSC_SB_BATTERY_CHARGE_LIMITING_SUPPORT	0x00080000
 #define OSC_SB_PRM_SUPPORT			0x00200000
 #define OSC_SB_FFH_OPR_SUPPORT			0x00400000
 
@@ -769,7 +761,6 @@ static inline u64 acpi_arch_get_root_pointer(void)
 }
 #endif
 
-int acpi_get_local_u64_address(acpi_handle handle, u64 *addr);
 int acpi_get_local_address(acpi_handle handle, u32 *addr);
 const char *acpi_get_subsystem_id(acpi_handle handle);
 
@@ -785,6 +776,8 @@ const char *acpi_get_subsystem_id(acpi_handle handle);
 /* Get rid of the -Wunused-variable for adev */
 #define acpi_dev_uid_match(adev, uid2)			(adev && false)
 #define acpi_dev_hid_uid_match(adev, hid2, uid2)	(adev && false)
+
+#include <acpi/acpi_numa.h>
 
 struct fwnode_handle;
 
@@ -1083,11 +1076,6 @@ static inline bool acpi_sleep_state_supported(u8 sleep_state)
 	return false;
 }
 
-static inline acpi_handle acpi_get_processor_handle(int cpu)
-{
-	return NULL;
-}
-
 #endif	/* !CONFIG_ACPI */
 
 extern void arch_post_acpi_subsys_init(void);
@@ -1344,8 +1332,6 @@ struct acpi_probe_entry {
 	kernel_ulong_t driver_data;
 };
 
-void arch_sort_irqchip_probe(struct acpi_probe_entry *ap_head, int nr);
-
 #define ACPI_DECLARE_PROBE_ENTRY(table, name, table_id, subtable,	\
 				 valid, data, fn)			\
 	static const struct acpi_probe_entry __acpi_probe_##name	\
@@ -1530,12 +1516,6 @@ static inline int find_acpi_cpu_topology_hetero_id(unsigned int cpu)
 void acpi_arm_init(void);
 #else
 static inline void acpi_arm_init(void) { }
-#endif
-
-#ifdef CONFIG_RISCV
-void acpi_riscv_init(void);
-#else
-static inline void acpi_riscv_init(void) { }
 #endif
 
 #ifdef CONFIG_ACPI_PCC

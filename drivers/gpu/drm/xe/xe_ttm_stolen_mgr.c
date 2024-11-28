@@ -5,6 +5,7 @@
  */
 
 #include <drm/drm_managed.h>
+#include <drm/drm_mm.h>
 
 #include <drm/ttm/ttm_device.h>
 #include <drm/ttm/ttm_placement.h>
@@ -12,13 +13,11 @@
 
 #include <generated/xe_wa_oob.h>
 
-#include "regs/xe_bars.h"
 #include "regs/xe_gt_regs.h"
 #include "regs/xe_regs.h"
 #include "xe_bo.h"
 #include "xe_device.h"
 #include "xe_gt.h"
-#include "xe_gt_printk.h"
 #include "xe_mmio.h"
 #include "xe_res_cursor.h"
 #include "xe_sriov.h"

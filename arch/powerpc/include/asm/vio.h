@@ -156,7 +156,11 @@ static inline int vio_enable_interrupts(struct vio_dev *dev)
 }
 #endif
 
-#define to_vio_driver(__drv)	container_of_const(__drv, struct vio_driver, driver)
+static inline struct vio_driver *to_vio_driver(struct device_driver *drv)
+{
+	return container_of(drv, struct vio_driver, driver);
+}
+
 #define to_vio_dev(__dev)	container_of_const(__dev, struct vio_dev, dev)
 
 #endif /* __KERNEL__ */

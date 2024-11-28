@@ -979,6 +979,7 @@ static int emc_check_mc_timings(struct tegra_emc *emc)
 static int emc_load_timings_from_dt(struct tegra_emc *emc,
 				    struct device_node *node)
 {
+	struct device_node *child;
 	struct emc_timing *timing;
 	int child_count;
 	int err;
@@ -997,10 +998,12 @@ static int emc_load_timings_from_dt(struct tegra_emc *emc,
 	emc->num_timings = child_count;
 	timing = emc->timings;
 
-	for_each_child_of_node_scoped(node, child) {
+	for_each_child_of_node(node, child) {
 		err = load_one_timing_from_dt(emc, timing++, child);
-		if (err)
+		if (err) {
+			of_node_put(child);
 			return err;
+		}
 	}
 
 	sort(emc->timings, emc->num_timings, sizeof(*timing), cmp_timings,

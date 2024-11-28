@@ -336,7 +336,7 @@ static struct platform_driver au1xac97c_driver = {
 		.pm	= AU1XPSCAC97_PMOPS,
 	},
 	.probe		= au1xac97c_drvprobe,
-	.remove		= au1xac97c_drvremove,
+	.remove_new	= au1xac97c_drvremove,
 };
 
 module_platform_driver(au1xac97c_driver);

@@ -55,6 +55,8 @@ static struct acp_resource rsrc = {
 	.irqp_used = 1,
 	.soc_mclk = true,
 	.irq_reg_offset = 0x1a00,
+	.i2s_pin_cfg_offset = 0x1440,
+	.i2s_mode = 0x0a,
 	.scratch_reg_offset = 0x12800,
 	.sram_pte_offset = 0x03802800,
 };
@@ -239,12 +241,11 @@ static int acp63_audio_probe(struct platform_device *pdev)
 	adata->rsrc = &rsrc;
 	adata->platform = ACP63;
 	adata->flag = chip->flag;
-	adata->is_i2s_config = chip->is_i2s_config;
 	adata->machines = snd_soc_acpi_amd_acp63_acp_machines;
 	acp_machine_select(adata);
 	dev_set_drvdata(dev, adata);
 
-	if (chip->is_i2s_config && rsrc.soc_mclk) {
+	if (chip->flag != FLAG_AMD_LEGACY_ONLY_DMIC) {
 		ret = acp63_i2s_master_clock_generate(adata);
 		if (ret)
 			return ret;
@@ -277,7 +278,7 @@ static int __maybe_unused acp63_pcm_resume(struct device *dev)
 	snd_pcm_uframes_t buf_in_frames;
 	u64 buf_size;
 
-	if (adata->is_i2s_config && adata->rsrc->soc_mclk)
+	if (adata->flag != FLAG_AMD_LEGACY_ONLY_DMIC)
 		acp63_i2s_master_clock_generate(adata);
 
 	spin_lock(&adata->acp_lock);
@@ -304,7 +305,7 @@ static const struct dev_pm_ops acp63_dma_pm_ops = {
 
 static struct platform_driver acp63_driver = {
 	.probe = acp63_audio_probe,
-	.remove = acp63_audio_remove,
+	.remove_new = acp63_audio_remove,
 	.driver = {
 		.name = "acp_asoc_acp63",
 		.pm = &acp63_dma_pm_ops,

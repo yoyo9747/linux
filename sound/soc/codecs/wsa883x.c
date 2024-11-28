@@ -9,6 +9,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/of_gpio.h>
 #include <linux/pm_runtime.h>
 #include <linux/printk.h>
 #include <linux/regmap.h>
@@ -438,6 +439,8 @@ struct wsa883x_priv {
 	struct gpio_desc *sd_n;
 	bool port_prepared[WSA883X_MAX_SWR_PORTS];
 	bool port_enable[WSA883X_MAX_SWR_PORTS];
+	int version;
+	int variant;
 	int active_ports;
 	int dev_mode;
 	int comp_offset;
@@ -480,32 +483,33 @@ static const struct soc_enum wsa_dev_mode_enum =
 
 /* 4 ports */
 static struct sdw_dpn_prop wsa_sink_dpn_prop[WSA883X_MAX_SWR_PORTS] = {
-	[WSA883X_PORT_DAC] = {
-		.num = WSA883X_PORT_DAC + 1,
+	{
+		/* DAC */
+		.num = 1,
 		.type = SDW_DPN_SIMPLE,
 		.min_ch = 1,
 		.max_ch = 1,
 		.simple_ch_prep_sm = true,
 		.read_only_wordlength = true,
-	},
-	[WSA883X_PORT_COMP] = {
-		.num = WSA883X_PORT_COMP + 1,
+	}, {
+		/* COMP */
+		.num = 2,
 		.type = SDW_DPN_SIMPLE,
 		.min_ch = 1,
 		.max_ch = 1,
 		.simple_ch_prep_sm = true,
 		.read_only_wordlength = true,
-	},
-	[WSA883X_PORT_BOOST] = {
-		.num = WSA883X_PORT_BOOST + 1,
+	}, {
+		/* BOOST */
+		.num = 3,
 		.type = SDW_DPN_SIMPLE,
 		.min_ch = 1,
 		.max_ch = 1,
 		.simple_ch_prep_sm = true,
 		.read_only_wordlength = true,
-	},
-	[WSA883X_PORT_VISENSE] = {
-		.num = WSA883X_PORT_VISENSE + 1,
+	}, {
+		/* VISENSE */
+		.num = 4,
 		.type = SDW_DPN_SIMPLE,
 		.min_ch = 1,
 		.max_ch = 1,
@@ -515,20 +519,17 @@ static struct sdw_dpn_prop wsa_sink_dpn_prop[WSA883X_MAX_SWR_PORTS] = {
 };
 
 static const struct sdw_port_config wsa883x_pconfig[WSA883X_MAX_SWR_PORTS] = {
-	[WSA883X_PORT_DAC] = {
-		.num = WSA883X_PORT_DAC + 1,
+	{
+		.num = 1,
 		.ch_mask = 0x1,
-	},
-	[WSA883X_PORT_COMP] = {
-		.num = WSA883X_PORT_COMP + 1,
+	}, {
+		.num = 2,
 		.ch_mask = 0xf,
-	},
-	[WSA883X_PORT_BOOST] = {
-		.num = WSA883X_PORT_BOOST + 1,
+	}, {
+		.num = 3,
 		.ch_mask = 0x3,
-	},
-	[WSA883X_PORT_VISENSE] = {
-		.num = WSA883X_PORT_VISENSE + 1,
+	}, {	/* IV feedback */
+		.num = 4,
 		.ch_mask = 0x3,
 	},
 };
@@ -934,7 +935,7 @@ static bool wsa883x_volatile_register(struct device *dev, unsigned int reg)
 	return wsa883x_readonly_register(dev, reg);
 }
 
-static const struct regmap_config wsa883x_regmap_config = {
+static struct regmap_config wsa883x_regmap_config = {
 	.reg_bits = 32,
 	.val_bits = 8,
 	.cache_type = REGCACHE_MAPLE,
@@ -997,36 +998,33 @@ static const struct reg_sequence reg_init[] = {
 	{WSA883X_GMAMP_SUP1, 0xE2},
 };
 
-static int wsa883x_init(struct wsa883x_priv *wsa883x)
+static void wsa883x_init(struct wsa883x_priv *wsa883x)
 {
 	struct regmap *regmap = wsa883x->regmap;
-	int variant, version, ret;
+	int variant, version;
 
-	ret = regmap_read(regmap, WSA883X_OTP_REG_0, &variant);
-	if (ret)
-		return ret;
-	variant = variant & WSA883X_ID_MASK;
+	regmap_read(regmap, WSA883X_OTP_REG_0, &variant);
+	wsa883x->variant = variant & WSA883X_ID_MASK;
 
-	ret = regmap_read(regmap, WSA883X_CHIP_ID0, &version);
-	if (ret)
-		return ret;
+	regmap_read(regmap, WSA883X_CHIP_ID0, &version);
+	wsa883x->version = version;
 
-	switch (variant) {
+	switch (wsa883x->variant) {
 	case WSA8830:
 		dev_info(wsa883x->dev, "WSA883X Version 1_%d, Variant: WSA8830\n",
-			 version);
+			 wsa883x->version);
 		break;
 	case WSA8835:
 		dev_info(wsa883x->dev, "WSA883X Version 1_%d, Variant: WSA8835\n",
-			 version);
+			 wsa883x->version);
 		break;
 	case WSA8832:
 		dev_info(wsa883x->dev, "WSA883X Version 1_%d, Variant: WSA8832\n",
-			 version);
+			 wsa883x->version);
 		break;
 	case WSA8835_V2:
 		dev_info(wsa883x->dev, "WSA883X Version 1_%d, Variant: WSA8835_V2\n",
-			 version);
+			 wsa883x->version);
 		break;
 	default:
 		break;
@@ -1037,14 +1035,12 @@ static int wsa883x_init(struct wsa883x_priv *wsa883x)
 	/* Initial settings */
 	regmap_multi_reg_write(regmap, reg_init, ARRAY_SIZE(reg_init));
 
-	if (variant == WSA8830 || variant == WSA8832) {
+	if (wsa883x->variant == WSA8830 || wsa883x->variant == WSA8832) {
 		wsa883x->comp_offset = COMP_OFFSET3;
 		regmap_update_bits(regmap, WSA883X_DRE_CTL_0,
 				   WSA883X_DRE_OFFSET_MASK,
 				   wsa883x->comp_offset);
 	}
-
-	return 0;
 }
 
 static int wsa883x_update_status(struct sdw_slave *slave,
@@ -1053,7 +1049,7 @@ static int wsa883x_update_status(struct sdw_slave *slave,
 	struct wsa883x_priv *wsa883x = dev_get_drvdata(&slave->dev);
 
 	if (status == SDW_SLAVE_ATTACHED && slave->dev_num > 0)
-		return wsa883x_init(wsa883x);
+		wsa883x_init(wsa883x);
 
 	return 0;
 }
@@ -1403,15 +1399,7 @@ static int wsa883x_probe(struct sdw_slave *pdev,
 	wsa883x->sconfig.direction = SDW_DATA_DIR_RX;
 	wsa883x->sconfig.type = SDW_STREAM_PDM;
 
-	/**
-	 * Port map index starts with 0, however the data port for this codec
-	 * are from index 1
-	 */
-	if (of_property_read_u32_array(dev->of_node, "qcom,port-mapping", &pdev->m_port_map[1],
-					WSA883X_MAX_SWR_PORTS))
-		dev_dbg(dev, "Static Port mapping not specified\n");
-
-	pdev->prop.sink_ports = GENMASK(WSA883X_MAX_SWR_PORTS - 1, 0);
+	pdev->prop.sink_ports = GENMASK(WSA883X_MAX_SWR_PORTS, 0);
 	pdev->prop.simple_clk_stop_capable = true;
 	pdev->prop.sink_dpn_prop = wsa_sink_dpn_prop;
 	pdev->prop.scp_int1_mask = SDW_SCP_INT1_BUS_CLASH | SDW_SCP_INT1_PARITY;

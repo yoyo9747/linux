@@ -52,7 +52,7 @@ enum vdo_status_codes {
 	VDO_READ_ONLY,
 	/* the VDO is shutting down */
 	VDO_SHUTTING_DOWN,
-	/* the recovery journal has corrupt entries or corrupt metadata */
+	/* the recovery journal has corrupt entries */
 	VDO_CORRUPT_JOURNAL,
 	/* exceeds maximum number of slabs supported */
 	VDO_TOO_MANY_SLABS,

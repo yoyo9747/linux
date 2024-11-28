@@ -19,7 +19,7 @@ description:
   the hardware description for the scheme mentioned above.
 
 maintainers:
-  - Dhruva Gole <d-gole@ti.com>
+  - Nishanth Menon <nm@ti.com>
 
 allOf:
   - $ref: opp-v2-base.yaml#

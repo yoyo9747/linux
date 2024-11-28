@@ -522,5 +522,4 @@ static struct greybus_driver gb_bootrom_driver = {
 
 module_greybus_driver(gb_bootrom_driver);
 
-MODULE_DESCRIPTION("BOOTROM Greybus driver");
 MODULE_LICENSE("GPL v2");

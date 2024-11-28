@@ -16,6 +16,8 @@
 
 #include <linux/pcitest.h>
 
+#define BILLION 1E9
+
 static char *result[] = { "NOT OKAY", "OKAY" };
 static char *irq[] = { "LEGACY", "MSI", "MSI-X" };
 

@@ -1626,23 +1626,6 @@ static int _check_data_dev_sectors(struct raid_set *rs)
 	return 0;
 }
 
-/* Get reshape sectors from data_offsets or raid set */
-static sector_t _get_reshape_sectors(struct raid_set *rs)
-{
-	struct md_rdev *rdev;
-	sector_t reshape_sectors = 0;
-
-	rdev_for_each(rdev, &rs->md)
-		if (!test_bit(Journal, &rdev->flags)) {
-			reshape_sectors = (rdev->data_offset > rdev->new_data_offset) ?
-					rdev->data_offset - rdev->new_data_offset :
-					rdev->new_data_offset - rdev->data_offset;
-			break;
-		}
-
-	return max(reshape_sectors, (sector_t) rs->data_offset);
-}
-
 /* Calculate the sectors per device and per array used for @rs */
 static int rs_set_dev_and_array_sectors(struct raid_set *rs, sector_t sectors, bool use_mddev)
 {
@@ -1673,7 +1656,7 @@ static int rs_set_dev_and_array_sectors(struct raid_set *rs, sector_t sectors, b
 		if (sector_div(dev_sectors, data_stripes))
 			goto bad;
 
-		array_sectors = (data_stripes + delta_disks) * (dev_sectors - _get_reshape_sectors(rs));
+		array_sectors = (data_stripes + delta_disks) * dev_sectors;
 		if (sector_div(array_sectors, rs->raid10_copies))
 			goto bad;
 
@@ -1682,7 +1665,7 @@ static int rs_set_dev_and_array_sectors(struct raid_set *rs, sector_t sectors, b
 
 	else
 		/* Striped layouts */
-		array_sectors = (data_stripes + delta_disks) * (dev_sectors - _get_reshape_sectors(rs));
+		array_sectors = (data_stripes + delta_disks) * dev_sectors;
 
 	mddev->array_sectors = array_sectors;
 	mddev->dev_sectors = dev_sectors;
@@ -1721,20 +1704,11 @@ static void do_table_event(struct work_struct *ws)
 	struct raid_set *rs = container_of(ws, struct raid_set, md.event_work);
 
 	smp_rmb(); /* Make sure we access most actual mddev properties */
-
-	/* Only grow size resulting from added stripe(s) after reshape ended. */
-	if (!rs_is_reshaping(rs) &&
-	    rs->array_sectors > rs->md.array_sectors &&
-	    !rs->md.delta_disks &&
-	    rs->md.raid_disks == rs->raid_disks) {
-		/* The raid10 personality doesn't provide proper device sizes -> correct. */
+	if (!rs_is_reshaping(rs)) {
 		if (rs_is_raid10(rs))
 			rs_set_rdev_sectors(rs);
-
-		rs->md.array_sectors = rs->array_sectors;
 		rs_set_capacity(rs);
 	}
-
 	dm_table_event(rs->ti->table);
 }
 
@@ -2519,7 +2493,7 @@ static int super_validate(struct raid_set *rs, struct md_rdev *rdev)
 		rdev->saved_raid_disk = rdev->raid_disk;
 	}
 
-	/* Reshape support -> restore respective data offsets */
+	/* Reshape support -> restore repective data offsets */
 	rdev->data_offset = le64_to_cpu(sb->data_offset);
 	rdev->new_data_offset = le64_to_cpu(sb->new_data_offset);
 
@@ -2835,6 +2809,23 @@ static int rs_prepare_reshape(struct raid_set *rs)
 		set_bit(RT_FLAG_UPDATE_SBS, &rs->runtime_flags);
 
 	return 0;
+}
+
+/* Get reshape sectors from data_offsets or raid set */
+static sector_t _get_reshape_sectors(struct raid_set *rs)
+{
+	struct md_rdev *rdev;
+	sector_t reshape_sectors = 0;
+
+	rdev_for_each(rdev, &rs->md)
+		if (!test_bit(Journal, &rdev->flags)) {
+			reshape_sectors = (rdev->data_offset > rdev->new_data_offset) ?
+					rdev->data_offset - rdev->new_data_offset :
+					rdev->new_data_offset - rdev->data_offset;
+			break;
+		}
+
+	return max(reshape_sectors, (sector_t) rs->data_offset);
 }
 
 /*
@@ -3551,7 +3542,7 @@ static void raid_status(struct dm_target *ti, status_type_t type,
 		recovery = rs->md.recovery;
 		state = decipher_sync_action(mddev, recovery);
 		progress = rs_get_progress(rs, recovery, state, resync_max_sectors);
-		resync_mismatches = mddev->last_sync_action == ACTION_CHECK ?
+		resync_mismatches = (mddev->last_sync_action && !strcasecmp(mddev->last_sync_action, "check")) ?
 				    atomic64_read(&mddev->resync_mismatches) : 0;
 
 		/* HM FIXME: do we want another state char for raid0? It shows 'D'/'A'/'-' now */
@@ -3811,8 +3802,8 @@ static void raid_io_hints(struct dm_target *ti, struct queue_limits *limits)
 	struct raid_set *rs = ti->private;
 	unsigned int chunk_size_bytes = to_bytes(rs->md.chunk_sectors);
 
-	limits->io_min = chunk_size_bytes;
-	limits->io_opt = chunk_size_bytes * mddev_data_stripes(rs);
+	blk_limits_io_min(limits, chunk_size_bytes);
+	blk_limits_io_opt(limits, chunk_size_bytes * mddev_data_stripes(rs));
 }
 
 static void raid_presuspend(struct dm_target *ti)
@@ -3949,9 +3940,7 @@ static int __load_dirty_region_bitmap(struct raid_set *rs)
 	/* Try loading the bitmap unless "raid0", which does not have one */
 	if (!rs_is_raid0(rs) &&
 	    !test_and_set_bit(RT_FLAG_RS_BITMAP_LOADED, &rs->runtime_flags)) {
-		struct mddev *mddev = &rs->md;
-
-		r = mddev->bitmap_ops->load(mddev);
+		r = md_bitmap_load(&rs->md);
 		if (r)
 			DMERR("Failed to load bitmap");
 	}
@@ -4034,11 +4023,6 @@ static int raid_preresume(struct dm_target *ti)
 	if (test_and_set_bit(RT_FLAG_RS_PRERESUMED, &rs->runtime_flags))
 		return 0;
 
-	/* If different and no explicit grow request, expose MD array size as of superblock. */
-	if (!test_bit(RT_FLAG_RS_GROW, &rs->runtime_flags) &&
-	    rs->array_sectors != mddev->array_sectors)
-		rs_set_capacity(rs);
-
 	/*
 	 * The superblocks need to be updated on disk if the
 	 * array is new or new devices got added (thus zeroed
@@ -4068,8 +4052,7 @@ static int raid_preresume(struct dm_target *ti)
 	       mddev->bitmap_info.chunksize != to_bytes(rs->requested_bitmap_chunk_sectors)))) {
 		int chunksize = to_bytes(rs->requested_bitmap_chunk_sectors) ?: mddev->bitmap_info.chunksize;
 
-		r = mddev->bitmap_ops->resize(mddev, mddev->dev_sectors,
-					      chunksize, false);
+		r = md_bitmap_resize(mddev->bitmap, mddev->dev_sectors, chunksize, 0);
 		if (r)
 			DMERR("Failed to resize bitmap");
 	}
@@ -4118,11 +4101,10 @@ static void raid_resume(struct dm_target *ti)
 		if (mddev->delta_disks < 0)
 			rs_set_capacity(rs);
 
-		mddev_lock_nointr(mddev);
 		WARN_ON_ONCE(!test_bit(MD_RECOVERY_FROZEN, &mddev->recovery));
-		WARN_ON_ONCE(rcu_dereference_protected(mddev->sync_thread,
-						       lockdep_is_held(&mddev->reconfig_mutex)));
+		WARN_ON_ONCE(test_bit(MD_RECOVERY_RUNNING, &mddev->recovery));
 		clear_bit(RT_FLAG_RS_FROZEN, &rs->runtime_flags);
+		mddev_lock_nointr(mddev);
 		mddev->ro = 0;
 		mddev->in_sync = 0;
 		md_unfrozen_sync_thread(mddev);

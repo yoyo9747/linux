@@ -261,7 +261,8 @@
 &mdio0 {
 	rgmii_phy0: ethernet-phy@1 {
 		/* RTL8211F */
-		compatible = "ethernet-phy-id001c.c916";
+		compatible = "ethernet-phy-id001c.c916",
+			     "ethernet-phy-ieee802.3-c22";
 		reg = <0x1>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&rtl8211f_0_rst>;
@@ -274,7 +275,8 @@
 &mdio1 {
 	rgmii_phy1: ethernet-phy@2 {
 		/* RTL8211F */
-		compatible = "ethernet-phy-id001c.c916";
+		compatible = "ethernet-phy-id001c.c916",
+			     "ethernet-phy-ieee802.3-c22";
 		reg = <0x2>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&rtl8211f_1_rst>;
@@ -371,10 +373,6 @@
 	no-mmc;
 	sd-uhs-sdr104;
 	vqmmc-supply = <&vccio_sd_s0>;
-	status = "okay";
-};
-
-&tsadc {
 	status = "okay";
 };
 

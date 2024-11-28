@@ -82,8 +82,9 @@
 #define SNDRV_LEGACY_FIND_FREE_DMA
 #include <sound/initval.h>
 
+#define PFX "es18xx: "
+
 struct snd_es18xx {
-	struct snd_card *card;
 	unsigned long port;		/* port of ESS chip */
 	unsigned long ctrl_port;	/* Control port of ESS chip */
 	int irq;			/* IRQ number of ESS chip */
@@ -164,7 +165,7 @@ static int snd_es18xx_dsp_command(struct snd_es18xx *chip, unsigned char val)
                         outb(val, chip->port + 0x0C);
                         return 0;
                 }
-	dev_err(chip->card->dev, "dsp_command: timeout (0x%x)\n", val);
+	snd_printk(KERN_ERR "dsp_command: timeout (0x%x)\n", val);
         return -EINVAL;
 }
 
@@ -175,8 +176,8 @@ static int snd_es18xx_dsp_get_byte(struct snd_es18xx *chip)
         for(i = MILLISECOND/10; i; i--)
                 if (inb(chip->port + 0x0C) & 0x40)
                         return inb(chip->port + 0x0A);
-	dev_err(chip->card->dev, "dsp_get_byte failed: 0x%lx = 0x%x!!!\n",
-		chip->port + 0x0A, inb(chip->port + 0x0A));
+	snd_printk(KERN_ERR "dsp_get_byte failed: 0x%lx = 0x%x!!!\n",
+		   chip->port + 0x0A, inb(chip->port + 0x0A));
         return -ENODEV;
 }
 
@@ -196,7 +197,7 @@ static int snd_es18xx_write(struct snd_es18xx *chip,
  end:
         spin_unlock_irqrestore(&chip->reg_lock, flags);
 #ifdef REG_DEBUG
-	dev_dbg(chip->card->dev, "Reg %02x set to %02x\n", reg, data);
+	snd_printk(KERN_DEBUG "Reg %02x set to %02x\n", reg, data);
 #endif
 	return ret;
 }
@@ -215,7 +216,7 @@ static int snd_es18xx_read(struct snd_es18xx *chip, unsigned char reg)
 	data = snd_es18xx_dsp_get_byte(chip);
 	ret = data;
 #ifdef REG_DEBUG
-	dev_dbg(chip->card->dev, "Reg %02x now is %02x (%d)\n", reg, data, ret);
+	snd_printk(KERN_DEBUG "Reg %02x now is %02x (%d)\n", reg, data, ret);
 #endif
  end:
         spin_unlock_irqrestore(&chip->reg_lock, flags);
@@ -251,8 +252,8 @@ static int snd_es18xx_bits(struct snd_es18xx *chip, unsigned char reg,
 		if (ret < 0)
 			goto end;
 #ifdef REG_DEBUG
-		dev_dbg(chip->card->dev, "Reg %02x was %02x, set to %02x (%d)\n",
-			reg, old, new, ret);
+		snd_printk(KERN_DEBUG "Reg %02x was %02x, set to %02x (%d)\n",
+			   reg, old, new, ret);
 #endif
 	}
 	ret = oval;
@@ -270,7 +271,7 @@ static inline void snd_es18xx_mixer_write(struct snd_es18xx *chip,
         outb(data, chip->port + 0x05);
         spin_unlock_irqrestore(&chip->mixer_lock, flags);
 #ifdef REG_DEBUG
-	dev_dbg(chip->card->dev, "Mixer reg %02x set to %02x\n", reg, data);
+	snd_printk(KERN_DEBUG "Mixer reg %02x set to %02x\n", reg, data);
 #endif
 }
 
@@ -283,7 +284,7 @@ static inline int snd_es18xx_mixer_read(struct snd_es18xx *chip, unsigned char r
 	data = inb(chip->port + 0x05);
         spin_unlock_irqrestore(&chip->mixer_lock, flags);
 #ifdef REG_DEBUG
-	dev_dbg(chip->card->dev, "Mixer reg %02x now is %02x\n", reg, data);
+	snd_printk(KERN_DEBUG "Mixer reg %02x now is %02x\n", reg, data);
 #endif
         return data;
 }
@@ -302,8 +303,8 @@ static inline int snd_es18xx_mixer_bits(struct snd_es18xx *chip, unsigned char r
 		new = (old & ~mask) | (val & mask);
 		outb(new, chip->port + 0x05);
 #ifdef REG_DEBUG
-		dev_dbg(chip->card->dev, "Mixer reg %02x was %02x, set to %02x\n",
-			reg, old, new);
+		snd_printk(KERN_DEBUG "Mixer reg %02x was %02x, set to %02x\n",
+			   reg, old, new);
 #endif
 	}
         spin_unlock_irqrestore(&chip->mixer_lock, flags);
@@ -323,8 +324,8 @@ static inline int snd_es18xx_mixer_writable(struct snd_es18xx *chip, unsigned ch
 	new = inb(chip->port + 0x05);
         spin_unlock_irqrestore(&chip->mixer_lock, flags);
 #ifdef REG_DEBUG
-	dev_dbg(chip->card->dev, "Mixer reg %02x was %02x, set to %02x, now is %02x\n",
-		reg, old, expected, new);
+	snd_printk(KERN_DEBUG "Mixer reg %02x was %02x, set to %02x, now is %02x\n",
+		   reg, old, expected, new);
 #endif
 	return expected == new;
 }
@@ -1355,7 +1356,7 @@ static void snd_es18xx_config_write(struct snd_es18xx *chip,
 	outb(reg, chip->ctrl_port);
 	outb(data, chip->ctrl_port + 1);
 #ifdef REG_DEBUG
-	dev_dbg(chip->card->dev, "Config reg %02x set to %02x\n", reg, data);
+	snd_printk(KERN_DEBUG "Config reg %02x set to %02x\n", reg, data);
 #endif
 }
 
@@ -1424,7 +1425,7 @@ static int snd_es18xx_initialize(struct snd_es18xx *chip,
 			irqmask = 3;
 			break;
 		default:
-			dev_err(chip->card->dev, "invalid irq %d\n", chip->irq);
+			snd_printk(KERN_ERR "invalid irq %d\n", chip->irq);
 			return -ENODEV;
 		}
 		switch (chip->dma1) {
@@ -1438,7 +1439,7 @@ static int snd_es18xx_initialize(struct snd_es18xx *chip,
 			dma1mask = 3;
 			break;
 		default:
-			dev_err(chip->card->dev, "invalid dma1 %d\n", chip->dma1);
+			snd_printk(KERN_ERR "invalid dma1 %d\n", chip->dma1);
 			return -ENODEV;
 		}
 		switch (chip->dma2) {
@@ -1455,7 +1456,7 @@ static int snd_es18xx_initialize(struct snd_es18xx *chip,
 			dma2mask = 3;
 			break;
 		default:
-			dev_err(chip->card->dev, "invalid dma2 %d\n", chip->dma2);
+			snd_printk(KERN_ERR "invalid dma2 %d\n", chip->dma2);
 			return -ENODEV;
 		}
 
@@ -1530,7 +1531,7 @@ static int snd_es18xx_identify(struct snd_card *card, struct snd_es18xx *chip)
 
 	/* reset */
 	if (snd_es18xx_reset(chip) < 0) {
-		dev_err(card->dev, "reset at 0x%lx failed!!!\n", chip->port);
+		snd_printk(KERN_ERR "reset at 0x%lx failed!!!\n", chip->port);
 		return -ENODEV;
 	}
 
@@ -1568,7 +1569,7 @@ static int snd_es18xx_identify(struct snd_card *card, struct snd_es18xx *chip)
 
 		if (!devm_request_region(card->dev, chip->ctrl_port, 8,
 					 "ES18xx - CTRL")) {
-			dev_err(card->dev, "unable go grab port 0x%lx\n", chip->ctrl_port);
+			snd_printk(KERN_ERR PFX "unable go grab port 0x%lx\n", chip->ctrl_port);
 			return -EBUSY;
 		}
 
@@ -1600,7 +1601,7 @@ static int snd_es18xx_probe(struct snd_card *card,
 			    unsigned long fm_port)
 {
 	if (snd_es18xx_identify(card, chip) < 0) {
-		dev_err(card->dev, "[0x%lx] ESS chip not found\n", chip->port);
+		snd_printk(KERN_ERR PFX "[0x%lx] ESS chip not found\n", chip->port);
                 return -ENODEV;
 	}
 
@@ -1622,12 +1623,12 @@ static int snd_es18xx_probe(struct snd_card *card,
 		chip->caps = ES18XX_PCM2 | ES18XX_RECMIX | ES18XX_AUXB | ES18XX_DUPLEX_SAME | ES18XX_GPO_2BIT;
 		break;
 	default:
-		dev_err(card->dev, "[0x%lx] unsupported chip ES%x\n",
-			chip->port, chip->version);
+		snd_printk(KERN_ERR "[0x%lx] unsupported chip ES%x\n",
+                           chip->port, chip->version);
                 return -ENODEV;
         }
 
-	dev_dbg(card->dev, "[0x%lx] ESS%x chip found\n", chip->port, chip->version);
+        snd_printd("[0x%lx] ESS%x chip found\n", chip->port, chip->version);
 
 	if (chip->dma1 == chip->dma2)
 		chip->caps &= ~(ES18XX_PCM2 | ES18XX_DUPLEX_SAME);
@@ -1724,7 +1725,6 @@ static int snd_es18xx_new_device(struct snd_card *card,
 {
 	struct snd_es18xx *chip = card->private_data;
 
-	chip->card = card;
 	spin_lock_init(&chip->reg_lock);
  	spin_lock_init(&chip->mixer_lock);
         chip->port = port;
@@ -1735,27 +1735,27 @@ static int snd_es18xx_new_device(struct snd_card *card,
 	chip->active = 0;
 
 	if (!devm_request_region(card->dev, port, 16, "ES18xx")) {
-		dev_err(card->dev, "unable to grap ports 0x%lx-0x%lx\n", port, port + 16 - 1);
+		snd_printk(KERN_ERR PFX "unable to grap ports 0x%lx-0x%lx\n", port, port + 16 - 1);
 		return -EBUSY;
 	}
 
 	if (devm_request_irq(card->dev, irq, snd_es18xx_interrupt, 0, "ES18xx",
 			     (void *) card)) {
-		dev_err(card->dev, "unable to grap IRQ %d\n", irq);
+		snd_printk(KERN_ERR PFX "unable to grap IRQ %d\n", irq);
 		return -EBUSY;
 	}
 	chip->irq = irq;
 	card->sync_irq = chip->irq;
 
 	if (snd_devm_request_dma(card->dev, dma1, "ES18xx DMA 1")) {
-		dev_err(card->dev, "unable to grap DMA1 %d\n", dma1);
+		snd_printk(KERN_ERR PFX "unable to grap DMA1 %d\n", dma1);
 		return -EBUSY;
 	}
 	chip->dma1 = dma1;
 
 	if (dma2 != dma1 &&
 	    snd_devm_request_dma(card->dev, dma2, "ES18xx DMA 2")) {
-		dev_err(card->dev, "unable to grap DMA2 %d\n", dma2);
+		snd_printk(KERN_ERR PFX "unable to grap DMA2 %d\n", dma2);
 		return -EBUSY;
 	}
 	chip->dma2 = dma2;
@@ -1954,7 +1954,7 @@ MODULE_DEVICE_TABLE(pnp, snd_audiodrive_pnpbiosids);
 static int snd_audiodrive_pnp_init_main(int dev, struct pnp_dev *pdev)
 {
 	if (pnp_activate_dev(pdev) < 0) {
-		dev_err(&pdev->dev, "PnP configure failure (out of resources?)\n");
+		snd_printk(KERN_ERR PFX "PnP configure failure (out of resources?)\n");
 		return -EBUSY;
 	}
 	/* ok. hack using Vendor-Defined Card-Level registers */
@@ -1973,12 +1973,8 @@ static int snd_audiodrive_pnp_init_main(int dev, struct pnp_dev *pdev)
 	dma1[dev] = pnp_dma(pdev, 0);
 	dma2[dev] = pnp_dma(pdev, 1);
 	irq[dev] = pnp_irq(pdev, 0);
-	dev_dbg(&pdev->dev,
-		"PnP ES18xx: port=0x%lx, fm port=0x%lx, mpu port=0x%lx\n",
-		port[dev], fm_port[dev], mpu_port[dev]);
-	dev_dbg(&pdev->dev,
-		"PnP ES18xx: dma1=%i, dma2=%i, irq=%i\n",
-		dma1[dev], dma2[dev], irq[dev]);
+	snd_printdd("PnP ES18xx: port=0x%lx, fm port=0x%lx, mpu port=0x%lx\n", port[dev], fm_port[dev], mpu_port[dev]);
+	snd_printdd("PnP ES18xx: dma1=%i, dma2=%i, irq=%i\n", dma1[dev], dma2[dev], irq[dev]);
 	return 0;
 }
 
@@ -2026,12 +2022,11 @@ static int snd_audiodrive_pnpc(int dev, struct snd_es18xx *chip,
 
 	/* Control port initialization */
 	if (pnp_activate_dev(chip->devc) < 0) {
-		dev_err(chip->card->dev,
-			"PnP control configure failure (out of resources?)\n");
+		snd_printk(KERN_ERR PFX "PnP control configure failure (out of resources?)\n");
 		return -EAGAIN;
 	}
-	dev_dbg(chip->card->dev, "pnp: port=0x%llx\n",
-		(unsigned long long)pnp_port_start(chip->devc, 0));
+	snd_printdd("pnp: port=0x%llx\n",
+			(unsigned long long)pnp_port_start(chip->devc, 0));
 	if (snd_audiodrive_pnp_init_main(dev, chip->dev) < 0)
 		return -EBUSY;
 
@@ -2089,9 +2084,9 @@ static int snd_audiodrive_probe(struct snd_card *card, int dev)
 	if (fm_port[dev] > 0 && fm_port[dev] != SNDRV_AUTO_PORT) {
 		if (snd_opl3_create(card, fm_port[dev], fm_port[dev] + 2,
 				    OPL3_HW_OPL3, 0, &opl3) < 0) {
-			dev_warn(card->dev,
-				 "opl3 not detected at 0x%lx\n",
-				 fm_port[dev]);
+			snd_printk(KERN_WARNING PFX
+				   "opl3 not detected at 0x%lx\n",
+				   fm_port[dev]);
 		} else {
 			err = snd_opl3_hwdep_new(opl3, 0, 1, NULL);
 			if (err < 0)
@@ -2139,21 +2134,21 @@ static int snd_es18xx_isa_probe(struct device *pdev, unsigned int dev)
 	if (irq[dev] == SNDRV_AUTO_IRQ) {
 		irq[dev] = snd_legacy_find_free_irq(possible_irqs);
 		if (irq[dev] < 0) {
-			dev_err(pdev, "unable to find a free IRQ\n");
+			snd_printk(KERN_ERR PFX "unable to find a free IRQ\n");
 			return -EBUSY;
 		}
 	}
 	if (dma1[dev] == SNDRV_AUTO_DMA) {
 		dma1[dev] = snd_legacy_find_free_dma(possible_dmas);
 		if (dma1[dev] < 0) {
-			dev_err(pdev, "unable to find a free DMA1\n");
+			snd_printk(KERN_ERR PFX "unable to find a free DMA1\n");
 			return -EBUSY;
 		}
 	}
 	if (dma2[dev] == SNDRV_AUTO_DMA) {
 		dma2[dev] = snd_legacy_find_free_dma(possible_dmas);
 		if (dma2[dev] < 0) {
-			dev_err(pdev, "unable to find a free DMA2\n");
+			snd_printk(KERN_ERR PFX "unable to find a free DMA2\n");
 			return -EBUSY;
 		}
 	}

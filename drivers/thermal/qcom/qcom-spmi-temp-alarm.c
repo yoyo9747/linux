@@ -261,13 +261,17 @@ skip:
 	return qpnp_tm_write(chip, QPNP_TM_REG_SHUTDOWN_CTRL1, reg);
 }
 
-static int qpnp_tm_set_trip_temp(struct thermal_zone_device *tz,
-				 const struct thermal_trip *trip, int temp)
+static int qpnp_tm_set_trip_temp(struct thermal_zone_device *tz, int trip_id, int temp)
 {
 	struct qpnp_tm_chip *chip = thermal_zone_device_priv(tz);
+	struct thermal_trip trip;
 	int ret;
 
-	if (trip->type != THERMAL_TRIP_CRITICAL)
+	ret = __thermal_zone_get_trip(chip->tz_dev, trip_id, &trip);
+	if (ret)
+		return ret;
+
+	if (trip.type != THERMAL_TRIP_CRITICAL)
 		return 0;
 
 	mutex_lock(&chip->lock);
@@ -289,6 +293,24 @@ static irqreturn_t qpnp_tm_isr(int irq, void *data)
 	thermal_zone_device_update(chip->tz_dev, THERMAL_EVENT_UNSPECIFIED);
 
 	return IRQ_HANDLED;
+}
+
+static int qpnp_tm_get_critical_trip_temp(struct qpnp_tm_chip *chip)
+{
+	struct thermal_trip trip;
+	int i, ret;
+
+	for (i = 0; i < thermal_zone_get_num_trips(chip->tz_dev); i++) {
+
+		ret = thermal_zone_get_trip(chip->tz_dev, i, &trip);
+		if (ret)
+			continue;
+
+		if (trip.type == THERMAL_TRIP_CRITICAL)
+			return trip.temperature;
+	}
+
+	return THERMAL_TEMP_INVALID;
 }
 
 /*
@@ -325,9 +347,7 @@ static int qpnp_tm_init(struct qpnp_tm_chip *chip)
 
 	mutex_unlock(&chip->lock);
 
-	ret = thermal_zone_get_crit_temp(chip->tz_dev, &crit_temp);
-	if (ret)
-		crit_temp = THERMAL_TEMP_INVALID;
+	crit_temp = qpnp_tm_get_critical_trip_temp(chip);
 
 	mutex_lock(&chip->lock);
 

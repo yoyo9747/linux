@@ -32,7 +32,6 @@ struct {
 } hmap_malloc SEC(".maps");
 
 struct elem {
-	int ok_offset;
 	struct bpf_wq w;
 };
 
@@ -54,7 +53,7 @@ __u32 ok;
 __u32 ok_sleepable;
 
 static int test_elem_callback(void *map, int *key,
-		int (callback_fn)(void *map, int *key, void *value))
+		int (callback_fn)(void *map, int *key, struct bpf_wq *wq))
 {
 	struct elem init = {}, *val;
 	struct bpf_wq *wq;
@@ -71,8 +70,6 @@ static int test_elem_callback(void *map, int *key,
 	if (!val)
 		return -2;
 
-	val->ok_offset = *key;
-
 	wq = &val->w;
 	if (bpf_wq_init(wq, map, 0) != 0)
 		return -3;
@@ -87,7 +84,7 @@ static int test_elem_callback(void *map, int *key,
 }
 
 static int test_hmap_elem_callback(void *map, int *key,
-		int (callback_fn)(void *map, int *key, void *value))
+		int (callback_fn)(void *map, int *key, struct bpf_wq *wq))
 {
 	struct hmap_elem init = {}, *val;
 	struct bpf_wq *wq;
@@ -117,7 +114,7 @@ static int test_hmap_elem_callback(void *map, int *key,
 }
 
 /* callback for non sleepable workqueue */
-static int wq_callback(void *map, int *key, void *value)
+static int wq_callback(void *map, int *key, struct bpf_wq *work)
 {
 	bpf_kfunc_common_test();
 	ok |= (1 << *key);
@@ -125,16 +122,10 @@ static int wq_callback(void *map, int *key, void *value)
 }
 
 /* callback for sleepable workqueue */
-static int wq_cb_sleepable(void *map, int *key, void *value)
+static int wq_cb_sleepable(void *map, int *key, struct bpf_wq *work)
 {
-	struct elem *data = (struct elem *)value;
-	int offset = data->ok_offset;
-
-	if (*key != offset)
-		return 0;
-
 	bpf_kfunc_call_test_sleepable();
-	ok_sleepable |= (1 << offset);
+	ok_sleepable |= (1 << *key);
 	return 0;
 }
 

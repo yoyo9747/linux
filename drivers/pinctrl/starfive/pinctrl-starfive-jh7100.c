@@ -480,6 +480,7 @@ static int starfive_dt_node_to_map(struct pinctrl_dev *pctldev,
 {
 	struct starfive_pinctrl *sfp = pinctrl_dev_get_drvdata(pctldev);
 	struct device *dev = sfp->gc.parent;
+	struct device_node *child;
 	struct pinctrl_map *map;
 	const char **pgnames;
 	const char *grpname;
@@ -491,18 +492,20 @@ static int starfive_dt_node_to_map(struct pinctrl_dev *pctldev,
 
 	nmaps = 0;
 	ngroups = 0;
-	for_each_available_child_of_node_scoped(np, child) {
+	for_each_available_child_of_node(np, child) {
 		int npinmux = of_property_count_u32_elems(child, "pinmux");
 		int npins   = of_property_count_u32_elems(child, "pins");
 
 		if (npinmux > 0 && npins > 0) {
 			dev_err(dev, "invalid pinctrl group %pOFn.%pOFn: both pinmux and pins set\n",
 				np, child);
+			of_node_put(child);
 			return -EINVAL;
 		}
 		if (npinmux == 0 && npins == 0) {
 			dev_err(dev, "invalid pinctrl group %pOFn.%pOFn: neither pinmux nor pins set\n",
 				np, child);
+			of_node_put(child);
 			return -EINVAL;
 		}
 
@@ -524,14 +527,14 @@ static int starfive_dt_node_to_map(struct pinctrl_dev *pctldev,
 	nmaps = 0;
 	ngroups = 0;
 	mutex_lock(&sfp->mutex);
-	for_each_available_child_of_node_scoped(np, child) {
+	for_each_available_child_of_node(np, child) {
 		int npins;
 		int i;
 
 		grpname = devm_kasprintf(dev, GFP_KERNEL, "%pOFn.%pOFn", np, child);
 		if (!grpname) {
 			ret = -ENOMEM;
-			goto free_map;
+			goto put_child;
 		}
 
 		pgnames[ngroups++] = grpname;
@@ -540,18 +543,18 @@ static int starfive_dt_node_to_map(struct pinctrl_dev *pctldev,
 			pins = devm_kcalloc(dev, npins, sizeof(*pins), GFP_KERNEL);
 			if (!pins) {
 				ret = -ENOMEM;
-				goto free_map;
+				goto put_child;
 			}
 
 			pinmux = devm_kcalloc(dev, npins, sizeof(*pinmux), GFP_KERNEL);
 			if (!pinmux) {
 				ret = -ENOMEM;
-				goto free_map;
+				goto put_child;
 			}
 
 			ret = of_property_read_u32_array(child, "pinmux", pinmux, npins);
 			if (ret)
-				goto free_map;
+				goto put_child;
 
 			for (i = 0; i < npins; i++) {
 				unsigned int gpio = starfive_pinmux_to_gpio(pinmux[i]);
@@ -567,7 +570,7 @@ static int starfive_dt_node_to_map(struct pinctrl_dev *pctldev,
 			pins = devm_kcalloc(dev, npins, sizeof(*pins), GFP_KERNEL);
 			if (!pins) {
 				ret = -ENOMEM;
-				goto free_map;
+				goto put_child;
 			}
 
 			pinmux = NULL;
@@ -577,18 +580,18 @@ static int starfive_dt_node_to_map(struct pinctrl_dev *pctldev,
 
 				ret = of_property_read_u32_index(child, "pins", i, &v);
 				if (ret)
-					goto free_map;
+					goto put_child;
 				pins[i] = v;
 			}
 		} else {
 			ret = -EINVAL;
-			goto free_map;
+			goto put_child;
 		}
 
 		ret = pinctrl_generic_add_group(pctldev, grpname, pins, npins, pinmux);
 		if (ret < 0) {
 			dev_err(dev, "error adding group %s: %d\n", grpname, ret);
-			goto free_map;
+			goto put_child;
 		}
 
 		ret = pinconf_generic_parse_dt_config(child, pctldev,
@@ -597,7 +600,7 @@ static int starfive_dt_node_to_map(struct pinctrl_dev *pctldev,
 		if (ret) {
 			dev_err(dev, "error parsing pin config of group %s: %d\n",
 				grpname, ret);
-			goto free_map;
+			goto put_child;
 		}
 
 		/* don't create a map if there are no pinconf settings */
@@ -620,6 +623,8 @@ static int starfive_dt_node_to_map(struct pinctrl_dev *pctldev,
 	mutex_unlock(&sfp->mutex);
 	return 0;
 
+put_child:
+	of_node_put(child);
 free_map:
 	pinctrl_utils_free_map(pctldev, map, nmaps);
 	mutex_unlock(&sfp->mutex);

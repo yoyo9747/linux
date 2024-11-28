@@ -161,7 +161,7 @@
  * 2) The deepest stack frame should be zero (the %rbp).
  *
  */
-void __attribute__((weak, noreturn)) __nolibc_entrypoint __no_stack_protector _start(void)
+void __attribute__((weak, noreturn, optimize("Os", "omit-frame-pointer"))) __no_stack_protector _start(void)
 {
 	__asm__ volatile (
 		"xor  %ebp, %ebp\n"       /* zero the stack frame                            */
@@ -170,7 +170,7 @@ void __attribute__((weak, noreturn)) __nolibc_entrypoint __no_stack_protector _s
 		"call _start_c\n"         /* transfer to c runtime                           */
 		"hlt\n"                   /* ensure it does not return                       */
 	);
-	__nolibc_entrypoint_epilogue();
+	__builtin_unreachable();
 }
 
 #define NOLIBC_ARCH_HAS_MEMMOVE
@@ -193,10 +193,10 @@ __asm__ (
 	"movq %rdi, %rdx\n\t"
 	"subq %rsi, %rdx\n\t"
 	"cmpq %rcx, %rdx\n\t"
-	"jb   1f\n\t"
+	"jb   .Lbackward_copy\n\t"
 	"rep movsb\n\t"
 	"retq\n"
-"1:" /* backward copy */
+".Lbackward_copy:"
 	"leaq -1(%rdi, %rcx, 1), %rdi\n\t"
 	"leaq -1(%rsi, %rcx, 1), %rsi\n\t"
 	"std\n\t"

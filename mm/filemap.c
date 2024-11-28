@@ -46,7 +46,6 @@
 #include <linux/pipe_fs_i.h>
 #include <linux/splice.h>
 #include <linux/rcupdate_wait.h>
-#include <linux/sched/mm.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 #include "internal.h"
@@ -113,8 +112,8 @@
  *    ->swap_lock		(try_to_unmap_one)
  *    ->private_lock		(try_to_unmap_one)
  *    ->i_pages lock		(try_to_unmap_one)
- *    ->lruvec->lru_lock	(follow_page_mask->mark_page_accessed)
- *    ->lruvec->lru_lock	(check_pte_range->folio_isolate_lru)
+ *    ->lruvec->lru_lock	(follow_page->mark_page_accessed)
+ *    ->lruvec->lru_lock	(check_pte_range->isolate_lru_page)
  *    ->private_lock		(folio_remove_rmap_pte->set_page_dirty)
  *    ->i_pages lock		(folio_remove_rmap_pte->set_page_dirty)
  *    bdi.wb->list_lock		(folio_remove_rmap_pte->set_page_dirty)
@@ -178,7 +177,7 @@ static void filemap_unaccount_folio(struct address_space *mapping,
 				 * and we'd rather not leak it: if we're wrong,
 				 * another bad page check should catch it later.
 				 */
-				atomic_set(&folio->_mapcount, -1);
+				page_mapcount_reset(&folio->page);
 				folio_ref_sub(folio, mapcount);
 			}
 		}
@@ -531,6 +530,7 @@ static void __filemap_fdatawait_range(struct address_space *mapping,
 			struct folio *folio = fbatch.folios[i];
 
 			folio_wait_writeback(folio);
+			folio_clear_error(folio);
 		}
 		folio_batch_release(&fbatch);
 		cond_resched();
@@ -859,8 +859,6 @@ noinline int __filemap_add_folio(struct address_space *mapping,
 
 	VM_BUG_ON_FOLIO(!folio_test_locked(folio), folio);
 	VM_BUG_ON_FOLIO(folio_test_swapbacked(folio), folio);
-	VM_BUG_ON_FOLIO(folio_order(folio) < mapping_min_folio_order(mapping),
-			folio);
 	mapping_set_update(&xas, mapping);
 
 	VM_BUG_ON_FOLIO(index & (folio_nr_pages(folio) - 1), folio);
@@ -1754,12 +1752,12 @@ pgoff_t page_cache_next_miss(struct address_space *mapping,
 	while (max_scan--) {
 		void *entry = xas_next(&xas);
 		if (!entry || xa_is_value(entry))
-			return xas.xa_index;
+			break;
 		if (xas.xa_index == 0)
-			return 0;
+			break;
 	}
 
-	return index + max_scan;
+	return xas.xa_index;
 }
 EXPORT_SYMBOL(page_cache_next_miss);
 
@@ -1921,10 +1919,8 @@ repeat:
 		folio_wait_stable(folio);
 no_page:
 	if (!folio && (fgp_flags & FGP_CREAT)) {
-		unsigned int min_order = mapping_min_folio_order(mapping);
-		unsigned int order = max(min_order, FGF_GET_ORDER(fgp_flags));
+		unsigned order = FGF_GET_ORDER(fgp_flags);
 		int err;
-		index = mapping_align_index(mapping, index);
 
 		if ((fgp_flags & FGP_WRITE) && mapping_can_writeback(mapping))
 			gfp |= __GFP_WRITE;
@@ -1937,8 +1933,10 @@ no_page:
 		if (WARN_ON_ONCE(!(fgp_flags & (FGP_LOCK | FGP_FOR_MMAP))))
 			fgp_flags |= FGP_LOCK;
 
-		if (order > mapping_max_folio_order(mapping))
-			order = mapping_max_folio_order(mapping);
+		if (!mapping_large_folio_support(mapping))
+			order = 0;
+		if (order > MAX_PAGECACHE_ORDER)
+			order = MAX_PAGECACHE_ORDER;
 		/* If we're not aligned, allocate a smaller folio */
 		if (index & ((1UL << order) - 1))
 			order = __ffs(index);
@@ -1947,7 +1945,7 @@ no_page:
 			gfp_t alloc_gfp = gfp;
 
 			err = -ENOMEM;
-			if (order > min_order)
+			if (order > 0)
 				alloc_gfp |= __GFP_NORETRY | __GFP_NOWARN;
 			folio = filemap_alloc_folio(alloc_gfp, order);
 			if (!folio)
@@ -1962,7 +1960,7 @@ no_page:
 				break;
 			folio_put(folio);
 			folio = NULL;
-		} while (order-- > min_order);
+		} while (order-- > 0);
 
 		if (err == -EEXIST)
 			goto repeat;
@@ -2049,20 +2047,17 @@ unsigned find_get_entries(struct address_space *mapping, pgoff_t *start,
 		if (!folio_batch_add(fbatch, folio))
 			break;
 	}
+	rcu_read_unlock();
 
 	if (folio_batch_count(fbatch)) {
-		unsigned long nr;
+		unsigned long nr = 1;
 		int idx = folio_batch_count(fbatch) - 1;
 
 		folio = fbatch->folios[idx];
 		if (!xa_is_value(folio))
 			nr = folio_nr_pages(folio);
-		else
-			nr = 1 << xa_get_order(&mapping->i_pages, indices[idx]);
-		*start = round_down(indices[idx] + nr, nr);
+		*start = indices[idx] + nr;
 	}
-	rcu_read_unlock();
-
 	return folio_batch_count(fbatch);
 }
 
@@ -2094,17 +2089,10 @@ unsigned find_lock_entries(struct address_space *mapping, pgoff_t *start,
 
 	rcu_read_lock();
 	while ((folio = find_get_entry(&xas, end, XA_PRESENT))) {
-		unsigned long base;
-		unsigned long nr;
-
 		if (!xa_is_value(folio)) {
-			nr = folio_nr_pages(folio);
-			base = folio->index;
-			/* Omit large folio which begins before the start */
-			if (base < *start)
+			if (folio->index < *start)
 				goto put;
-			/* Omit large folio which extends beyond the end */
-			if (base + nr - 1 > end)
+			if (folio_next_index(folio) - 1 > end)
 				goto put;
 			if (!folio_trylock(folio))
 				goto put;
@@ -2113,19 +2101,7 @@ unsigned find_lock_entries(struct address_space *mapping, pgoff_t *start,
 				goto unlock;
 			VM_BUG_ON_FOLIO(!folio_contains(folio, xas.xa_index),
 					folio);
-		} else {
-			nr = 1 << xas_get_order(&xas);
-			base = xas.xa_index & ~(nr - 1);
-			/* Omit order>0 value which begins before the start */
-			if (base < *start)
-				continue;
-			/* Omit order>0 value which extends beyond the end */
-			if (base + nr - 1 > end)
-				break;
 		}
-
-		/* Update start now so that last update is correct on return */
-		*start = base + nr;
 		indices[fbatch->nr] = xas.xa_index;
 		if (!folio_batch_add(fbatch, folio))
 			break;
@@ -2137,6 +2113,15 @@ put:
 	}
 	rcu_read_unlock();
 
+	if (folio_batch_count(fbatch)) {
+		unsigned long nr = 1;
+		int idx = folio_batch_count(fbatch) - 1;
+
+		folio = fbatch->folios[idx];
+		if (!xa_is_value(folio))
+			nr = folio_nr_pages(folio);
+		*start = indices[idx] + nr;
+	}
 	return folio_batch_count(fbatch);
 }
 
@@ -2194,10 +2179,6 @@ unsigned filemap_get_folios_contig(struct address_space *mapping,
 		 * No current caller is looking for DAX entries.
 		 */
 		if (xa_is_value(folio))
-			goto update_start;
-
-		/* If we landed in the middle of a THP, continue at its end. */
-		if (xa_is_sibling(folio))
 			goto update_start;
 
 		if (!folio_try_get(folio))
@@ -2361,6 +2342,13 @@ static int filemap_read_folio(struct file *file, filler_t filler,
 	unsigned long pflags;
 	int error;
 
+	/*
+	 * A previous I/O error may have been due to temporary failures,
+	 * eg. multipath errors.  PG_error will be set again if read_folio
+	 * fails.
+	 */
+	folio_clear_error(folio);
+
 	/* Start the actual read. The read will unlock the page. */
 	if (unlikely(workingset))
 		psi_memstall_enter(&pflags);
@@ -2461,15 +2449,13 @@ unlock_mapping:
 }
 
 static int filemap_create_folio(struct file *file,
-		struct address_space *mapping, loff_t pos,
+		struct address_space *mapping, pgoff_t index,
 		struct folio_batch *fbatch)
 {
 	struct folio *folio;
 	int error;
-	unsigned int min_order = mapping_min_folio_order(mapping);
-	pgoff_t index;
 
-	folio = filemap_alloc_folio(mapping_gfp_mask(mapping), min_order);
+	folio = filemap_alloc_folio(mapping_gfp_mask(mapping), 0);
 	if (!folio)
 		return -ENOMEM;
 
@@ -2487,7 +2473,6 @@ static int filemap_create_folio(struct file *file,
 	 * well to keep locking rules simple.
 	 */
 	filemap_invalidate_lock_shared(mapping);
-	index = (pos >> (PAGE_SHIFT + min_order)) << min_order;
 	error = filemap_add_folio(mapping, folio, index,
 			mapping_gfp_constraint(mapping, GFP_KERNEL));
 	if (error == -EEXIST)
@@ -2529,7 +2514,6 @@ static int filemap_get_pages(struct kiocb *iocb, size_t count,
 	pgoff_t index = iocb->ki_pos >> PAGE_SHIFT;
 	pgoff_t last_index;
 	struct folio *folio;
-	unsigned int flags;
 	int err = 0;
 
 	/* "last_index" is the index of the page beyond the end of the read */
@@ -2542,18 +2526,15 @@ retry:
 	if (!folio_batch_count(fbatch)) {
 		if (iocb->ki_flags & IOCB_NOIO)
 			return -EAGAIN;
-		if (iocb->ki_flags & IOCB_NOWAIT)
-			flags = memalloc_noio_save();
 		page_cache_sync_readahead(mapping, ra, filp, index,
 				last_index - index);
-		if (iocb->ki_flags & IOCB_NOWAIT)
-			memalloc_noio_restore(flags);
 		filemap_get_read_batch(mapping, index, last_index - 1, fbatch);
 	}
 	if (!folio_batch_count(fbatch)) {
 		if (iocb->ki_flags & (IOCB_NOWAIT | IOCB_WAITQ))
 			return -EAGAIN;
-		err = filemap_create_folio(filp, mapping, iocb->ki_pos, fbatch);
+		err = filemap_create_folio(filp, mapping,
+				iocb->ki_pos >> PAGE_SHIFT, fbatch);
 		if (err == AOP_TRUNCATED_PAGE)
 			goto retry;
 		return err;
@@ -2575,7 +2556,6 @@ retry:
 			goto err;
 	}
 
-	trace_mm_filemap_get_pages(mapping, index, last_index - 1);
 	return 0;
 err:
 	if (err < 0)
@@ -2732,12 +2712,14 @@ int kiocb_write_and_wait(struct kiocb *iocb, size_t count)
 }
 EXPORT_SYMBOL_GPL(kiocb_write_and_wait);
 
-int filemap_invalidate_pages(struct address_space *mapping,
-			     loff_t pos, loff_t end, bool nowait)
+int kiocb_invalidate_pages(struct kiocb *iocb, size_t count)
 {
+	struct address_space *mapping = iocb->ki_filp->f_mapping;
+	loff_t pos = iocb->ki_pos;
+	loff_t end = pos + count - 1;
 	int ret;
 
-	if (nowait) {
+	if (iocb->ki_flags & IOCB_NOWAIT) {
 		/* we could block if there are any pages in the range */
 		if (filemap_range_has_page(mapping, pos, end))
 			return -EAGAIN;
@@ -2755,15 +2737,6 @@ int filemap_invalidate_pages(struct address_space *mapping,
 	 */
 	return invalidate_inode_pages2_range(mapping, pos >> PAGE_SHIFT,
 					     end >> PAGE_SHIFT);
-}
-
-int kiocb_invalidate_pages(struct kiocb *iocb, size_t count)
-{
-	struct address_space *mapping = iocb->ki_filp->f_mapping;
-
-	return filemap_invalidate_pages(mapping, iocb->ki_pos,
-					iocb->ki_pos + count - 1,
-					iocb->ki_flags & IOCB_NOWAIT);
 }
 EXPORT_SYMBOL_GPL(kiocb_invalidate_pages);
 
@@ -3016,7 +2989,7 @@ unlock:
 static inline size_t seek_folio_size(struct xa_state *xas, struct folio *folio)
 {
 	if (xa_is_value(folio))
-		return PAGE_SIZE << xas_get_order(xas);
+		return PAGE_SIZE << xa_get_order(xas->xa, xas->xa_index);
 	return folio_size(folio);
 }
 
@@ -3313,8 +3286,6 @@ vm_fault_t filemap_fault(struct vm_fault *vmf)
 	max_idx = DIV_ROUND_UP(i_size_read(inode), PAGE_SIZE);
 	if (unlikely(index >= max_idx))
 		return VM_FAULT_SIGBUS;
-
-	trace_mm_filemap_fault(mapping, index);
 
 	/*
 	 * Do we have something in the page cache already?
@@ -3633,7 +3604,7 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 	struct vm_area_struct *vma = vmf->vma;
 	struct file *file = vma->vm_file;
 	struct address_space *mapping = file->f_mapping;
-	pgoff_t file_end, last_pgoff = start_pgoff;
+	pgoff_t last_pgoff = start_pgoff;
 	unsigned long addr;
 	XA_STATE(xas, &mapping->i_pages, start_pgoff);
 	struct folio *folio;
@@ -3659,10 +3630,6 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 		goto out;
 	}
 
-	file_end = DIV_ROUND_UP(i_size_read(mapping->host), PAGE_SIZE) - 1;
-	if (end_pgoff > file_end)
-		end_pgoff = file_end;
-
 	folio_type = mm_counter_file(folio);
 	do {
 		unsigned long end;
@@ -3686,7 +3653,6 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 	} while ((folio = next_uptodate_folio(&xas, mapping, end_pgoff)) != NULL);
 	add_mm_counter(vma->vm_mm, folio_type, rss);
 	pte_unmap_unlock(vmf->pte, vmf->ptl);
-	trace_mm_filemap_map_pages(mapping, start_pgoff, end_pgoff);
 out:
 	rcu_read_unlock();
 
@@ -3784,11 +3750,9 @@ static struct folio *do_read_cache_folio(struct address_space *mapping,
 repeat:
 	folio = filemap_get_folio(mapping, index);
 	if (IS_ERR(folio)) {
-		folio = filemap_alloc_folio(gfp,
-					    mapping_min_folio_order(mapping));
+		folio = filemap_alloc_folio(gfp, 0);
 		if (!folio)
 			return ERR_PTR(-ENOMEM);
-		index = mapping_align_index(mapping, index);
 		err = filemap_add_folio(mapping, folio, index, gfp);
 		if (unlikely(err)) {
 			folio_put(folio);
@@ -4018,23 +3982,21 @@ ssize_t generic_perform_write(struct kiocb *iocb, struct iov_iter *i)
 	loff_t pos = iocb->ki_pos;
 	struct address_space *mapping = file->f_mapping;
 	const struct address_space_operations *a_ops = mapping->a_ops;
-	size_t chunk = mapping_max_folio_size(mapping);
 	long status = 0;
 	ssize_t written = 0;
 
 	do {
-		struct folio *folio;
-		size_t offset;		/* Offset into folio */
-		size_t bytes;		/* Bytes to write to folio */
+		struct page *page;
+		unsigned long offset;	/* Offset into pagecache page */
+		unsigned long bytes;	/* Bytes to write to page */
 		size_t copied;		/* Bytes copied from user */
 		void *fsdata = NULL;
 
-		bytes = iov_iter_count(i);
-retry:
-		offset = pos & (chunk - 1);
-		bytes = min(chunk - offset, bytes);
-		balance_dirty_pages_ratelimited(mapping);
+		offset = (pos & (PAGE_SIZE - 1));
+		bytes = min_t(unsigned long, PAGE_SIZE - offset,
+						iov_iter_count(i));
 
+again:
 		/*
 		 * Bring in the user page that we will copy from _first_.
 		 * Otherwise there's a nasty deadlock on copying from the
@@ -4052,22 +4014,18 @@ retry:
 		}
 
 		status = a_ops->write_begin(file, mapping, pos, bytes,
-						&folio, &fsdata);
+						&page, &fsdata);
 		if (unlikely(status < 0))
 			break;
 
-		offset = offset_in_folio(folio, pos);
-		if (bytes > folio_size(folio) - offset)
-			bytes = folio_size(folio) - offset;
-
 		if (mapping_writably_mapped(mapping))
-			flush_dcache_folio(folio);
+			flush_dcache_page(page);
 
-		copied = copy_folio_from_iter_atomic(folio, offset, bytes, i);
-		flush_dcache_folio(folio);
+		copied = copy_page_from_iter_atomic(page, offset, bytes, i);
+		flush_dcache_page(page);
 
 		status = a_ops->write_end(file, mapping, pos, bytes, copied,
-						folio, fsdata);
+						page, fsdata);
 		if (unlikely(status != copied)) {
 			iov_iter_revert(i, copied - max(status, 0L));
 			if (unlikely(status < 0))
@@ -4082,16 +4040,14 @@ retry:
 			 * halfway through, might be a race with munmap,
 			 * might be severe memory pressure.
 			 */
-			if (chunk > PAGE_SIZE)
-				chunk /= 2;
-			if (copied) {
+			if (copied)
 				bytes = copied;
-				goto retry;
-			}
-		} else {
-			pos += status;
-			written += status;
+			goto again;
 		}
+		pos += status;
+		written += status;
+
+		balance_dirty_pages_ratelimited(mapping);
 	} while (iov_iter_count(i));
 
 	if (!written)
@@ -4265,7 +4221,7 @@ int filemap_invalidate_inode(struct inode *inode, bool flush,
 	}
 
 	/* Wait for writeback to complete on all folios and discard. */
-	invalidate_inode_pages2_range(mapping, start / PAGE_SIZE, end / PAGE_SIZE);
+	truncate_inode_pages_range(mapping, start, end);
 
 unlock:
 	filemap_invalidate_unlock(mapping);
@@ -4316,7 +4272,7 @@ static void filemap_cachestat(struct address_space *mapping,
 		if (xas_retry(&xas, folio))
 			continue;
 
-		order = xas_get_order(&xas);
+		order = xa_get_order(xas.xa, xas.xa_index);
 		nr_pages = 1 << order;
 		folio_first_index = round_down(xas.xa_index, 1 << order);
 		folio_last_index = folio_first_index + nr_pages - 1;
@@ -4427,7 +4383,7 @@ SYSCALL_DEFINE4(cachestat, unsigned int, fd,
 	struct cachestat cs;
 	pgoff_t first_index, last_index;
 
-	if (!fd_file(f))
+	if (!f.file)
 		return -EBADF;
 
 	if (copy_from_user(&csr, cstat_range,
@@ -4437,7 +4393,7 @@ SYSCALL_DEFINE4(cachestat, unsigned int, fd,
 	}
 
 	/* hugetlbfs is not supported */
-	if (is_file_hugepages(fd_file(f))) {
+	if (is_file_hugepages(f.file)) {
 		fdput(f);
 		return -EOPNOTSUPP;
 	}
@@ -4451,7 +4407,7 @@ SYSCALL_DEFINE4(cachestat, unsigned int, fd,
 	last_index =
 		csr.len == 0 ? ULONG_MAX : (csr.off + csr.len - 1) >> PAGE_SHIFT;
 	memset(&cs, 0, sizeof(struct cachestat));
-	mapping = fd_file(f)->f_mapping;
+	mapping = f.file->f_mapping;
 	filemap_cachestat(mapping, first_index, last_index, &cs);
 	fdput(f);
 

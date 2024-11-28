@@ -292,8 +292,6 @@ struct intel_gt {
 	struct gt_defaults defaults;
 	struct kobject *sysfs_defaults;
 
-	struct work_struct wedge;
-
 	struct i915_perf_gt perf;
 
 	/** link: &ggtt.gt_list */

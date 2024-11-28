@@ -412,6 +412,7 @@ static const struct file_operations snd_mixer_oss_f_ops =
 	.owner =	THIS_MODULE,
 	.open =		snd_mixer_oss_open,
 	.release =	snd_mixer_oss_release,
+	.llseek =	no_llseek,
 	.unlocked_ioctl =	snd_mixer_oss_ioctl,
 	.compat_ioctl =	snd_mixer_oss_ioctl_compat,
 };
@@ -509,7 +510,7 @@ static struct snd_kcontrol *snd_mixer_oss_test_id(struct snd_mixer_oss *mixer, c
 	id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
 	strscpy(id.name, name, sizeof(id.name));
 	id.index = index;
-	return snd_ctl_find_id(card, &id);
+	return snd_ctl_find_id_locked(card, &id);
 }
 
 static void snd_mixer_oss_get_volume1_vol(struct snd_mixer_oss_file *fmixer,
@@ -525,7 +526,7 @@ static void snd_mixer_oss_get_volume1_vol(struct snd_mixer_oss_file *fmixer,
 	if (numid == ID_UNKNOWN)
 		return;
 	guard(rwsem_read)(&card->controls_rwsem);
-	kctl = snd_ctl_find_numid(card, numid);
+	kctl = snd_ctl_find_numid_locked(card, numid);
 	if (!kctl)
 		return;
 	uinfo = kzalloc(sizeof(*uinfo), GFP_KERNEL);
@@ -558,7 +559,7 @@ static void snd_mixer_oss_get_volume1_sw(struct snd_mixer_oss_file *fmixer,
 	if (numid == ID_UNKNOWN)
 		return;
 	guard(rwsem_read)(&card->controls_rwsem);
-	kctl = snd_ctl_find_numid(card, numid);
+	kctl = snd_ctl_find_numid_locked(card, numid);
 	if (!kctl)
 		return;
 	uinfo = kzalloc(sizeof(*uinfo), GFP_KERNEL);
@@ -618,7 +619,7 @@ static void snd_mixer_oss_put_volume1_vol(struct snd_mixer_oss_file *fmixer,
 	if (numid == ID_UNKNOWN)
 		return;
 	guard(rwsem_read)(&card->controls_rwsem);
-	kctl = snd_ctl_find_numid(card, numid);
+	kctl = snd_ctl_find_numid_locked(card, numid);
 	if (!kctl)
 		return;
 	uinfo = kzalloc(sizeof(*uinfo), GFP_KERNEL);
@@ -655,7 +656,7 @@ static void snd_mixer_oss_put_volume1_sw(struct snd_mixer_oss_file *fmixer,
 	if (numid == ID_UNKNOWN)
 		return;
 	guard(rwsem_read)(&card->controls_rwsem);
-	kctl = snd_ctl_find_numid(card, numid);
+	kctl = snd_ctl_find_numid_locked(card, numid);
 	if (!kctl)
 		return;
 	uinfo = kzalloc(sizeof(*uinfo), GFP_KERNEL);
@@ -900,8 +901,8 @@ static void snd_mixer_oss_slot_free(struct snd_mixer_oss_slot *chn)
 	struct slot *p = chn->private_data;
 	if (p) {
 		if (p->allocated && p->assigned) {
-			kfree(p->assigned->name);
-			kfree(p->assigned);
+			kfree_const(p->assigned->name);
+			kfree_const(p->assigned);
 		}
 		kfree(p);
 	}

@@ -281,7 +281,7 @@ static struct damos **str_to_schemes(const char *str, ssize_t len,
 
 		pos += parsed;
 		scheme = damon_new_scheme(&pattern, action, 0, &quota,
-				&wmarks, NUMA_NO_NODE);
+				&wmarks);
 		if (!scheme)
 			goto fail;
 
@@ -1145,4 +1145,4 @@ out:
 
 module_init(damon_dbgfs_init);
 
-#include "tests/dbgfs-kunit.h"
+#include "dbgfs-test.h"

@@ -53,11 +53,6 @@ int xchk_checkpoint_log(struct xfs_mount *mp);
 bool xchk_should_check_xref(struct xfs_scrub *sc, int *error,
 			   struct xfs_btree_cur **curpp);
 
-static inline int xchk_setup_nothing(struct xfs_scrub *sc)
-{
-	return -ENOENT;
-}
-
 /* Setup functions */
 int xchk_setup_agheader(struct xfs_scrub *sc);
 int xchk_setup_fs(struct xfs_scrub *sc);
@@ -77,8 +72,16 @@ int xchk_setup_dirtree(struct xfs_scrub *sc);
 int xchk_setup_rtbitmap(struct xfs_scrub *sc);
 int xchk_setup_rtsummary(struct xfs_scrub *sc);
 #else
-# define xchk_setup_rtbitmap		xchk_setup_nothing
-# define xchk_setup_rtsummary		xchk_setup_nothing
+static inline int
+xchk_setup_rtbitmap(struct xfs_scrub *sc)
+{
+	return -ENOENT;
+}
+static inline int
+xchk_setup_rtsummary(struct xfs_scrub *sc)
+{
+	return -ENOENT;
+}
 #endif
 #ifdef CONFIG_XFS_QUOTA
 int xchk_ino_dqattach(struct xfs_scrub *sc);
@@ -90,8 +93,16 @@ xchk_ino_dqattach(struct xfs_scrub *sc)
 {
 	return 0;
 }
-# define xchk_setup_quota		xchk_setup_nothing
-# define xchk_setup_quotacheck		xchk_setup_nothing
+static inline int
+xchk_setup_quota(struct xfs_scrub *sc)
+{
+	return -ENOENT;
+}
+static inline int
+xchk_setup_quotacheck(struct xfs_scrub *sc)
+{
+	return -ENOENT;
+}
 #endif
 int xchk_setup_fscounters(struct xfs_scrub *sc);
 int xchk_setup_nlinks(struct xfs_scrub *sc);

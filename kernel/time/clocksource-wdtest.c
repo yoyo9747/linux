@@ -22,7 +22,6 @@
 #include "tick-internal.h"
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Clocksource watchdog unit test");
 MODULE_AUTHOR("Paul E. McKenney <paulmck@kernel.org>");
 
 static int holdoff = IS_BUILTIN(CONFIG_TEST_CLOCKSOURCE_WATCHDOG) ? 10 : 0;

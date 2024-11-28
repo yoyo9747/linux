@@ -8,9 +8,7 @@
  */
 
 #include <soc/fsl/qe/qmc.h>
-#include <linux/bitfield.h>
 #include <linux/dma-mapping.h>
-#include <linux/firmware.h>
 #include <linux/hdlc.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -20,41 +18,31 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <soc/fsl/cpm.h>
-#include <soc/fsl/qe/ucc_slow.h>
-#include <soc/fsl/qe/qe.h>
 #include <sysdev/fsl_soc.h>
 #include "tsa.h"
 
-/* SCC general mode register low (32 bits) (GUMR_L in QE) */
+/* SCC general mode register high (32 bits) */
 #define SCC_GSMRL	0x00
-#define SCC_GSMRL_ENR		BIT(5)
-#define SCC_GSMRL_ENT		BIT(4)
-#define SCC_GSMRL_MODE_MASK	GENMASK(3, 0)
-#define SCC_CPM1_GSMRL_MODE_QMC	FIELD_PREP_CONST(SCC_GSMRL_MODE_MASK, 0x0A)
-#define SCC_QE_GSMRL_MODE_QMC	FIELD_PREP_CONST(SCC_GSMRL_MODE_MASK, 0x02)
+#define SCC_GSMRL_ENR		(1 << 5)
+#define SCC_GSMRL_ENT		(1 << 4)
+#define SCC_GSMRL_MODE_QMC	(0x0A << 0)
 
-/* SCC general mode register high (32 bits) (identical to GUMR_H in QE) */
+/* SCC general mode register low (32 bits) */
 #define SCC_GSMRH	0x04
-#define   SCC_GSMRH_CTSS	BIT(7)
-#define   SCC_GSMRH_CDS		BIT(8)
-#define   SCC_GSMRH_CTSP	BIT(9)
-#define   SCC_GSMRH_CDP		BIT(10)
-#define   SCC_GSMRH_TTX		BIT(11)
-#define   SCC_GSMRH_TRX		BIT(12)
+#define   SCC_GSMRH_CTSS	(1 << 7)
+#define   SCC_GSMRH_CDS		(1 << 8)
+#define   SCC_GSMRH_CTSP	(1 << 9)
+#define   SCC_GSMRH_CDP		(1 << 10)
 
-/* SCC event register (16 bits) (identical to UCCE in QE) */
+/* SCC event register (16 bits) */
 #define SCC_SCCE	0x10
-#define   SCC_SCCE_IQOV		BIT(3)
-#define   SCC_SCCE_GINT		BIT(2)
-#define   SCC_SCCE_GUN		BIT(1)
-#define   SCC_SCCE_GOV		BIT(0)
+#define   SCC_SCCE_IQOV		(1 << 3)
+#define   SCC_SCCE_GINT		(1 << 2)
+#define   SCC_SCCE_GUN		(1 << 1)
+#define   SCC_SCCE_GOV		(1 << 0)
 
 /* SCC mask register (16 bits) */
 #define SCC_SCCM	0x14
-
-/* UCC Extended Mode Register (8 bits, QE only) */
-#define SCC_QE_UCC_GUEMR	0x90
-
 /* Multichannel base pointer (32 bits) */
 #define QMC_GBL_MCBASE		0x00
 /* Multichannel controller state (16 bits) */
@@ -85,42 +73,27 @@
 #define QMC_GBL_TSATTX		0x60
 /* CRC constant (16 bits) */
 #define QMC_GBL_C_MASK16	0xA0
-/* Rx framer base pointer (16 bits, QE only) */
-#define QMC_QE_GBL_RX_FRM_BASE	0xAC
-/* Tx framer base pointer (16 bits, QE only) */
-#define QMC_QE_GBL_TX_FRM_BASE	0xAE
-/* A reserved area (0xB0 -> 0xC3) that must be initialized to 0 (QE only) */
-#define QMC_QE_GBL_RSV_B0_START	0xB0
-#define QMC_QE_GBL_RSV_B0_SIZE	0x14
-/* QMC Global Channel specific base (32 bits, QE only) */
-#define QMC_QE_GBL_GCSBASE	0xC4
 
 /* TSA entry (16bit entry in TSATRX and TSATTX) */
-#define QMC_TSA_VALID		BIT(15)
-#define QMC_TSA_WRAP		BIT(14)
-#define QMC_TSA_MASK_MASKH	GENMASK(13, 12)
-#define QMC_TSA_MASK_MASKL	GENMASK(5, 0)
-#define QMC_TSA_MASK_8BIT	(FIELD_PREP_CONST(QMC_TSA_MASK_MASKH, 0x3) | \
-				 FIELD_PREP_CONST(QMC_TSA_MASK_MASKL, 0x3F))
-#define QMC_TSA_CHANNEL_MASK	GENMASK(11, 6)
-#define QMC_TSA_CHANNEL(x)	FIELD_PREP(QMC_TSA_CHANNEL_MASK, x)
+#define QMC_TSA_VALID		(1 << 15)
+#define QMC_TSA_WRAP		(1 << 14)
+#define QMC_TSA_MASK		(0x303F)
+#define QMC_TSA_CHANNEL(x)	((x) << 6)
 
 /* Tx buffer descriptor base address (16 bits, offset from MCBASE) */
 #define QMC_SPE_TBASE	0x00
 
 /* Channel mode register (16 bits) */
 #define QMC_SPE_CHAMR	0x02
-#define   QMC_SPE_CHAMR_MODE_MASK	GENMASK(15, 15)
-#define   QMC_SPE_CHAMR_MODE_HDLC	FIELD_PREP_CONST(QMC_SPE_CHAMR_MODE_MASK, 1)
-#define   QMC_SPE_CHAMR_MODE_TRANSP	(FIELD_PREP_CONST(QMC_SPE_CHAMR_MODE_MASK, 0) | BIT(13))
-#define   QMC_SPE_CHAMR_ENT		BIT(12)
-#define   QMC_SPE_CHAMR_POL		BIT(8)
-#define   QMC_SPE_CHAMR_HDLC_IDLM	BIT(13)
-#define   QMC_SPE_CHAMR_HDLC_CRC	BIT(7)
-#define   QMC_SPE_CHAMR_HDLC_NOF_MASK	GENMASK(3, 0)
-#define   QMC_SPE_CHAMR_HDLC_NOF(x)	FIELD_PREP(QMC_SPE_CHAMR_HDLC_NOF_MASK, x)
-#define   QMC_SPE_CHAMR_TRANSP_RD	BIT(14)
-#define   QMC_SPE_CHAMR_TRANSP_SYNC	BIT(10)
+#define   QMC_SPE_CHAMR_MODE_HDLC	(1 << 15)
+#define   QMC_SPE_CHAMR_MODE_TRANSP	((0 << 15) | (1 << 13))
+#define   QMC_SPE_CHAMR_ENT		(1 << 12)
+#define   QMC_SPE_CHAMR_POL		(1 << 8)
+#define   QMC_SPE_CHAMR_HDLC_IDLM	(1 << 13)
+#define   QMC_SPE_CHAMR_HDLC_CRC	(1 << 7)
+#define   QMC_SPE_CHAMR_HDLC_NOF	(0x0f << 0)
+#define   QMC_SPE_CHAMR_TRANSP_RD	(1 << 14)
+#define   QMC_SPE_CHAMR_TRANSP_SYNC	(1 << 10)
 
 /* Tx internal state (32 bits) */
 #define QMC_SPE_TSTATE	0x04
@@ -147,47 +120,43 @@
 
 /* Transparent synchronization (16 bits) */
 #define QMC_SPE_TRNSYNC 0x3C
-#define   QMC_SPE_TRNSYNC_RX_MASK	GENMASK(15, 8)
-#define   QMC_SPE_TRNSYNC_RX(x)		FIELD_PREP(QMC_SPE_TRNSYNC_RX_MASK, x)
-#define   QMC_SPE_TRNSYNC_TX_MASK	GENMASK(7, 0)
-#define   QMC_SPE_TRNSYNC_TX(x)		FIELD_PREP(QMC_SPE_TRNSYNC_TX_MASK, x)
+#define   QMC_SPE_TRNSYNC_RX(x)	((x) << 8)
+#define   QMC_SPE_TRNSYNC_TX(x)	((x) << 0)
 
 /* Interrupt related registers bits */
-#define QMC_INT_V		BIT(15)
-#define QMC_INT_W		BIT(14)
-#define QMC_INT_NID		BIT(13)
-#define QMC_INT_IDL		BIT(12)
-#define QMC_INT_CHANNEL_MASK	GENMASK(11, 6)
-#define QMC_INT_GET_CHANNEL(x)	FIELD_GET(QMC_INT_CHANNEL_MASK, x)
-#define QMC_INT_MRF		BIT(5)
-#define QMC_INT_UN		BIT(4)
-#define QMC_INT_RXF		BIT(3)
-#define QMC_INT_BSY		BIT(2)
-#define QMC_INT_TXB		BIT(1)
-#define QMC_INT_RXB		BIT(0)
+#define QMC_INT_V		(1 << 15)
+#define QMC_INT_W		(1 << 14)
+#define QMC_INT_NID		(1 << 13)
+#define QMC_INT_IDL		(1 << 12)
+#define QMC_INT_GET_CHANNEL(x)	(((x) & 0x0FC0) >> 6)
+#define QMC_INT_MRF		(1 << 5)
+#define QMC_INT_UN		(1 << 4)
+#define QMC_INT_RXF		(1 << 3)
+#define QMC_INT_BSY		(1 << 2)
+#define QMC_INT_TXB		(1 << 1)
+#define QMC_INT_RXB		(1 << 0)
 
 /* BD related registers bits */
-#define QMC_BD_RX_E	BIT(15)
-#define QMC_BD_RX_W	BIT(13)
-#define QMC_BD_RX_I	BIT(12)
-#define QMC_BD_RX_L	BIT(11)
-#define QMC_BD_RX_F	BIT(10)
-#define QMC_BD_RX_CM	BIT(9)
-#define QMC_BD_RX_UB	BIT(7)
-#define QMC_BD_RX_LG	BIT(5)
-#define QMC_BD_RX_NO	BIT(4)
-#define QMC_BD_RX_AB	BIT(3)
-#define QMC_BD_RX_CR	BIT(2)
+#define QMC_BD_RX_E	(1 << 15)
+#define QMC_BD_RX_W	(1 << 13)
+#define QMC_BD_RX_I	(1 << 12)
+#define QMC_BD_RX_L	(1 << 11)
+#define QMC_BD_RX_F	(1 << 10)
+#define QMC_BD_RX_CM	(1 << 9)
+#define QMC_BD_RX_UB	(1 << 7)
+#define QMC_BD_RX_LG	(1 << 5)
+#define QMC_BD_RX_NO	(1 << 4)
+#define QMC_BD_RX_AB	(1 << 3)
+#define QMC_BD_RX_CR	(1 << 2)
 
-#define QMC_BD_TX_R		BIT(15)
-#define QMC_BD_TX_W		BIT(13)
-#define QMC_BD_TX_I		BIT(12)
-#define QMC_BD_TX_L		BIT(11)
-#define QMC_BD_TX_TC		BIT(10)
-#define QMC_BD_TX_CM		BIT(9)
-#define QMC_BD_TX_UB		BIT(7)
-#define QMC_BD_TX_PAD_MASK	GENMASK(3, 0)
-#define QMC_BD_TX_PAD(x)	FIELD_PREP(QMC_BD_TX_PAD_MASK, x)
+#define QMC_BD_TX_R	(1 << 15)
+#define QMC_BD_TX_W	(1 << 13)
+#define QMC_BD_TX_I	(1 << 12)
+#define QMC_BD_TX_L	(1 << 11)
+#define QMC_BD_TX_TC	(1 << 10)
+#define QMC_BD_TX_CM	(1 << 9)
+#define QMC_BD_TX_UB	(1 << 7)
+#define QMC_BD_TX_PAD	(0x0f << 0)
 
 /* Numbers of BDs and interrupt items */
 #define QMC_NB_TXBDS	8
@@ -215,7 +184,7 @@ struct qmc_chan {
 	u64	rx_ts_mask;
 	bool is_reverse_data;
 
-	spinlock_t	tx_lock; /* Protect Tx related data */
+	spinlock_t	tx_lock;
 	cbd_t __iomem *txbds;
 	cbd_t __iomem *txbd_free;
 	cbd_t __iomem *txbd_done;
@@ -223,7 +192,7 @@ struct qmc_chan {
 	u64	nb_tx_underrun;
 	bool	is_tx_stopped;
 
-	spinlock_t	rx_lock; /* Protect Rx related data */
+	spinlock_t	rx_lock;
 	cbd_t __iomem *rxbds;
 	cbd_t __iomem *rxbd_free;
 	cbd_t __iomem *rxbd_done;
@@ -234,31 +203,13 @@ struct qmc_chan {
 	bool	is_rx_stopped;
 };
 
-enum qmc_version {
-	QMC_CPM1,
-	QMC_QE,
-};
-
-struct qmc_data {
-	enum qmc_version version;
-	u32 tstate; /* Initial TSTATE value */
-	u32 rstate; /* Initial RSTATE value */
-	u32 zistate; /* Initial ZISTATE value */
-	u32 zdstate_hdlc; /* Initial ZDSTATE value (HDLC mode) */
-	u32 zdstate_transp; /* Initial ZDSTATE value (Transparent mode) */
-	u32 rpack; /* Initial RPACK value */
-};
-
 struct qmc {
 	struct device *dev;
-	const struct qmc_data *data;
 	struct tsa_serial *tsa_serial;
 	void __iomem *scc_regs;
 	void __iomem *scc_pram;
 	void __iomem *dpram;
 	u16 scc_pram_offset;
-	u32 dpram_offset;
-	u32 qe_subblock;
 	cbd_t __iomem *bd_table;
 	dma_addr_t bd_dma_addr;
 	size_t bd_size;
@@ -270,11 +221,6 @@ struct qmc {
 	struct list_head chan_head;
 	struct qmc_chan *chans[64];
 };
-
-static void qmc_write8(void __iomem *addr, u8 val)
-{
-	iowrite8(val, addr);
-}
 
 static void qmc_write16(void __iomem *addr, u16 val)
 {
@@ -316,13 +262,6 @@ static void qmc_setbits32(void __iomem *addr, u32 set)
 	qmc_write32(addr, qmc_read32(addr) | set);
 }
 
-static bool qmc_is_qe(const struct qmc *qmc)
-{
-	if (IS_ENABLED(CONFIG_QUICC_ENGINE) && IS_ENABLED(CONFIG_CPM))
-		return qmc->data->version == QMC_QE;
-
-	return IS_ENABLED(CONFIG_QUICC_ENGINE);
-}
 
 int qmc_chan_get_info(struct qmc_chan *chan, struct qmc_chan_info *info)
 {
@@ -409,8 +348,8 @@ int qmc_chan_set_param(struct qmc_chan *chan, const struct qmc_chan_param *param
 
 	switch (param->mode) {
 	case QMC_HDLC:
-		if (param->hdlc.max_rx_buf_size % 4 ||
-		    param->hdlc.max_rx_buf_size < 8)
+		if ((param->hdlc.max_rx_buf_size % 4) ||
+		    (param->hdlc.max_rx_buf_size < 8))
 			return -EINVAL;
 
 		qmc_write16(chan->qmc->scc_pram + QMC_GBL_MRBLR,
@@ -593,12 +532,11 @@ int qmc_chan_read_submit(struct qmc_chan *chan, dma_addr_t addr, size_t length,
 	/* Restart receiver if needed */
 	if (chan->is_rx_halted && !chan->is_rx_stopped) {
 		/* Restart receiver */
-		qmc_write32(chan->s_param + QMC_SPE_RPACK, chan->qmc->data->rpack);
-		qmc_write32(chan->s_param + QMC_SPE_ZDSTATE,
-			    chan->mode == QMC_TRANSPARENT ?
-				chan->qmc->data->zdstate_transp :
-				chan->qmc->data->zdstate_hdlc);
-		qmc_write32(chan->s_param + QMC_SPE_RSTATE, chan->qmc->data->rstate);
+		if (chan->mode == QMC_TRANSPARENT)
+			qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, 0x18000080);
+		else
+			qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, 0x00000080);
+		qmc_write32(chan->s_param + QMC_SPE_RSTATE, 0x31000000);
 		chan->is_rx_halted = false;
 	}
 	chan->rx_pending++;
@@ -703,7 +641,7 @@ static int qmc_chan_setup_tsa_64rxtx(struct qmc_chan *chan, const struct tsa_ser
 		return -EINVAL;
 	}
 
-	val = QMC_TSA_VALID | QMC_TSA_MASK_8BIT | QMC_TSA_CHANNEL(chan->id);
+	val = QMC_TSA_VALID | QMC_TSA_MASK | QMC_TSA_CHANNEL(chan->id);
 
 	/* Check entries based on Rx stuff*/
 	for (i = 0; i < info->nb_rx_ts; i++) {
@@ -724,7 +662,7 @@ static int qmc_chan_setup_tsa_64rxtx(struct qmc_chan *chan, const struct tsa_ser
 			continue;
 
 		qmc_clrsetbits16(chan->qmc->scc_pram + QMC_GBL_TSATRX + (i * 2),
-				 (u16)~QMC_TSA_WRAP, enable ? val : 0x0000);
+				 ~QMC_TSA_WRAP, enable ? val : 0x0000);
 	}
 
 	return 0;
@@ -739,7 +677,7 @@ static int qmc_chan_setup_tsa_32rx(struct qmc_chan *chan, const struct tsa_seria
 
 	/* Use a Rx 32 entries table */
 
-	val = QMC_TSA_VALID | QMC_TSA_MASK_8BIT | QMC_TSA_CHANNEL(chan->id);
+	val = QMC_TSA_VALID | QMC_TSA_MASK | QMC_TSA_CHANNEL(chan->id);
 
 	/* Check entries based on Rx stuff */
 	for (i = 0; i < info->nb_rx_ts; i++) {
@@ -760,7 +698,7 @@ static int qmc_chan_setup_tsa_32rx(struct qmc_chan *chan, const struct tsa_seria
 			continue;
 
 		qmc_clrsetbits16(chan->qmc->scc_pram + QMC_GBL_TSATRX + (i * 2),
-				 (u16)~QMC_TSA_WRAP, enable ? val : 0x0000);
+				 ~QMC_TSA_WRAP, enable ? val : 0x0000);
 	}
 
 	return 0;
@@ -775,7 +713,7 @@ static int qmc_chan_setup_tsa_32tx(struct qmc_chan *chan, const struct tsa_seria
 
 	/* Use a Tx 32 entries table */
 
-	val = QMC_TSA_VALID | QMC_TSA_MASK_8BIT | QMC_TSA_CHANNEL(chan->id);
+	val = QMC_TSA_VALID | QMC_TSA_MASK | QMC_TSA_CHANNEL(chan->id);
 
 	/* Check entries based on Tx stuff */
 	for (i = 0; i < info->nb_tx_ts; i++) {
@@ -796,7 +734,7 @@ static int qmc_chan_setup_tsa_32tx(struct qmc_chan *chan, const struct tsa_seria
 			continue;
 
 		qmc_clrsetbits16(chan->qmc->scc_pram + QMC_GBL_TSATTX + (i * 2),
-				 (u16)~QMC_TSA_WRAP, enable ? val : 0x0000);
+				 ~QMC_TSA_WRAP, enable ? val : 0x0000);
 	}
 
 	return 0;
@@ -836,16 +774,9 @@ static int qmc_chan_setup_tsa_rx(struct qmc_chan *chan, bool enable)
 	return qmc_chan_setup_tsa_32rx(chan, &info, enable);
 }
 
-static int qmc_chan_cpm1_command(struct qmc_chan *chan, u8 qmc_opcode)
+static int qmc_chan_command(struct qmc_chan *chan, u8 qmc_opcode)
 {
 	return cpm_command(chan->id << 2, (qmc_opcode << 4) | 0x0E);
-}
-
-static int qmc_chan_qe_command(struct qmc_chan *chan, u32 cmd)
-{
-	if (!qe_issue_cmd(cmd, chan->qmc->qe_subblock, chan->id, 0))
-		return -EIO;
-	return 0;
 }
 
 static int qmc_chan_stop_rx(struct qmc_chan *chan)
@@ -862,9 +793,7 @@ static int qmc_chan_stop_rx(struct qmc_chan *chan)
 	}
 
 	/* Send STOP RECEIVE command */
-	ret = qmc_is_qe(chan->qmc) ?
-		qmc_chan_qe_command(chan, QE_QMC_STOP_RX) :
-		qmc_chan_cpm1_command(chan, 0x0);
+	ret = qmc_chan_command(chan, 0x0);
 	if (ret) {
 		dev_err(chan->qmc->dev, "chan %u: Send STOP RECEIVE failed (%d)\n",
 			chan->id, ret);
@@ -901,9 +830,7 @@ static int qmc_chan_stop_tx(struct qmc_chan *chan)
 	}
 
 	/* Send STOP TRANSMIT command */
-	ret = qmc_is_qe(chan->qmc) ?
-		qmc_chan_qe_command(chan, QE_QMC_STOP_TX) :
-		qmc_chan_cpm1_command(chan, 0x1);
+	ret = qmc_chan_command(chan, 0x1);
 	if (ret) {
 		dev_err(chan->qmc->dev, "chan %u: Send STOP TRANSMIT failed (%d)\n",
 			chan->id, ret);
@@ -962,7 +889,6 @@ EXPORT_SYMBOL(qmc_chan_stop);
 static int qmc_setup_chan_trnsync(struct qmc *qmc, struct qmc_chan *chan)
 {
 	struct tsa_serial_info info;
-	unsigned int w_rx, w_tx;
 	u16 first_rx, last_tx;
 	u16 trnsync;
 	int ret;
@@ -971,14 +897,6 @@ static int qmc_setup_chan_trnsync(struct qmc *qmc, struct qmc_chan *chan)
 	ret = tsa_serial_get_info(chan->qmc->tsa_serial, &info);
 	if (ret)
 		return ret;
-
-	w_rx = hweight64(chan->rx_ts_mask);
-	w_tx = hweight64(chan->tx_ts_mask);
-	if (w_rx <= 1 && w_tx <= 1) {
-		dev_dbg(qmc->dev, "only one or zero ts -> disable trnsync\n");
-		qmc_clrbits16(chan->s_param + QMC_SPE_CHAMR, QMC_SPE_CHAMR_TRANSP_SYNC);
-		return 0;
-	}
 
 	/* Find the first Rx TS allocated to the channel */
 	first_rx = chan->rx_ts_mask ? __ffs64(chan->rx_ts_mask) + 1 : 0;
@@ -993,7 +911,6 @@ static int qmc_setup_chan_trnsync(struct qmc *qmc, struct qmc_chan *chan)
 		trnsync |= QMC_SPE_TRNSYNC_TX((last_tx % info.nb_tx_ts) * 2);
 
 	qmc_write16(chan->s_param + QMC_SPE_TRNSYNC, trnsync);
-	qmc_setbits16(chan->s_param + QMC_SPE_CHAMR, QMC_SPE_CHAMR_TRANSP_SYNC);
 
 	dev_dbg(qmc->dev, "chan %u: trnsync=0x%04x, rx %u/%u 0x%llx, tx %u/%u 0x%llx\n",
 		chan->id, trnsync,
@@ -1023,22 +940,19 @@ static int qmc_chan_start_rx(struct qmc_chan *chan)
 		goto end;
 	}
 
-	if (chan->mode == QMC_TRANSPARENT) {
-		ret = qmc_setup_chan_trnsync(chan->qmc, chan);
-		if (ret) {
-			dev_err(chan->qmc->dev, "chan %u: setup TRNSYNC failed (%d)\n",
-				chan->id, ret);
-			goto end;
-		}
+	ret = qmc_setup_chan_trnsync(chan->qmc, chan);
+	if (ret) {
+		dev_err(chan->qmc->dev, "chan %u: setup TRNSYNC failed (%d)\n",
+			chan->id, ret);
+		goto end;
 	}
 
 	/* Restart the receiver */
-	qmc_write32(chan->s_param + QMC_SPE_RPACK, chan->qmc->data->rpack);
-	qmc_write32(chan->s_param + QMC_SPE_ZDSTATE,
-		    chan->mode == QMC_TRANSPARENT ?
-			chan->qmc->data->zdstate_transp :
-			chan->qmc->data->zdstate_hdlc);
-	qmc_write32(chan->s_param + QMC_SPE_RSTATE, chan->qmc->data->rstate);
+	if (chan->mode == QMC_TRANSPARENT)
+		qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, 0x18000080);
+	else
+		qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, 0x00000080);
+	qmc_write32(chan->s_param + QMC_SPE_RSTATE, 0x31000000);
 	chan->is_rx_halted = false;
 
 	chan->is_rx_stopped = false;
@@ -1068,13 +982,11 @@ static int qmc_chan_start_tx(struct qmc_chan *chan)
 		goto end;
 	}
 
-	if (chan->mode == QMC_TRANSPARENT) {
-		ret = qmc_setup_chan_trnsync(chan->qmc, chan);
-		if (ret) {
-			dev_err(chan->qmc->dev, "chan %u: setup TRNSYNC failed (%d)\n",
-				chan->id, ret);
-			goto end;
-		}
+	ret = qmc_setup_chan_trnsync(chan->qmc, chan);
+	if (ret) {
+		dev_err(chan->qmc->dev, "chan %u: setup TRNSYNC failed (%d)\n",
+			chan->id, ret);
+		goto end;
 	}
 
 	/*
@@ -1184,8 +1096,8 @@ static void qmc_chan_reset_tx(struct qmc_chan *chan)
 		    qmc_read16(chan->s_param + QMC_SPE_TBASE));
 
 	/* Reset TSTATE and ZISTATE to their initial value */
-	qmc_write32(chan->s_param + QMC_SPE_TSTATE, chan->qmc->data->tstate);
-	qmc_write32(chan->s_param + QMC_SPE_ZISTATE, chan->qmc->data->zistate);
+	qmc_write32(chan->s_param + QMC_SPE_TSTATE, 0x30000000);
+	qmc_write32(chan->s_param + QMC_SPE_ZISTATE, 0x00000100);
 
 	spin_unlock_irqrestore(&chan->tx_lock, flags);
 }
@@ -1215,7 +1127,7 @@ static int qmc_check_chans(struct qmc *qmc)
 	if (ret)
 		return ret;
 
-	if (info.nb_tx_ts > 64 || info.nb_rx_ts > 64) {
+	if ((info.nb_tx_ts > 64) || (info.nb_rx_ts > 64)) {
 		dev_err(qmc->dev, "Number of TSA Tx/Rx TS assigned not supported\n");
 		return -EINVAL;
 	}
@@ -1224,7 +1136,7 @@ static int qmc_check_chans(struct qmc *qmc)
 	 * If more than 32 TS are assigned to this serial, one common table is
 	 * used for Tx and Rx and so masks must be equal for all channels.
 	 */
-	if (info.nb_tx_ts > 32 || info.nb_rx_ts > 32) {
+	if ((info.nb_tx_ts > 32) || (info.nb_rx_ts > 32)) {
 		if (info.nb_tx_ts != info.nb_rx_ts) {
 			dev_err(qmc->dev, "Number of TSA Tx/Rx TS assigned are not equal\n");
 			return -EINVAL;
@@ -1456,14 +1368,13 @@ static int qmc_setup_chan(struct qmc *qmc, struct qmc_chan *chan)
 	val = ((chan->id * (QMC_NB_TXBDS + QMC_NB_RXBDS)) + QMC_NB_TXBDS) * sizeof(cbd_t);
 	qmc_write16(chan->s_param + QMC_SPE_RBASE, val);
 	qmc_write16(chan->s_param + QMC_SPE_RBPTR, val);
-	qmc_write32(chan->s_param + QMC_SPE_TSTATE, chan->qmc->data->tstate);
-	qmc_write32(chan->s_param + QMC_SPE_RSTATE, chan->qmc->data->rstate);
-	qmc_write32(chan->s_param + QMC_SPE_ZISTATE, chan->qmc->data->zistate);
-	qmc_write32(chan->s_param + QMC_SPE_RPACK, chan->qmc->data->rpack);
+	qmc_write32(chan->s_param + QMC_SPE_TSTATE, 0x30000000);
+	qmc_write32(chan->s_param + QMC_SPE_RSTATE, 0x31000000);
+	qmc_write32(chan->s_param + QMC_SPE_ZISTATE, 0x00000100);
 	if (chan->mode == QMC_TRANSPARENT) {
-		qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, chan->qmc->data->zdstate_transp);
+		qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, 0x18000080);
 		qmc_write16(chan->s_param + QMC_SPE_TMRBLR, 60);
-		val = QMC_SPE_CHAMR_MODE_TRANSP;
+		val = QMC_SPE_CHAMR_MODE_TRANSP | QMC_SPE_CHAMR_TRANSP_SYNC;
 		if (chan->is_reverse_data)
 			val |= QMC_SPE_CHAMR_TRANSP_RD;
 		qmc_write16(chan->s_param + QMC_SPE_CHAMR, val);
@@ -1471,10 +1382,10 @@ static int qmc_setup_chan(struct qmc *qmc, struct qmc_chan *chan)
 		if (ret)
 			return ret;
 	} else {
-		qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, chan->qmc->data->zdstate_hdlc);
+		qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, 0x00000080);
 		qmc_write16(chan->s_param + QMC_SPE_MFLR, 60);
 		qmc_write16(chan->s_param + QMC_SPE_CHAMR,
-			    QMC_SPE_CHAMR_MODE_HDLC | QMC_SPE_CHAMR_HDLC_IDLM);
+			QMC_SPE_CHAMR_MODE_HDLC | QMC_SPE_CHAMR_HDLC_IDLM);
 	}
 
 	/* Do not enable interrupts now. They will be enabled later */
@@ -1599,14 +1510,11 @@ static void qmc_irq_gint(struct qmc *qmc)
 			/* Restart the receiver if needed */
 			spin_lock_irqsave(&chan->rx_lock, flags);
 			if (chan->rx_pending && !chan->is_rx_stopped) {
-				qmc_write32(chan->s_param + QMC_SPE_RPACK,
-					    chan->qmc->data->rpack);
-				qmc_write32(chan->s_param + QMC_SPE_ZDSTATE,
-					    chan->mode == QMC_TRANSPARENT ?
-						chan->qmc->data->zdstate_transp :
-						chan->qmc->data->zdstate_hdlc);
-				qmc_write32(chan->s_param + QMC_SPE_RSTATE,
-					    chan->qmc->data->rstate);
+				if (chan->mode == QMC_TRANSPARENT)
+					qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, 0x18000080);
+				else
+					qmc_write32(chan->s_param + QMC_SPE_ZDSTATE, 0x00000080);
+				qmc_write32(chan->s_param + QMC_SPE_RSTATE, 0x31000000);
 				chan->is_rx_halted = false;
 			} else {
 				chan->is_rx_halted = true;
@@ -1650,73 +1558,26 @@ static irqreturn_t qmc_irq_handler(int irq, void *priv)
 	return IRQ_HANDLED;
 }
 
-static int qmc_qe_soft_qmc_init(struct qmc *qmc, struct device_node *np)
+static int qmc_probe(struct platform_device *pdev)
 {
-	struct qe_firmware_info *qe_fw_info;
-	const struct qe_firmware *qe_fw;
-	const struct firmware *fw;
-	const char *filename;
+	struct device_node *np = pdev->dev.of_node;
+	unsigned int nb_chans;
+	struct resource *res;
+	struct qmc *qmc;
+	int irq;
 	int ret;
 
-	ret = of_property_read_string(np, "fsl,soft-qmc", &filename);
-	switch (ret) {
-	case 0:
-		break;
-	case -EINVAL:
-		/* fsl,soft-qmc property not set -> Simply do nothing */
-		return 0;
-	default:
-		dev_err(qmc->dev, "%pOF: failed to read fsl,soft-qmc\n",
-			np);
-		return ret;
-	}
+	qmc = devm_kzalloc(&pdev->dev, sizeof(*qmc), GFP_KERNEL);
+	if (!qmc)
+		return -ENOMEM;
 
-	qe_fw_info = qe_get_firmware_info();
-	if (qe_fw_info) {
-		if (!strstr(qe_fw_info->id, "Soft-QMC")) {
-			dev_err(qmc->dev, "Another Firmware is already loaded\n");
-			return -EALREADY;
-		}
-		dev_info(qmc->dev, "Firmware already loaded\n");
-		return 0;
-	}
-
-	dev_info(qmc->dev, "Using firmware %s\n", filename);
-
-	ret = request_firmware(&fw, filename, qmc->dev);
-	if (ret) {
-		dev_err(qmc->dev, "Failed to request firmware %s\n", filename);
-		return ret;
-	}
-
-	qe_fw = (const struct qe_firmware *)fw->data;
-
-	if (fw->size < sizeof(qe_fw->header) ||
-	    be32_to_cpu(qe_fw->header.length) != fw->size) {
-		dev_err(qmc->dev, "Invalid firmware %s\n", filename);
-		ret = -EINVAL;
-		goto end;
-	}
-
-	ret = qe_upload_firmware(qe_fw);
-	if (ret) {
-		dev_err(qmc->dev, "Failed to load firmware %s\n", filename);
-		goto end;
-	}
-
-	ret = 0;
-end:
-	release_firmware(fw);
-	return ret;
-}
-
-static int qmc_cpm1_init_resources(struct qmc *qmc, struct platform_device *pdev)
-{
-	struct resource *res;
+	qmc->dev = &pdev->dev;
+	INIT_LIST_HEAD(&qmc->chan_head);
 
 	qmc->scc_regs = devm_platform_ioremap_resource_byname(pdev, "scc_regs");
 	if (IS_ERR(qmc->scc_regs))
 		return PTR_ERR(qmc->scc_regs);
+
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "scc_pram");
 	if (!res)
@@ -1730,204 +1591,32 @@ static int qmc_cpm1_init_resources(struct qmc *qmc, struct platform_device *pdev
 	if (IS_ERR(qmc->dpram))
 		return PTR_ERR(qmc->dpram);
 
-	return 0;
-}
-
-static int qmc_qe_init_resources(struct qmc *qmc, struct platform_device *pdev)
-{
-	struct resource *res;
-	int ucc_num;
-	s32 info;
-
-	qmc->scc_regs = devm_platform_ioremap_resource_byname(pdev, "ucc_regs");
-	if (IS_ERR(qmc->scc_regs))
-		return PTR_ERR(qmc->scc_regs);
-
-	ucc_num = tsa_serial_get_num(qmc->tsa_serial);
-	if (ucc_num < 0)
-		return dev_err_probe(qmc->dev, ucc_num, "Failed to get UCC num\n");
-
-	qmc->qe_subblock = ucc_slow_get_qe_cr_subblock(ucc_num);
-	if (qmc->qe_subblock == QE_CR_SUBBLOCK_INVALID) {
-		dev_err(qmc->dev, "Unsupported ucc num %u\n", ucc_num);
-		return -EINVAL;
-	}
-	/* Allocate the 'Global Multichannel Parameters' and the
-	 * 'Framer parameters' areas. The 'Framer parameters' area
-	 * is located right after the 'Global Multichannel Parameters'.
-	 * The 'Framer parameters' need 1 byte per receive and transmit
-	 * channel. The maximum number of receive or transmit channel
-	 * is 64. So reserve 2 * 64 bytes for the 'Framer parameters'.
-	 */
-	info = devm_qe_muram_alloc(qmc->dev, UCC_SLOW_PRAM_SIZE + 2 * 64,
-				   ALIGNMENT_OF_UCC_SLOW_PRAM);
-	if (IS_ERR_VALUE(info)) {
-		dev_err(qmc->dev, "cannot allocate MURAM for PRAM");
-		return -ENOMEM;
-	}
-	if (!qe_issue_cmd(QE_ASSIGN_PAGE_TO_DEVICE, qmc->qe_subblock,
-			  QE_CR_PROTOCOL_UNSPECIFIED, info)) {
-		dev_err(qmc->dev, "QE_ASSIGN_PAGE_TO_DEVICE cmd failed");
-		return -EIO;
-	}
-	qmc->scc_pram = qe_muram_addr(info);
-	qmc->scc_pram_offset = info;
-
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dpram");
-	if (!res)
-		return -EINVAL;
-	qmc->dpram_offset = res->start - qe_muram_dma(qe_muram_addr(0));
-	qmc->dpram = devm_ioremap_resource(qmc->dev, res);
-	if (IS_ERR(qmc->scc_pram))
-		return PTR_ERR(qmc->scc_pram);
-
-	return 0;
-}
-
-static int qmc_init_resources(struct qmc *qmc, struct platform_device *pdev)
-{
-	return qmc_is_qe(qmc) ?
-		qmc_qe_init_resources(qmc, pdev) :
-		qmc_cpm1_init_resources(qmc, pdev);
-}
-
-static int qmc_cpm1_init_scc(struct qmc *qmc)
-{
-	u32 val;
-	int ret;
-
-	/* Connect the serial (SCC) to TSA */
-	ret = tsa_serial_connect(qmc->tsa_serial);
-	if (ret)
-		return dev_err_probe(qmc->dev, ret, "Failed to connect TSA serial\n");
-
-	/* Init GMSR_H and GMSR_L registers */
-	val = SCC_GSMRH_CDS | SCC_GSMRH_CTSS | SCC_GSMRH_CDP | SCC_GSMRH_CTSP;
-	qmc_write32(qmc->scc_regs + SCC_GSMRH, val);
-
-	/* enable QMC mode */
-	qmc_write32(qmc->scc_regs + SCC_GSMRL, SCC_CPM1_GSMRL_MODE_QMC);
-
-	/* Disable and clear interrupts */
-	qmc_write16(qmc->scc_regs + SCC_SCCM, 0x0000);
-	qmc_write16(qmc->scc_regs + SCC_SCCE, 0x000F);
-
-	return 0;
-}
-
-static int qmc_qe_init_ucc(struct qmc *qmc)
-{
-	u32 val;
-	int ret;
-
-	/* Set the UCC in slow mode */
-	qmc_write8(qmc->scc_regs + SCC_QE_UCC_GUEMR,
-		   UCC_GUEMR_SET_RESERVED3 | UCC_GUEMR_MODE_SLOW_RX | UCC_GUEMR_MODE_SLOW_TX);
-
-	/* Connect the serial (UCC) to TSA */
-	ret = tsa_serial_connect(qmc->tsa_serial);
-	if (ret)
-		return dev_err_probe(qmc->dev, ret, "Failed to connect TSA serial\n");
-
-	/* Initialize the QMC tx startup addresses */
-	if (!qe_issue_cmd(QE_PUSHSCHED, qmc->qe_subblock,
-			  QE_CR_PROTOCOL_UNSPECIFIED, 0x80)) {
-		dev_err(qmc->dev, "QE_CMD_PUSH_SCHED tx cmd failed");
-		ret = -EIO;
-		goto err_tsa_serial_disconnect;
-	}
-
-	/* Initialize the QMC rx startup addresses */
-	if (!qe_issue_cmd(QE_PUSHSCHED, qmc->qe_subblock | 0x00020000,
-			  QE_CR_PROTOCOL_UNSPECIFIED, 0x82)) {
-		dev_err(qmc->dev, "QE_CMD_PUSH_SCHED rx cmd failed");
-		ret = -EIO;
-		goto err_tsa_serial_disconnect;
-	}
-
-	/* Re-init RXPTR and TXPTR with the content of RX_S_PTR and
-	 * TX_S_PTR (RX_S_PTR and TX_S_PTR are initialized during
-	 * qmc_setup_tsa() call
-	 */
-	val = qmc_read16(qmc->scc_pram + QMC_GBL_RX_S_PTR);
-	qmc_write16(qmc->scc_pram + QMC_GBL_RXPTR, val);
-	val = qmc_read16(qmc->scc_pram + QMC_GBL_TX_S_PTR);
-	qmc_write16(qmc->scc_pram + QMC_GBL_TXPTR, val);
-
-	/* Init GUMR_H and GUMR_L registers (SCC GSMR_H and GSMR_L) */
-	val = SCC_GSMRH_CDS | SCC_GSMRH_CTSS | SCC_GSMRH_CDP | SCC_GSMRH_CTSP |
-	      SCC_GSMRH_TRX | SCC_GSMRH_TTX;
-	qmc_write32(qmc->scc_regs + SCC_GSMRH, val);
-
-	/* enable QMC mode */
-	qmc_write32(qmc->scc_regs + SCC_GSMRL, SCC_QE_GSMRL_MODE_QMC);
-
-	/* Disable and clear interrupts */
-	qmc_write16(qmc->scc_regs + SCC_SCCM, 0x0000);
-	qmc_write16(qmc->scc_regs + SCC_SCCE, 0x000F);
-
-	return 0;
-
-err_tsa_serial_disconnect:
-	tsa_serial_disconnect(qmc->tsa_serial);
-	return ret;
-}
-
-static int qmc_init_xcc(struct qmc *qmc)
-{
-	return qmc_is_qe(qmc) ?
-		qmc_qe_init_ucc(qmc) :
-		qmc_cpm1_init_scc(qmc);
-}
-
-static void qmc_exit_xcc(struct qmc *qmc)
-{
-	/* Disconnect the serial from TSA */
-	tsa_serial_disconnect(qmc->tsa_serial);
-}
-
-static int qmc_probe(struct platform_device *pdev)
-{
-	struct device_node *np = pdev->dev.of_node;
-	unsigned int nb_chans;
-	struct qmc *qmc;
-	int irq;
-	int ret;
-
-	qmc = devm_kzalloc(&pdev->dev, sizeof(*qmc), GFP_KERNEL);
-	if (!qmc)
-		return -ENOMEM;
-
-	qmc->dev = &pdev->dev;
-	qmc->data = of_device_get_match_data(&pdev->dev);
-	if (!qmc->data) {
-		dev_err(qmc->dev, "Missing match data\n");
-		return -EINVAL;
-	}
-	INIT_LIST_HEAD(&qmc->chan_head);
-
 	qmc->tsa_serial = devm_tsa_serial_get_byphandle(qmc->dev, np, "fsl,tsa-serial");
 	if (IS_ERR(qmc->tsa_serial)) {
 		return dev_err_probe(qmc->dev, PTR_ERR(qmc->tsa_serial),
 				     "Failed to get TSA serial\n");
 	}
 
-	ret = qmc_init_resources(qmc, pdev);
-	if (ret)
+	/* Connect the serial (SCC) to TSA */
+	ret = tsa_serial_connect(qmc->tsa_serial);
+	if (ret) {
+		dev_err(qmc->dev, "Failed to connect TSA serial\n");
 		return ret;
-
-	if (qmc_is_qe(qmc)) {
-		ret = qmc_qe_soft_qmc_init(qmc, np);
-		if (ret)
-			return ret;
 	}
 
 	/* Parse channels informationss */
 	ret = qmc_of_parse_chans(qmc, np);
 	if (ret)
-		return ret;
+		goto err_tsa_serial_disconnect;
 
 	nb_chans = qmc_nb_chans(qmc);
+
+	/* Init GMSR_H and GMSR_L registers */
+	qmc_write32(qmc->scc_regs + SCC_GSMRH,
+		    SCC_GSMRH_CDS | SCC_GSMRH_CTSS | SCC_GSMRH_CDP | SCC_GSMRH_CTSP);
+
+	/* enable QMC mode */
+	qmc_write32(qmc->scc_regs + SCC_GSMRL, SCC_GSMRL_MODE_QMC);
 
 	/*
 	 * Allocate the buffer descriptor table
@@ -1935,10 +1624,11 @@ static int qmc_probe(struct platform_device *pdev)
 	 */
 	qmc->bd_size = (nb_chans * (QMC_NB_TXBDS + QMC_NB_RXBDS)) * sizeof(cbd_t);
 	qmc->bd_table = dmam_alloc_coherent(qmc->dev, qmc->bd_size,
-					    &qmc->bd_dma_addr, GFP_KERNEL);
+		&qmc->bd_dma_addr, GFP_KERNEL);
 	if (!qmc->bd_table) {
 		dev_err(qmc->dev, "Failed to allocate bd table\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_tsa_serial_disconnect;
 	}
 	memset(qmc->bd_table, 0, qmc->bd_size);
 
@@ -1947,10 +1637,11 @@ static int qmc_probe(struct platform_device *pdev)
 	/* Allocate the interrupt table */
 	qmc->int_size = QMC_NB_INTS * sizeof(u16);
 	qmc->int_table = dmam_alloc_coherent(qmc->dev, qmc->int_size,
-					     &qmc->int_dma_addr, GFP_KERNEL);
+		&qmc->int_dma_addr, GFP_KERNEL);
 	if (!qmc->int_table) {
 		dev_err(qmc->dev, "Failed to allocate interrupt table\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_tsa_serial_disconnect;
 	}
 	memset(qmc->int_table, 0, qmc->int_size);
 
@@ -1967,59 +1658,40 @@ static int qmc_probe(struct platform_device *pdev)
 	qmc_write32(qmc->scc_pram + QMC_GBL_C_MASK32, 0xDEBB20E3);
 	qmc_write16(qmc->scc_pram + QMC_GBL_C_MASK16, 0xF0B8);
 
-	if (qmc_is_qe(qmc)) {
-		/* Zeroed the reserved area */
-		memset_io(qmc->scc_pram + QMC_QE_GBL_RSV_B0_START, 0,
-			  QMC_QE_GBL_RSV_B0_SIZE);
-
-		qmc_write32(qmc->scc_pram + QMC_QE_GBL_GCSBASE, qmc->dpram_offset);
-
-		/* Init 'framer parameters' area and set the base addresses */
-		memset_io(qmc->scc_pram + UCC_SLOW_PRAM_SIZE, 0x01, 64);
-		memset_io(qmc->scc_pram + UCC_SLOW_PRAM_SIZE + 64, 0x01, 64);
-		qmc_write16(qmc->scc_pram + QMC_QE_GBL_RX_FRM_BASE,
-			    qmc->scc_pram_offset + UCC_SLOW_PRAM_SIZE);
-		qmc_write16(qmc->scc_pram + QMC_QE_GBL_TX_FRM_BASE,
-			    qmc->scc_pram_offset + UCC_SLOW_PRAM_SIZE + 64);
-	}
-
 	ret = qmc_init_tsa(qmc);
 	if (ret)
-		return ret;
+		goto err_tsa_serial_disconnect;
 
 	qmc_write16(qmc->scc_pram + QMC_GBL_QMCSTATE, 0x8000);
 
 	ret = qmc_setup_chans(qmc);
 	if (ret)
-		return ret;
+		goto err_tsa_serial_disconnect;
 
 	/* Init interrupts table */
 	ret = qmc_setup_ints(qmc);
 	if (ret)
-		return ret;
+		goto err_tsa_serial_disconnect;
 
-	/* Init SCC (CPM1) or UCC (QE) */
-	ret = qmc_init_xcc(qmc);
-	if (ret)
-		return ret;
-
-	/* Set the irq handler */
+	/* Disable and clear interrupts,  set the irq handler */
+	qmc_write16(qmc->scc_regs + SCC_SCCM, 0x0000);
+	qmc_write16(qmc->scc_regs + SCC_SCCE, 0x000F);
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
-		goto err_exit_xcc;
+		goto err_tsa_serial_disconnect;
 	ret = devm_request_irq(qmc->dev, irq, qmc_irq_handler, 0, "qmc", qmc);
 	if (ret < 0)
-		goto err_exit_xcc;
+		goto err_tsa_serial_disconnect;
 
 	/* Enable interrupts */
 	qmc_write16(qmc->scc_regs + SCC_SCCM,
-		    SCC_SCCE_IQOV | SCC_SCCE_GINT | SCC_SCCE_GUN | SCC_SCCE_GOV);
+		SCC_SCCE_IQOV | SCC_SCCE_GINT | SCC_SCCE_GUN | SCC_SCCE_GOV);
 
 	ret = qmc_finalize_chans(qmc);
 	if (ret < 0)
 		goto err_disable_intr;
 
-	/* Enable transmitter and receiver */
+	/* Enable transmiter and receiver */
 	qmc_setbits32(qmc->scc_regs + SCC_GSMRL, SCC_GSMRL_ENR | SCC_GSMRL_ENT);
 
 	platform_set_drvdata(pdev, qmc);
@@ -2037,8 +1709,8 @@ err_disable_txrx:
 err_disable_intr:
 	qmc_write16(qmc->scc_regs + SCC_SCCM, 0);
 
-err_exit_xcc:
-	qmc_exit_xcc(qmc);
+err_tsa_serial_disconnect:
+	tsa_serial_disconnect(qmc->tsa_serial);
 	return ret;
 }
 
@@ -2046,43 +1718,18 @@ static void qmc_remove(struct platform_device *pdev)
 {
 	struct qmc *qmc = platform_get_drvdata(pdev);
 
-	/* Disable transmitter and receiver */
+	/* Disable transmiter and receiver */
 	qmc_setbits32(qmc->scc_regs + SCC_GSMRL, 0);
 
 	/* Disable interrupts */
 	qmc_write16(qmc->scc_regs + SCC_SCCM, 0);
 
-	/* Exit SCC (CPM1) or UCC (QE) */
-	qmc_exit_xcc(qmc);
+	/* Disconnect the serial from TSA */
+	tsa_serial_disconnect(qmc->tsa_serial);
 }
 
-static const struct qmc_data qmc_data_cpm1 = {
-	.version = QMC_CPM1,
-	.tstate = 0x30000000,
-	.rstate = 0x31000000,
-	.zistate = 0x00000100,
-	.zdstate_hdlc = 0x00000080,
-	.zdstate_transp = 0x18000080,
-	.rpack = 0x00000000,
-};
-
-static const struct qmc_data qmc_data_qe = {
-	.version = QMC_QE,
-	.tstate = 0x30000000,
-	.rstate = 0x30000000,
-	.zistate = 0x00000200,
-	.zdstate_hdlc = 0x80FFFFE0,
-	.zdstate_transp = 0x003FFFE2,
-	.rpack = 0x80000000,
-};
-
 static const struct of_device_id qmc_id_table[] = {
-#if IS_ENABLED(CONFIG_CPM1)
-	{ .compatible = "fsl,cpm1-scc-qmc", .data = &qmc_data_cpm1 },
-#endif
-#if IS_ENABLED(CONFIG_QUICC_ENGINE)
-	{ .compatible = "fsl,qe-ucc-qmc", .data = &qmc_data_qe },
-#endif
+	{ .compatible = "fsl,cpm1-scc-qmc" },
 	{} /* sentinel */
 };
 MODULE_DEVICE_TABLE(of, qmc_id_table);
@@ -2130,28 +1777,13 @@ static struct qmc_chan *qmc_chan_get_from_qmc(struct device_node *qmc_np, unsign
 	return qmc_chan;
 }
 
-int qmc_chan_count_phandles(struct device_node *np, const char *phandles_name)
-{
-	int count;
-
-	/* phandles are fixed args phandles with one arg */
-	count = of_count_phandle_with_args(np, phandles_name, NULL);
-	if (count < 0)
-		return count;
-
-	return count / 2;
-}
-EXPORT_SYMBOL(qmc_chan_count_phandles);
-
-struct qmc_chan *qmc_chan_get_byphandles_index(struct device_node *np,
-					       const char *phandles_name,
-					       int index)
+struct qmc_chan *qmc_chan_get_byphandle(struct device_node *np, const char *phandle_name)
 {
 	struct of_phandle_args out_args;
 	struct qmc_chan *qmc_chan;
 	int ret;
 
-	ret = of_parse_phandle_with_fixed_args(np, phandles_name, 1, index,
+	ret = of_parse_phandle_with_fixed_args(np, phandle_name, 1, 0,
 					       &out_args);
 	if (ret < 0)
 		return ERR_PTR(ret);
@@ -2165,7 +1797,7 @@ struct qmc_chan *qmc_chan_get_byphandles_index(struct device_node *np,
 	of_node_put(out_args.np);
 	return qmc_chan;
 }
-EXPORT_SYMBOL(qmc_chan_get_byphandles_index);
+EXPORT_SYMBOL(qmc_chan_get_byphandle);
 
 struct qmc_chan *qmc_chan_get_bychild(struct device_node *np)
 {
@@ -2195,10 +1827,9 @@ static void devm_qmc_chan_release(struct device *dev, void *res)
 	qmc_chan_put(*qmc_chan);
 }
 
-struct qmc_chan *devm_qmc_chan_get_byphandles_index(struct device *dev,
-						    struct device_node *np,
-						    const char *phandles_name,
-						    int index)
+struct qmc_chan *devm_qmc_chan_get_byphandle(struct device *dev,
+					     struct device_node *np,
+					     const char *phandle_name)
 {
 	struct qmc_chan *qmc_chan;
 	struct qmc_chan **dr;
@@ -2207,7 +1838,7 @@ struct qmc_chan *devm_qmc_chan_get_byphandles_index(struct device *dev,
 	if (!dr)
 		return ERR_PTR(-ENOMEM);
 
-	qmc_chan = qmc_chan_get_byphandles_index(np, phandles_name, index);
+	qmc_chan = qmc_chan_get_byphandle(np, phandle_name);
 	if (!IS_ERR(qmc_chan)) {
 		*dr = qmc_chan;
 		devres_add(dev, dr);
@@ -2217,7 +1848,7 @@ struct qmc_chan *devm_qmc_chan_get_byphandles_index(struct device *dev,
 
 	return qmc_chan;
 }
-EXPORT_SYMBOL(devm_qmc_chan_get_byphandles_index);
+EXPORT_SYMBOL(devm_qmc_chan_get_byphandle);
 
 struct qmc_chan *devm_qmc_chan_get_bychild(struct device *dev,
 					   struct device_node *np)
@@ -2242,5 +1873,5 @@ struct qmc_chan *devm_qmc_chan_get_bychild(struct device *dev,
 EXPORT_SYMBOL(devm_qmc_chan_get_bychild);
 
 MODULE_AUTHOR("Herve Codina <herve.codina@bootlin.com>");
-MODULE_DESCRIPTION("CPM/QE QMC driver");
+MODULE_DESCRIPTION("CPM QMC driver");
 MODULE_LICENSE("GPL");

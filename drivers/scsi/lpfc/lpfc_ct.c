@@ -1553,14 +1553,22 @@ lpfc_cmpl_ct_cmd_gft_id(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 			if (ndlp->nlp_state == NLP_STE_REG_LOGIN_ISSUE &&
 			    ndlp->nlp_fc4_type) {
 				ndlp->nlp_prev_state = NLP_STE_REG_LOGIN_ISSUE;
-				lpfc_nlp_set_state(vport, ndlp,
-						   NLP_STE_PRLI_ISSUE);
-				lpfc_issue_els_prli(vport, ndlp, 0);
+				/* This is a fabric topology so if discovery
+				 * started with an unsolicited PLOGI, don't
+				 * send a PRLI.  Targets don't issue PLOGI or
+				 * PRLI when acting as a target. Likely this is
+				 * an initiator function.
+				 */
+				if (!(ndlp->nlp_flag & NLP_RCV_PLOGI)) {
+					lpfc_nlp_set_state(vport, ndlp,
+							   NLP_STE_PRLI_ISSUE);
+					lpfc_issue_els_prli(vport, ndlp, 0);
+				}
 			} else if (!ndlp->nlp_fc4_type) {
 				/* If fc4 type is still unknown, then LOGO */
 				lpfc_printf_vlog(vport, KERN_INFO,
 						 LOG_DISCOVERY | LOG_NODE,
-						 "6443 Sending LOGO ndlp x%px, "
+						 "6443 Sending LOGO ndlp x%px,"
 						 "DID x%06x with fc4_type: "
 						 "x%08x, state: %d\n",
 						 ndlp, did, ndlp->nlp_fc4_type,
@@ -1572,8 +1580,8 @@ lpfc_cmpl_ct_cmd_gft_id(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 			}
 		}
 	} else
-		lpfc_vlog_msg(vport, KERN_WARNING, LOG_DISCOVERY,
-			      "3065 GFT_ID status x%08x\n", ulp_status);
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_TRACE_EVENT,
+				 "3065 GFT_ID failed x%08x\n", ulp_status);
 
 out:
 	lpfc_ct_free_iocb(phba, cmdiocb);
@@ -1647,18 +1655,6 @@ lpfc_cmpl_ct(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	}
 
 out:
-	/* If the caller wanted a synchronous DA_ID completion, signal the
-	 * wait obj and clear flag to reset the vport.
-	 */
-	if (ndlp->save_flags & NLP_WAIT_FOR_DA_ID) {
-		if (ndlp->da_id_waitq)
-			wake_up(ndlp->da_id_waitq);
-	}
-
-	spin_lock_irq(&ndlp->lock);
-	ndlp->save_flags &= ~NLP_WAIT_FOR_DA_ID;
-	spin_unlock_irq(&ndlp->lock);
-
 	lpfc_ct_free_iocb(phba, cmdiocb);
 	lpfc_nlp_put(ndlp);
 	return;
@@ -2258,7 +2254,7 @@ lpfc_cmpl_ct_disc_fdmi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 		}
 
 		lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY,
-				 "0229 FDMI cmd %04x latt = %d "
+				 "0229 FDMI cmd %04x failed, latt = %d "
 				 "ulp_status: x%x, rid x%x\n",
 				 be16_to_cpu(fdmi_cmd), latt, ulp_status,
 				 ulp_word4);
@@ -2275,9 +2271,9 @@ lpfc_cmpl_ct_disc_fdmi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	/* Check for a CT LS_RJT response */
 	cmd =  be16_to_cpu(fdmi_cmd);
 	if (be16_to_cpu(fdmi_rsp) == SLI_CT_RESPONSE_FS_RJT) {
-		/* Log FDMI reject */
+		/* FDMI rsp failed */
 		lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY | LOG_ELS,
-				 "0220 FDMI cmd FS_RJT Data: x%x", cmd);
+				 "0220 FDMI cmd failed FS_RJT Data: x%x", cmd);
 
 		/* Should we fallback to FDMI-2 / FDMI-1 ? */
 		switch (cmd) {

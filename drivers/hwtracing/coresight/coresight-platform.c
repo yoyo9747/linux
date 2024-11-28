@@ -275,7 +275,7 @@ static int of_get_coresight_platform_data(struct device *dev,
 	 */
 	if (!parent) {
 		/*
-		 * Avoid warnings in for_each_endpoint_of_node()
+		 * Avoid warnings in of_graph_get_next_endpoint()
 		 * if the device doesn't have any graph connections
 		 */
 		if (!of_graph_is_present(node))
@@ -286,7 +286,7 @@ static int of_get_coresight_platform_data(struct device *dev,
 	}
 
 	/* Iterate through each output port to discover topology */
-	for_each_endpoint_of_node(parent, ep) {
+	while ((ep = of_graph_get_next_endpoint(parent, ep))) {
 		/*
 		 * Legacy binding mixes input/output ports under the
 		 * same parent. So, skip the input ports if we are dealing
@@ -297,10 +297,8 @@ static int of_get_coresight_platform_data(struct device *dev,
 			continue;
 
 		ret = of_coresight_parse_endpoint(dev, ep, pdata);
-		if (ret) {
-			of_node_put(ep);
+		if (ret)
 			return ret;
-		}
 	}
 
 	return 0;

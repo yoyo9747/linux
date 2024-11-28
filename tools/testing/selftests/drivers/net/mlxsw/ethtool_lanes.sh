@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-2.0
 
 lib_dir=$(dirname $0)/../../../net/forwarding
-ethtool_lib_dir=$(dirname $0)/../hw
 
 ALL_TESTS="
 	autoneg
@@ -12,7 +11,7 @@ ALL_TESTS="
 NUM_NETIFS=2
 : ${TIMEOUT:=30000} # ms
 source $lib_dir/lib.sh
-source $ethtool_lib_dir/ethtool_lib.sh
+source $lib_dir/ethtool_lib.sh
 
 setup_prepare()
 {

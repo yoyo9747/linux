@@ -418,6 +418,7 @@ out_unpin:
  * For an untiled surface, this removes any existing fence.
  *
  * Returns:
+ *
  * 0 on success, negative error code on failure.
  */
 int i915_vma_pin_fence(struct i915_vma *vma)

@@ -194,5 +194,7 @@ error:
 
 void __init hashtab_cache_init(void)
 {
-	hashtab_node_cachep = KMEM_CACHE(hashtab_node, SLAB_PANIC);
+	hashtab_node_cachep = kmem_cache_create("hashtab_node",
+						sizeof(struct hashtab_node), 0,
+						SLAB_PANIC, NULL);
 }

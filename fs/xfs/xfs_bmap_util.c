@@ -331,7 +331,8 @@ xfs_getbmap(
 		}
 
 		if (xfs_get_extsz_hint(ip) ||
-		    (ip->i_diflags & XFS_DIFLAG_PREALLOC))
+		    (ip->i_diflags &
+		     (XFS_DIFLAG_PREALLOC | XFS_DIFLAG_APPEND)))
 			max_len = mp->m_super->s_maxbytes;
 		else
 			max_len = XFS_ISIZE(ip);
@@ -491,12 +492,12 @@ bool
 xfs_can_free_eofblocks(
 	struct xfs_inode	*ip)
 {
+	struct xfs_bmbt_irec	imap;
 	struct xfs_mount	*mp = ip->i_mount;
-	bool			found_blocks = false;
 	xfs_fileoff_t		end_fsb;
 	xfs_fileoff_t		last_fsb;
-	struct xfs_bmbt_irec	imap;
-	struct xfs_iext_cursor	icur;
+	int			nimaps = 1;
+	int			error;
 
 	/*
 	 * Caller must either hold the exclusive io lock; or be inactivating
@@ -523,11 +524,12 @@ xfs_can_free_eofblocks(
 		return false;
 
 	/*
-	 * Do not free real extents in preallocated files unless the file has
-	 * delalloc blocks and we are forced to remove them.
+	 * Only free real extents for inodes with persistent preallocations or
+	 * the append-only flag.
 	 */
-	if ((ip->i_diflags & XFS_DIFLAG_PREALLOC) && !ip->i_delayed_blks)
-		return false;
+	if (ip->i_diflags & (XFS_DIFLAG_PREALLOC | XFS_DIFLAG_APPEND))
+		if (ip->i_delayed_blks == 0)
+			return false;
 
 	/*
 	 * Do not try to free post-EOF blocks if EOF is beyond the end of the
@@ -542,13 +544,21 @@ xfs_can_free_eofblocks(
 		return false;
 
 	/*
-	 * Check if there is an post-EOF extent to free.
+	 * Look up the mapping for the first block past EOF.  If we can't find
+	 * it, there's nothing to free.
 	 */
 	xfs_ilock(ip, XFS_ILOCK_SHARED);
-	if (xfs_iext_lookup_extent(ip, &ip->i_df, end_fsb, &icur, &imap))
-		found_blocks = true;
+	error = xfs_bmapi_read(ip, end_fsb, last_fsb - end_fsb, &imap, &nimaps,
+			0);
 	xfs_iunlock(ip, XFS_ILOCK_SHARED);
-	return found_blocks;
+	if (error || nimaps == 0)
+		return false;
+
+	/*
+	 * If there's a real mapping there or there are delayed allocation
+	 * reservations, then we have post-EOF blocks to try to free.
+	 */
+	return imap.br_startblock != HOLESTARTBLOCK || ip->i_delayed_blks;
 }
 
 /*
@@ -642,9 +652,6 @@ xfs_alloc_file_space(
 	xfs_trans_t		*tp;
 	xfs_bmbt_irec_t		imaps[1], *imapp;
 	int			error;
-
-	if (xfs_is_always_cow_inode(ip))
-		return 0;
 
 	trace_xfs_alloc_file_space(ip);
 
@@ -801,18 +808,14 @@ xfs_flush_unmap_range(
 	xfs_off_t		offset,
 	xfs_off_t		len)
 {
+	struct xfs_mount	*mp = ip->i_mount;
 	struct inode		*inode = VFS_I(ip);
 	xfs_off_t		rounding, start, end;
 	int			error;
 
-	/*
-	 * Make sure we extend the flush out to extent alignment
-	 * boundaries so any extent range overlapping the start/end
-	 * of the modification we are about to do is clean and idle.
-	 */
-	rounding = max_t(xfs_off_t, xfs_inode_alloc_unitsize(ip), PAGE_SIZE);
-	start = rounddown_64(offset, rounding);
-	end = roundup_64(offset + len, rounding) - 1;
+	rounding = max_t(xfs_off_t, mp->m_sb.sb_blocksize, PAGE_SIZE);
+	start = round_down(offset, rounding);
+	end = round_up(offset + len, rounding) - 1;
 
 	error = filemap_write_and_wait_range(inode->i_mapping, start, end);
 	if (error)
@@ -840,14 +843,6 @@ xfs_free_file_space(
 
 	if (len <= 0)	/* if nothing being freed */
 		return 0;
-
-	/*
-	 * Now AIO and DIO has drained we flush and (if necessary) invalidate
-	 * the cached range over the first operation we are about to run.
-	 */
-	error = xfs_flush_unmap_range(ip, offset, len);
-	if (error)
-		return error;
 
 	startoffset_fsb = XFS_B_TO_FSB(mp, offset);
 	endoffset_fsb = XFS_B_TO_FSBT(mp, offset + len);
@@ -903,7 +898,7 @@ xfs_prepare_shift(
 	struct xfs_inode	*ip,
 	loff_t			offset)
 {
-	unsigned int		rounding;
+	struct xfs_mount	*mp = ip->i_mount;
 	int			error;
 
 	/*
@@ -921,13 +916,11 @@ xfs_prepare_shift(
 	 * with the full range of the operation. If we don't, a COW writeback
 	 * completion could race with an insert, front merge with the start
 	 * extent (after split) during the shift and corrupt the file. Start
-	 * with the allocation unit just prior to the start to stabilize the
-	 * boundary.
+	 * with the block just prior to the start to stabilize the boundary.
 	 */
-	rounding = xfs_inode_alloc_unitsize(ip);
-	offset = rounddown_64(offset, rounding);
+	offset = round_down(offset, mp->m_sb.sb_blocksize);
 	if (offset)
-		offset -= rounding;
+		offset -= mp->m_sb.sb_blocksize;
 
 	/*
 	 * Writeback and invalidate cache for the remainder of the file as we're
@@ -1185,7 +1178,7 @@ xfs_swap_extents_check_format(
 	 */
 	if (tifp->if_format == XFS_DINODE_FMT_BTREE) {
 		if (xfs_inode_has_attr_fork(ip) &&
-		    xfs_bmap_bmdr_space(tifp->if_broot) > xfs_inode_fork_boff(ip))
+		    XFS_BMAP_BMDR_SPACE(tifp->if_broot) > xfs_inode_fork_boff(ip))
 			return -EINVAL;
 		if (tifp->if_nextents <= XFS_IFORK_MAXEXT(ip, XFS_DATA_FORK))
 			return -EINVAL;
@@ -1194,7 +1187,7 @@ xfs_swap_extents_check_format(
 	/* Reciprocal target->temp btree format checks */
 	if (ifp->if_format == XFS_DINODE_FMT_BTREE) {
 		if (xfs_inode_has_attr_fork(tip) &&
-		    xfs_bmap_bmdr_space(ip->i_df.if_broot) > xfs_inode_fork_boff(tip))
+		    XFS_BMAP_BMDR_SPACE(ip->i_df.if_broot) > xfs_inode_fork_boff(tip))
 			return -EINVAL;
 		if (ifp->if_nextents <= XFS_IFORK_MAXEXT(tip, XFS_DATA_FORK))
 			return -EINVAL;

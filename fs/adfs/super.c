@@ -491,5 +491,4 @@ static void __exit exit_adfs_fs(void)
 
 module_init(init_adfs_fs)
 module_exit(exit_adfs_fs)
-MODULE_DESCRIPTION("Acorn Disc Filing System");
 MODULE_LICENSE("GPL");

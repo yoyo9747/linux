@@ -789,10 +789,12 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 		 * case.
 		 */
 		if (!plane->format_default) {
-			if (!drm_plane_has_format(plane, fb->format->format, fb->modifier)) {
+			ret = drm_plane_check_pixel_format(plane,
+							   fb->format->format,
+							   fb->modifier);
+			if (ret) {
 				drm_dbg_kms(dev, "Invalid pixel format %p4cc, modifier 0x%llx\n",
 					    &fb->format->format, fb->modifier);
-				ret = -EINVAL;
 				goto out;
 			}
 		}

@@ -48,7 +48,6 @@ static struct mlx5_irq *
 irq_pool_request_irq(struct mlx5_irq_pool *pool, struct irq_affinity_desc *af_desc)
 {
 	struct irq_affinity_desc auto_desc = {};
-	struct mlx5_irq *irq;
 	u32 irq_index;
 	int err;
 
@@ -65,12 +64,9 @@ irq_pool_request_irq(struct mlx5_irq_pool *pool, struct irq_affinity_desc *af_de
 		else
 			cpu_get(pool, cpumask_first(&af_desc->mask));
 	}
-	irq = mlx5_irq_alloc(pool, irq_index,
-			     cpumask_empty(&auto_desc.mask) ? af_desc : &auto_desc,
-			     NULL);
-	if (IS_ERR(irq))
-		xa_erase(&pool->irqs, irq_index);
-	return irq;
+	return mlx5_irq_alloc(pool, irq_index,
+			      cpumask_empty(&auto_desc.mask) ? af_desc : &auto_desc,
+			      NULL);
 }
 
 /* Looking for the IRQ with the smallest refcount that fits req_mask.
@@ -116,18 +112,15 @@ irq_pool_find_least_loaded(struct mlx5_irq_pool *pool, const struct cpumask *req
 
 /**
  * mlx5_irq_affinity_request - request an IRQ according to the given mask.
- * @dev: mlx5 core device which is requesting the IRQ.
  * @pool: IRQ pool to request from.
  * @af_desc: affinity descriptor for this IRQ.
  *
  * This function returns a pointer to IRQ, or ERR_PTR in case of error.
  */
 struct mlx5_irq *
-mlx5_irq_affinity_request(struct mlx5_core_dev *dev, struct mlx5_irq_pool *pool,
-			  struct irq_affinity_desc *af_desc)
+mlx5_irq_affinity_request(struct mlx5_irq_pool *pool, struct irq_affinity_desc *af_desc)
 {
 	struct mlx5_irq *least_loaded_irq, *new_irq;
-	int ret;
 
 	mutex_lock(&pool->lock);
 	least_loaded_irq = irq_pool_find_least_loaded(pool, &af_desc->mask);
@@ -160,16 +153,6 @@ out:
 			      mlx5_irq_read_locked(least_loaded_irq) / MLX5_EQ_REFS_PER_IRQ);
 unlock:
 	mutex_unlock(&pool->lock);
-	if (mlx5_irq_pool_is_sf_pool(pool)) {
-		ret = auxiliary_device_sysfs_irq_add(mlx5_sf_coredev_to_adev(dev),
-						     mlx5_irq_get_irq(least_loaded_irq));
-		if (ret) {
-			mlx5_core_err(dev, "Failed to create sysfs entry for irq %d, ret = %d\n",
-				      mlx5_irq_get_irq(least_loaded_irq), ret);
-			mlx5_irq_put(least_loaded_irq);
-			least_loaded_irq = ERR_PTR(ret);
-		}
-	}
 	return least_loaded_irq;
 }
 
@@ -181,9 +164,6 @@ void mlx5_irq_affinity_irq_release(struct mlx5_core_dev *dev, struct mlx5_irq *i
 	cpu = cpumask_first(mlx5_irq_get_affinity_mask(irq));
 	synchronize_irq(pci_irq_vector(pool->dev->pdev,
 				       mlx5_irq_get_index(irq)));
-	if (mlx5_irq_pool_is_sf_pool(pool))
-		auxiliary_device_sysfs_irq_remove(mlx5_sf_coredev_to_adev(dev),
-						  mlx5_irq_get_irq(irq));
 	if (mlx5_irq_put(irq))
 		if (pool->irqs_per_cpu)
 			cpu_put(pool, cpu);

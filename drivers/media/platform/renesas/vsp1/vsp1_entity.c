@@ -70,13 +70,12 @@ void vsp1_entity_route_setup(struct vsp1_entity *entity,
 }
 
 void vsp1_entity_configure_stream(struct vsp1_entity *entity,
-				  struct v4l2_subdev_state *state,
 				  struct vsp1_pipeline *pipe,
 				  struct vsp1_dl_list *dl,
 				  struct vsp1_dl_body *dlb)
 {
 	if (entity->ops->configure_stream)
-		entity->ops->configure_stream(entity, state, pipe, dl, dlb);
+		entity->ops->configure_stream(entity, pipe, dl, dlb);
 }
 
 void vsp1_entity_configure_frame(struct vsp1_entity *entity,
@@ -90,13 +89,11 @@ void vsp1_entity_configure_frame(struct vsp1_entity *entity,
 
 void vsp1_entity_configure_partition(struct vsp1_entity *entity,
 				     struct vsp1_pipeline *pipe,
-				     const struct vsp1_partition *partition,
 				     struct vsp1_dl_list *dl,
 				     struct vsp1_dl_body *dlb)
 {
 	if (entity->ops->configure_partition)
-		entity->ops->configure_partition(entity, pipe, partition,
-						 dl, dlb);
+		entity->ops->configure_partition(entity, pipe, dl, dlb);
 }
 
 /* -----------------------------------------------------------------------------
@@ -130,6 +127,49 @@ vsp1_entity_get_state(struct vsp1_entity *entity,
 	}
 }
 
+/**
+ * vsp1_entity_get_pad_format - Get a pad format from storage for an entity
+ * @entity: the entity
+ * @sd_state: the state storage
+ * @pad: the pad number
+ *
+ * Return the format stored in the given configuration for an entity's pad. The
+ * configuration can be an ACTIVE or TRY configuration.
+ */
+struct v4l2_mbus_framefmt *
+vsp1_entity_get_pad_format(struct vsp1_entity *entity,
+			   struct v4l2_subdev_state *sd_state,
+			   unsigned int pad)
+{
+	return v4l2_subdev_state_get_format(sd_state, pad);
+}
+
+/**
+ * vsp1_entity_get_pad_selection - Get a pad selection from storage for entity
+ * @entity: the entity
+ * @sd_state: the state storage
+ * @pad: the pad number
+ * @target: the selection target
+ *
+ * Return the selection rectangle stored in the given configuration for an
+ * entity's pad. The configuration can be an ACTIVE or TRY configuration. The
+ * selection target can be COMPOSE or CROP.
+ */
+struct v4l2_rect *
+vsp1_entity_get_pad_selection(struct vsp1_entity *entity,
+			      struct v4l2_subdev_state *sd_state,
+			      unsigned int pad, unsigned int target)
+{
+	switch (target) {
+	case V4L2_SEL_TGT_COMPOSE:
+		return v4l2_subdev_state_get_compose(sd_state, pad);
+	case V4L2_SEL_TGT_CROP:
+		return v4l2_subdev_state_get_crop(sd_state, pad);
+	default:
+		return NULL;
+	}
+}
+
 /*
  * vsp1_subdev_get_pad_format - Subdev pad get_fmt handler
  * @subdev: V4L2 subdevice
@@ -151,7 +191,7 @@ int vsp1_subdev_get_pad_format(struct v4l2_subdev *subdev,
 		return -EINVAL;
 
 	mutex_lock(&entity->lock);
-	fmt->format = *v4l2_subdev_state_get_format(state, fmt->pad);
+	fmt->format = *vsp1_entity_get_pad_format(entity, state, fmt->pad);
 	mutex_unlock(&entity->lock);
 
 	return 0;
@@ -198,7 +238,7 @@ int vsp1_subdev_enum_mbus_code(struct v4l2_subdev *subdev,
 			return -EINVAL;
 
 		mutex_lock(&entity->lock);
-		format = v4l2_subdev_state_get_format(state, 0);
+		format = vsp1_entity_get_pad_format(entity, state, 0);
 		code->code = format->code;
 		mutex_unlock(&entity->lock);
 	}
@@ -236,7 +276,7 @@ int vsp1_subdev_enum_frame_size(struct v4l2_subdev *subdev,
 	if (!state)
 		return -EINVAL;
 
-	format = v4l2_subdev_state_get_format(state, fse->pad);
+	format = vsp1_entity_get_pad_format(entity, state, fse->pad);
 
 	mutex_lock(&entity->lock);
 
@@ -306,7 +346,7 @@ int vsp1_subdev_set_pad_format(struct v4l2_subdev *subdev,
 		goto done;
 	}
 
-	format = v4l2_subdev_state_get_format(state, fmt->pad);
+	format = vsp1_entity_get_pad_format(entity, state, fmt->pad);
 
 	if (fmt->pad == entity->source_pad) {
 		/* The output format can't be modified. */
@@ -334,17 +374,19 @@ int vsp1_subdev_set_pad_format(struct v4l2_subdev *subdev,
 	fmt->format = *format;
 
 	/* Propagate the format to the source pad. */
-	format = v4l2_subdev_state_get_format(state, entity->source_pad);
+	format = vsp1_entity_get_pad_format(entity, state, entity->source_pad);
 	*format = fmt->format;
 
 	/* Reset the crop and compose rectangles. */
-	selection = v4l2_subdev_state_get_crop(state, fmt->pad);
+	selection = vsp1_entity_get_pad_selection(entity, state, fmt->pad,
+						  V4L2_SEL_TGT_CROP);
 	selection->left = 0;
 	selection->top = 0;
 	selection->width = format->width;
 	selection->height = format->height;
 
-	selection = v4l2_subdev_state_get_compose(state, fmt->pad);
+	selection = vsp1_entity_get_pad_selection(entity, state, fmt->pad,
+						  V4L2_SEL_TGT_COMPOSE);
 	selection->left = 0;
 	selection->top = 0;
 	selection->width = format->width;

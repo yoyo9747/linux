@@ -30,12 +30,11 @@ static LIST_HEAD(accepting_list);
  *  - memory that is below phys_base;
  *  - memory that is above the memory that addressable by the bitmap;
  */
-void accept_memory(phys_addr_t start, unsigned long size)
+void accept_memory(phys_addr_t start, phys_addr_t end)
 {
 	struct efi_unaccepted_memory *unaccepted;
 	unsigned long range_start, range_end;
 	struct accept_range range, *entry;
-	phys_addr_t end = start + size;
 	unsigned long flags;
 	u64 unit_size;
 
@@ -75,13 +74,13 @@ void accept_memory(phys_addr_t start, unsigned long size)
 	 * "guard" page is accepted in addition to the memory that needs to be
 	 * used:
 	 *
-	 * 1. Implicitly extend the range_contains_unaccepted_memory(start, size)
-	 *    checks up to the next unit_size if 'start+size' is aligned on a
-	 *    unit_size boundary.
+	 * 1. Implicitly extend the range_contains_unaccepted_memory(start, end)
+	 *    checks up to end+unit_size if 'end' is aligned on a unit_size
+	 *    boundary.
 	 *
-	 * 2. Implicitly extend accept_memory(start, size) to the next unit_size
-	 *    if 'size+end' is aligned on a unit_size boundary. (immediately
-	 *    following this comment)
+	 * 2. Implicitly extend accept_memory(start, end) to end+unit_size if
+	 *    'end' is aligned on a unit_size boundary. (immediately following
+	 *    this comment)
 	 */
 	if (!(end % unit_size))
 		end += unit_size;
@@ -157,10 +156,9 @@ retry:
 	spin_unlock_irqrestore(&unaccepted_memory_lock, flags);
 }
 
-bool range_contains_unaccepted_memory(phys_addr_t start, unsigned long size)
+bool range_contains_unaccepted_memory(phys_addr_t start, phys_addr_t end)
 {
 	struct efi_unaccepted_memory *unaccepted;
-	phys_addr_t end = start + size;
 	unsigned long flags;
 	bool ret = false;
 	u64 unit_size;

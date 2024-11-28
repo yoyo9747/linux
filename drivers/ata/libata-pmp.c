@@ -648,7 +648,8 @@ static int sata_pmp_same_pmp(struct ata_device *dev, const u32 *new_gscr)
 static int sata_pmp_revalidate(struct ata_device *dev, unsigned int new_class)
 {
 	struct ata_link *link = dev->link;
-	u32 *gscr = (void *)dev->sector_buf;
+	struct ata_port *ap = link->ap;
+	u32 *gscr = (void *)ap->sector_buf;
 	int rc;
 
 	ata_eh_about_to_do(link, NULL, ATA_EH_REVALIDATE);

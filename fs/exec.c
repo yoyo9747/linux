@@ -145,11 +145,13 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 		goto out;
 
 	/*
-	 * Check do_open_execat() for an explanation.
+	 * may_open() has already checked for this, so it should be
+	 * impossible to trip now. But we need to be extra cautious
+	 * and check again at the very end too.
 	 */
 	error = -EACCES;
-	if (WARN_ON_ONCE(!S_ISREG(file_inode(file)->i_mode)) ||
-	    path_noexec(&file->f_path))
+	if (WARN_ON_ONCE(!S_ISREG(file_inode(file)->i_mode) ||
+			 path_noexec(&file->f_path)))
 		goto exit;
 
 	error = -ENOEXEC;
@@ -484,35 +486,6 @@ static int count_strings_kernel(const char *const *argv)
 	return i;
 }
 
-static inline int bprm_set_stack_limit(struct linux_binprm *bprm,
-				       unsigned long limit)
-{
-#ifdef CONFIG_MMU
-	/* Avoid a pathological bprm->p. */
-	if (bprm->p < limit)
-		return -E2BIG;
-	bprm->argmin = bprm->p - limit;
-#endif
-	return 0;
-}
-static inline bool bprm_hit_stack_limit(struct linux_binprm *bprm)
-{
-#ifdef CONFIG_MMU
-	return bprm->p < bprm->argmin;
-#else
-	return false;
-#endif
-}
-
-/*
- * Calculate bprm->argmin from:
- * - _STK_LIM
- * - ARG_MAX
- * - bprm->rlim_stack.rlim_cur
- * - bprm->argc
- * - bprm->envc
- * - bprm->p
- */
 static int bprm_stack_limits(struct linux_binprm *bprm)
 {
 	unsigned long limit, ptr_size;
@@ -532,9 +505,6 @@ static int bprm_stack_limits(struct linux_binprm *bprm)
 	 * of argument strings even with small stacks
 	 */
 	limit = max_t(unsigned long, limit, ARG_MAX);
-	/* Reject totally pathological counts. */
-	if (bprm->argc < 0 || bprm->envc < 0)
-		return -E2BIG;
 	/*
 	 * We must account for the size of all the argv and envp pointers to
 	 * the argv and envp strings, since they will also take up space in
@@ -548,14 +518,13 @@ static int bprm_stack_limits(struct linux_binprm *bprm)
 	 * argc can never be 0, to keep them from walking envp by accident.
 	 * See do_execveat_common().
 	 */
-	if (check_add_overflow(max(bprm->argc, 1), bprm->envc, &ptr_size) ||
-	    check_mul_overflow(ptr_size, sizeof(void *), &ptr_size))
-		return -E2BIG;
+	ptr_size = (max(bprm->argc, 1) + bprm->envc) * sizeof(void *);
 	if (limit <= ptr_size)
 		return -E2BIG;
 	limit -= ptr_size;
 
-	return bprm_set_stack_limit(bprm, limit);
+	bprm->argmin = bprm->p - limit;
+	return 0;
 }
 
 /*
@@ -593,8 +562,10 @@ static int copy_strings(int argc, struct user_arg_ptr argv,
 		pos = bprm->p;
 		str += len;
 		bprm->p -= len;
-		if (bprm_hit_stack_limit(bprm))
+#ifdef CONFIG_MMU
+		if (bprm->p < bprm->argmin)
 			goto out;
+#endif
 
 		while (len > 0) {
 			int offset, bytes_to_copy;
@@ -669,7 +640,7 @@ int copy_string_kernel(const char *arg, struct linux_binprm *bprm)
 	/* We're going to work our way backwards. */
 	arg += len;
 	bprm->p -= len;
-	if (bprm_hit_stack_limit(bprm))
+	if (IS_ENABLED(CONFIG_MMU) && bprm->p < bprm->argmin)
 		return -E2BIG;
 
 	while (len > 0) {
@@ -710,6 +681,80 @@ static int copy_strings_kernel(int argc, const char *const *argv,
 #ifdef CONFIG_MMU
 
 /*
+ * During bprm_mm_init(), we create a temporary stack at STACK_TOP_MAX.  Once
+ * the binfmt code determines where the new stack should reside, we shift it to
+ * its final location.  The process proceeds as follows:
+ *
+ * 1) Use shift to calculate the new vma endpoints.
+ * 2) Extend vma to cover both the old and new ranges.  This ensures the
+ *    arguments passed to subsequent functions are consistent.
+ * 3) Move vma's page tables to the new range.
+ * 4) Free up any cleared pgd range.
+ * 5) Shrink the vma to cover only the new range.
+ */
+static int shift_arg_pages(struct vm_area_struct *vma, unsigned long shift)
+{
+	struct mm_struct *mm = vma->vm_mm;
+	unsigned long old_start = vma->vm_start;
+	unsigned long old_end = vma->vm_end;
+	unsigned long length = old_end - old_start;
+	unsigned long new_start = old_start - shift;
+	unsigned long new_end = old_end - shift;
+	VMA_ITERATOR(vmi, mm, new_start);
+	struct vm_area_struct *next;
+	struct mmu_gather tlb;
+
+	BUG_ON(new_start > new_end);
+
+	/*
+	 * ensure there are no vmas between where we want to go
+	 * and where we are
+	 */
+	if (vma != vma_next(&vmi))
+		return -EFAULT;
+
+	vma_iter_prev_range(&vmi);
+	/*
+	 * cover the whole range: [new_start, old_end)
+	 */
+	if (vma_expand(&vmi, vma, new_start, old_end, vma->vm_pgoff, NULL))
+		return -ENOMEM;
+
+	/*
+	 * move the page tables downwards, on failure we rely on
+	 * process cleanup to remove whatever mess we made.
+	 */
+	if (length != move_page_tables(vma, old_start,
+				       vma, new_start, length, false, true))
+		return -ENOMEM;
+
+	lru_add_drain();
+	tlb_gather_mmu(&tlb, mm);
+	next = vma_next(&vmi);
+	if (new_end > old_start) {
+		/*
+		 * when the old and new regions overlap clear from new_end.
+		 */
+		free_pgd_range(&tlb, new_end, old_end, new_end,
+			next ? next->vm_start : USER_PGTABLES_CEILING);
+	} else {
+		/*
+		 * otherwise, clean from old_start; this is done to not touch
+		 * the address space in [new_end, old_start) some architectures
+		 * have constraints on va-space that make this illegal (IA64) -
+		 * for the others its just a little faster.
+		 */
+		free_pgd_range(&tlb, old_start, old_end, new_end,
+			next ? next->vm_start : USER_PGTABLES_CEILING);
+	}
+	tlb_finish_mmu(&tlb);
+
+	vma_prev(&vmi);
+	/* Shrink the vma to just the new range */
+	return vma_shrink(&vmi, vma, new_start, new_end, vma->vm_pgoff);
+}
+
+/*
  * Finalizes the stack vm_area_struct. The flags and permissions are updated,
  * the stack is optionally relocated, and some extra space is added.
  */
@@ -737,8 +782,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	stack_base = calc_max_stack_size(stack_base);
 
 	/* Add space for stack randomization. */
-	if (current->flags & PF_RANDOMIZE)
-		stack_base += (STACK_RND_MASK << PAGE_SHIFT);
+	stack_base += (STACK_RND_MASK << PAGE_SHIFT);
 
 	/* Make sure we didn't let the argument array grow too large. */
 	if (vma->vm_end - vma->vm_start > stack_base)
@@ -802,12 +846,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 
 	/* Move stack pages down in memory. */
 	if (stack_shift) {
-		/*
-		 * During bprm_mm_init(), we create a temporary stack at STACK_TOP_MAX.  Once
-		 * the binfmt code determines where the new stack should reside, we shift it to
-		 * its final location.
-		 */
-		ret = relocate_vma_down(vma, stack_shift);
+		ret = shift_arg_pages(vma, stack_shift);
 		if (ret)
 			goto out_unlock;
 	}
@@ -884,6 +923,7 @@ EXPORT_SYMBOL(transfer_args_to_stack);
 static struct file *do_open_execat(int fd, struct filename *name, int flags)
 {
 	struct file *file;
+	int err;
 	struct open_flags open_exec_flags = {
 		.open_flag = O_LARGEFILE | O_RDONLY | __FMODE_EXEC,
 		.acc_mode = MAY_EXEC,
@@ -900,20 +940,28 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 
 	file = do_filp_open(fd, name, &open_exec_flags);
 	if (IS_ERR(file))
-		return file;
+		goto out;
 
 	/*
-	 * In the past the regular type check was here. It moved to may_open() in
-	 * 633fb6ac3980 ("exec: move S_ISREG() check earlier"). Since then it is
-	 * an invariant that all non-regular files error out before we get here.
+	 * may_open() has already checked for this, so it should be
+	 * impossible to trip now. But we need to be extra cautious
+	 * and check again at the very end too.
 	 */
-	if (WARN_ON_ONCE(!S_ISREG(file_inode(file)->i_mode)) ||
-	    path_noexec(&file->f_path)) {
-		fput(file);
-		return ERR_PTR(-EACCES);
-	}
+	err = -EACCES;
+	if (WARN_ON_ONCE(!S_ISREG(file_inode(file)->i_mode) ||
+			 path_noexec(&file->f_path)))
+		goto exit;
 
+	err = deny_write_access(file);
+	if (err)
+		goto exit;
+
+out:
 	return file;
+
+exit:
+	fput(file);
+	return ERR_PTR(err);
 }
 
 /**
@@ -923,7 +971,8 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
  *
  * Returns ERR_PTR on failure or allocated struct file on success.
  *
- * As this is a wrapper for the internal do_open_execat(). Also see
+ * As this is a wrapper for the internal do_open_execat(), callers
+ * must call allow_write_access() before fput() on release. Also see
  * do_close_execat().
  */
 struct file *open_exec(const char *name)
@@ -1475,8 +1524,10 @@ static int prepare_bprm_creds(struct linux_binprm *bprm)
 /* Matches do_open_execat() */
 static void do_close_execat(struct file *file)
 {
-	if (file)
-		fput(file);
+	if (!file)
+		return;
+	allow_write_access(file);
+	fput(file);
 }
 
 static void free_bprm(struct linux_binprm *bprm)
@@ -1617,7 +1668,6 @@ static void bprm_fill_uid(struct linux_binprm *bprm, struct file *file)
 	unsigned int mode;
 	vfsuid_t vfsuid;
 	vfsgid_t vfsgid;
-	int err;
 
 	if (!mnt_may_suid(file->f_path.mnt))
 		return;
@@ -1634,16 +1684,11 @@ static void bprm_fill_uid(struct linux_binprm *bprm, struct file *file)
 	/* Be careful if suid/sgid is set */
 	inode_lock(inode);
 
-	/* Atomically reload and check mode/uid/gid now that lock held. */
+	/* reload atomically mode/uid/gid now that lock held */
 	mode = inode->i_mode;
 	vfsuid = i_uid_into_vfsuid(idmap, inode);
 	vfsgid = i_gid_into_vfsgid(idmap, inode);
-	err = inode_permission(idmap, inode, MAY_EXEC);
 	inode_unlock(inode);
-
-	/* Did the exec bit vanish out from under us? Give up. */
-	if (err)
-		return;
 
 	/* We ignore suid/sgid if there are no mappings for them in the ns */
 	if (!vfsuid_has_mapping(bprm->cred->user_ns, vfsuid) ||
@@ -1801,6 +1846,7 @@ static int exec_binprm(struct linux_binprm *bprm)
 		bprm->file = bprm->interpreter;
 		bprm->interpreter = NULL;
 
+		allow_write_access(exec);
 		if (unlikely(bprm->have_execfd)) {
 			if (bprm->executable) {
 				fput(exec);
@@ -2135,7 +2181,7 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 
 #ifdef CONFIG_SYSCTL
 
-static int proc_dointvec_minmax_coredump(const struct ctl_table *table, int write,
+static int proc_dointvec_minmax_coredump(struct ctl_table *table, int write,
 		void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
@@ -2165,7 +2211,3 @@ static int __init init_fs_exec_sysctls(void)
 
 fs_initcall(init_fs_exec_sysctls);
 #endif /* CONFIG_SYSCTL */
-
-#ifdef CONFIG_EXEC_KUNIT_TEST
-#include "tests/exec_kunit.c"
-#endif

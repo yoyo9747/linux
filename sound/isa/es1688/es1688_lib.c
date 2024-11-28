@@ -30,7 +30,9 @@ static int snd_es1688_dsp_command(struct snd_es1688 *chip, unsigned char val)
 			outb(val, ES1688P(chip, COMMAND));
 			return 1;
 		}
-	dev_dbg(chip->card->dev, "%s: timeout (0x%x)\n", __func__, val);
+#ifdef CONFIG_SND_DEBUG
+	printk(KERN_DEBUG "snd_es1688_dsp_command: timeout (0x%x)\n", val);
+#endif
 	return 0;
 }
 
@@ -41,8 +43,7 @@ static int snd_es1688_dsp_get_byte(struct snd_es1688 *chip)
 	for (i = 1000; i; i--)
 		if (inb(ES1688P(chip, DATA_AVAIL)) & 0x80)
 			return inb(ES1688P(chip, READ));
-	dev_dbg(chip->card->dev, "es1688 get byte failed: 0x%lx = 0x%x!!!\n",
-		ES1688P(chip, DATA_AVAIL), inb(ES1688P(chip, DATA_AVAIL)));
+	snd_printd("es1688 get byte failed: 0x%lx = 0x%x!!!\n", ES1688P(chip, DATA_AVAIL), inb(ES1688P(chip, DATA_AVAIL)));
 	return -ENODEV;
 }
 
@@ -94,8 +95,7 @@ int snd_es1688_reset(struct snd_es1688 *chip)
 	udelay(30);
 	for (i = 0; i < 1000 && !(inb(ES1688P(chip, DATA_AVAIL)) & 0x80); i++);
 	if (inb(ES1688P(chip, READ)) != 0xaa) {
-		dev_dbg(chip->card->dev, "ess_reset at 0x%lx: failed!!!\n",
-			chip->port);
+		snd_printd("ess_reset at 0x%lx: failed!!!\n", chip->port);
 		return -ENODEV;
 	}
 	snd_es1688_dsp_command(chip, 0xc6);	/* enable extended mode */
@@ -127,8 +127,7 @@ static int snd_es1688_probe(struct snd_es1688 *chip)
 	inb(ES1688P(chip, ENABLE0));	/* ENABLE0 */
 
 	if (snd_es1688_reset(chip) < 0) {
-		dev_dbg(chip->card->dev, "ESS: [0x%lx] reset failed... 0x%x\n",
-			chip->port, inb(ES1688P(chip, READ)));
+		snd_printdd("ESS: [0x%lx] reset failed... 0x%x\n", chip->port, inb(ES1688P(chip, READ)));
 		spin_unlock_irqrestore(&chip->reg_lock, flags);
 		return -ENODEV;
 	}
@@ -146,9 +145,7 @@ static int snd_es1688_probe(struct snd_es1688 *chip)
 
 	spin_unlock_irqrestore(&chip->reg_lock, flags);
 
-	dev_dbg(chip->card->dev,
-		"ESS: [0x%lx] found.. major = 0x%x, minor = 0x%x\n",
-		chip->port, major, minor);
+	snd_printdd("ESS: [0x%lx] found.. major = 0x%x, minor = 0x%x\n", chip->port, major, minor);
 
 	chip->version = (major << 8) | minor;
 	if (!chip->version)
@@ -156,16 +153,15 @@ static int snd_es1688_probe(struct snd_es1688 *chip)
 
 	switch (chip->version & 0xfff0) {
 	case 0x4880:
-		dev_err(chip->card->dev,
-			"[0x%lx] ESS: AudioDrive ES488 detected, but driver is in another place\n",
-			chip->port);
+		snd_printk(KERN_ERR "[0x%lx] ESS: AudioDrive ES488 detected, "
+			   "but driver is in another place\n", chip->port);
 		return -ENODEV;
 	case 0x6880:
 		break;
 	default:
-		dev_err(chip->card->dev,
-			"[0x%lx] ESS: unknown AudioDrive chip with version 0x%x (Jazz16 soundcard?)\n",
-			chip->port, chip->version);
+		snd_printk(KERN_ERR "[0x%lx] ESS: unknown AudioDrive chip "
+			   "with version 0x%x (Jazz16 soundcard?)\n",
+			   chip->port, chip->version);
 		return -ENODEV;
 	}
 
@@ -214,6 +210,9 @@ static int snd_es1688_init(struct snd_es1688 * chip, int enable)
 			}
 		}
 	}
+#if 0
+	snd_printk(KERN_DEBUG "mpu cfg = 0x%x\n", cfg);
+#endif
 	spin_lock_irqsave(&chip->reg_lock, flags);
 	snd_es1688_mixer_write(chip, 0x40, cfg);
 	spin_unlock_irqrestore(&chip->reg_lock, flags);
@@ -226,9 +225,9 @@ static int snd_es1688_init(struct snd_es1688 * chip, int enable)
 		cfg = 0xf0;	/* enable only DMA counter interrupt */
 		irq_bits = irqs[chip->irq & 0x0f];
 		if (irq_bits < 0) {
-			dev_err(chip->card->dev,
-				"[0x%lx] ESS: bad IRQ %d for ES1688 chip!!\n",
-				chip->port, chip->irq);
+			snd_printk(KERN_ERR "[0x%lx] ESS: bad IRQ %d "
+				   "for ES1688 chip!!\n",
+				   chip->port, chip->irq);
 #if 0
 			irq_bits = 0;
 			cfg = 0x10;
@@ -241,9 +240,8 @@ static int snd_es1688_init(struct snd_es1688 * chip, int enable)
 		cfg = 0xf0;	/* extended mode DMA enable */
 		dma = chip->dma8;
 		if (dma > 3 || dma == 2) {
-			dev_err(chip->card->dev,
-				"[0x%lx] ESS: bad DMA channel %d for ES1688 chip!!\n",
-				chip->port, dma);
+			snd_printk(KERN_ERR "[0x%lx] ESS: bad DMA channel %d "
+				   "for ES1688 chip!!\n", chip->port, dma);
 #if 0
 			dma_bits = 0;
 			cfg = 0x00;	/* disable all DMA */
@@ -328,9 +326,9 @@ static int snd_es1688_trigger(struct snd_es1688 *chip, int cmd, unsigned char va
 		return -EINVAL;	/* something is wrong */
 	}
 #if 0
-	dev_dbg(chip->card->dev, "trigger: val = 0x%x, value = 0x%x\n", val, value);
-	dev_dbg(chip->card->dev, "trigger: pointer = 0x%x\n",
-		snd_dma_pointer(chip->dma8, chip->dma_size));
+	printk(KERN_DEBUG "trigger: val = 0x%x, value = 0x%x\n", val, value);
+	printk(KERN_DEBUG "trigger: pointer = 0x%x\n",
+	       snd_dma_pointer(chip->dma8, chip->dma_size));
 #endif
 	snd_es1688_write(chip, 0xb8, (val & 0xf0) | value);
 	spin_unlock(&chip->reg_lock);
@@ -622,21 +620,20 @@ int snd_es1688_create(struct snd_card *card,
 
 	if (chip == NULL)
 		return -ENOMEM;
-	chip->card = card;
 	chip->irq = -1;
 	chip->dma8 = -1;
 	chip->hardware = ES1688_HW_UNDEF;
 	
 	chip->res_port = request_region(port + 4, 12, "ES1688");
 	if (chip->res_port == NULL) {
-		dev_err(card->dev, "es1688: can't grab port 0x%lx\n", port + 4);
+		snd_printk(KERN_ERR "es1688: can't grab port 0x%lx\n", port + 4);
 		err = -EBUSY;
 		goto exit;
 	}
 
 	err = request_irq(irq, snd_es1688_interrupt, 0, "ES1688", (void *) chip);
 	if (err < 0) {
-		dev_err(card->dev, "es1688: can't grab IRQ %d\n", irq);
+		snd_printk(KERN_ERR "es1688: can't grab IRQ %d\n", irq);
 		goto exit;
 	}
 
@@ -645,7 +642,7 @@ int snd_es1688_create(struct snd_card *card,
 	err = request_dma(dma8, "ES1688");
 
 	if (err < 0) {
-		dev_err(card->dev, "es1688: can't grab DMA8 %d\n", dma8);
+		snd_printk(KERN_ERR "es1688: can't grab DMA8 %d\n", dma8);
 		goto exit;
 	}
 	chip->dma8 = dma8;

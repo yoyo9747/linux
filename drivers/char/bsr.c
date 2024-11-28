@@ -342,6 +342,5 @@ static void __exit  bsr_exit(void)
 
 module_init(bsr_init);
 module_exit(bsr_exit);
-MODULE_DESCRIPTION("IBM POWER Barrier Synchronization Register Driver");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Sonny Rao <sonnyrao@us.ibm.com>");

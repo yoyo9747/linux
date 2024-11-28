@@ -20,10 +20,20 @@ cat /sys/kernel/debug/dri/*/state
 set -e
 
 case "$DRIVER_NAME" in
-    amdgpu|vkms)
+    rockchip|meson)
+        export IGT_FORCE_DRIVER="panfrost"
+        ;;
+    mediatek)
+        if [ "$GPU_VERSION" = "mt8173" ]; then
+            export IGT_FORCE_DRIVER=${DRIVER_NAME}
+        elif [ "$GPU_VERSION" = "mt8183" ]; then
+            export IGT_FORCE_DRIVER="panfrost"
+        fi
+        ;;
+    amdgpu)
         # Cannot use HWCI_KERNEL_MODULES as at that point we don't have the module in /lib
-        mv /install/modules/lib/modules/* /lib/modules/. || true
-        modprobe --first-time $DRIVER_NAME
+        mv /install/modules/lib/modules/* /lib/modules/.
+        modprobe amdgpu
         ;;
 esac
 
@@ -49,28 +59,26 @@ fi
 
 curl -L --retry 4 -f --retry-all-errors --retry-delay 60 -s ${FDO_HTTP_CACHE_URI:-}$PIPELINE_ARTIFACTS_BASE/$ARCH/igt.tar.gz | tar --zstd -v -x -C /
 
-TESTLIST="/igt/libexec/igt-gpu-tools/ci-testlist.txt"
 
 # If the job is parallel at the gitab job level, take the corresponding fraction
 # of the caselist.
 if [ -n "$CI_NODE_INDEX" ]; then
-    sed -ni $CI_NODE_INDEX~$CI_NODE_TOTAL"p" $TESTLIST
+    sed -ni $CI_NODE_INDEX~$CI_NODE_TOTAL"p" /install/testlist.txt
 fi
 
 # core_getversion checks if the driver is loaded and probed correctly
 # so run it in all shards
-if ! grep -q "core_getversion" $TESTLIST; then
+if ! grep -q "core_getversion" /install/testlist.txt; then
     # Add the line to the file
-    echo "core_getversion" >> $TESTLIST
+    echo "core_getversion" >> /install/testlist.txt
 fi
 
 set +e
 igt-runner \
     run \
     --igt-folder /igt/libexec/igt-gpu-tools \
-    --caselist $TESTLIST \
+    --caselist /install/testlist.txt \
     --output /results \
-    -vvvv \
     $IGT_SKIPS \
     $IGT_FLAKES \
     $IGT_FAILS \

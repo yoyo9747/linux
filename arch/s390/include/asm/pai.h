@@ -55,11 +55,11 @@ static __always_inline void pai_kernel_enter(struct pt_regs *regs)
 		return;
 	if (!static_branch_unlikely(&pai_key))
 		return;
-	if (!get_lowcore()->ccd)
+	if (!S390_lowcore.ccd)
 		return;
 	if (!user_mode(regs))
 		return;
-	WRITE_ONCE(get_lowcore()->ccd, get_lowcore()->ccd | PAI_CRYPTO_KERNEL_OFFSET);
+	WRITE_ONCE(S390_lowcore.ccd, S390_lowcore.ccd | PAI_CRYPTO_KERNEL_OFFSET);
 }
 
 static __always_inline void pai_kernel_exit(struct pt_regs *regs)
@@ -68,15 +68,18 @@ static __always_inline void pai_kernel_exit(struct pt_regs *regs)
 		return;
 	if (!static_branch_unlikely(&pai_key))
 		return;
-	if (!get_lowcore()->ccd)
+	if (!S390_lowcore.ccd)
 		return;
 	if (!user_mode(regs))
 		return;
-	WRITE_ONCE(get_lowcore()->ccd, get_lowcore()->ccd & ~PAI_CRYPTO_KERNEL_OFFSET);
+	WRITE_ONCE(S390_lowcore.ccd, S390_lowcore.ccd & ~PAI_CRYPTO_KERNEL_OFFSET);
 }
 
-#define PAI_SAVE_AREA(x)	((x)->hw.event_base)
-#define PAI_CPU_MASK(x)		((x)->hw.addr_filters)
-#define PAI_SWLIST(x)		(&(x)->hw.tp_list)
+enum paievt_mode {
+	PAI_MODE_NONE,
+	PAI_MODE_SAMPLING,
+	PAI_MODE_COUNTING,
+};
 
+#define PAI_SAVE_AREA(x)	((x)->hw.event_base)
 #endif

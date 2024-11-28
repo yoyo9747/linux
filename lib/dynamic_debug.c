@@ -1147,7 +1147,7 @@ static int ddebug_proc_show(struct seq_file *m, void *p)
 		   iter->table->mod_name, dp->function,
 		   ddebug_describe_flags(dp->flags, &flags));
 	seq_escape_str(m, dp->format, ESCAPE_SPACE, "\t\r\n\"");
-	seq_putc(m, '"');
+	seq_puts(m, "\"");
 
 	if (dp->class_id != _DPRINTK_CLASS_DFLT) {
 		class = ddebug_class_name(iter, dp);
@@ -1156,7 +1156,7 @@ static int ddebug_proc_show(struct seq_file *m, void *p)
 		else
 			seq_printf(m, " class unknown, _id:%d", dp->class_id);
 	}
-	seq_putc(m, '\n');
+	seq_puts(m, "\n");
 
 	return 0;
 }

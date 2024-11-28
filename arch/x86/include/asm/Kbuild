@@ -11,4 +11,3 @@ generated-y += xen-hypercalls.h
 
 generic-y += early_ioremap.h
 generic-y += mcs_spinlock.h
-generic-y += mmzone.h

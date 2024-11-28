@@ -13,7 +13,7 @@
 #include <asm/processor.h>
 #include <linux/thread_info.h>
 #include <linux/preempt.h>
-#include <linux/cpumask_types.h>
+#include <linux/cpumask.h>
 
 #include <linux/cache.h>
 #include <linux/irqflags_types.h>
@@ -36,7 +36,6 @@
 #include <linux/signal_types.h>
 #include <linux/syscall_user_dispatch_types.h>
 #include <linux/mm_types_task.h>
-#include <linux/netdevice_xmit.h>
 #include <linux/task_io_accounting.h>
 #include <linux/posix-timers_types.h>
 #include <linux/restart_block.h>
@@ -54,7 +53,6 @@ struct bio_list;
 struct blk_plug;
 struct bpf_local_storage;
 struct bpf_run_ctx;
-struct bpf_net_context;
 struct capture_control;
 struct cfs_rq;
 struct fs_struct;
@@ -81,8 +79,6 @@ struct task_delay_info;
 struct task_group;
 struct task_struct;
 struct user_event_mm;
-
-#include <linux/sched/ext.h>
 
 /*
  * Task state bitmask. NOTE! These bits are also
@@ -151,9 +147,8 @@ struct user_event_mm;
  * Special states are those that do not use the normal wait-loop pattern. See
  * the comment with set_special_state().
  */
-#define is_special_task_state(state)					\
-	((state) & (__TASK_STOPPED | __TASK_TRACED | TASK_PARKED |	\
-		    TASK_DEAD | TASK_FROZEN))
+#define is_special_task_state(state)				\
+	((state) & (__TASK_STOPPED | __TASK_TRACED | TASK_PARKED | TASK_DEAD))
 
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 # define debug_normal_state_change(state_value)				\
@@ -544,14 +539,9 @@ struct sched_entity {
 	struct rb_node			run_node;
 	u64				deadline;
 	u64				min_vruntime;
-	u64				min_slice;
 
 	struct list_head		group_node;
-	unsigned char			on_rq;
-	unsigned char			sched_delayed;
-	unsigned char			rel_deadline;
-	unsigned char			custom_slice;
-					/* hole */
+	unsigned int			on_rq;
 
 	u64				exec_start;
 	u64				sum_exec_runtime;
@@ -647,26 +637,12 @@ struct sched_dl_entity {
 	 *
 	 * @dl_overrun tells if the task asked to be informed about runtime
 	 * overruns.
-	 *
-	 * @dl_server tells if this is a server entity.
-	 *
-	 * @dl_defer tells if this is a deferred or regular server. For
-	 * now only defer server exists.
-	 *
-	 * @dl_defer_armed tells if the deferrable server is waiting
-	 * for the replenishment timer to activate it.
-	 *
-	 * @dl_defer_running tells if the deferrable server is actually
-	 * running, skipping the defer phase.
 	 */
 	unsigned int			dl_throttled      : 1;
 	unsigned int			dl_yielded        : 1;
 	unsigned int			dl_non_contending : 1;
 	unsigned int			dl_overrun	  : 1;
 	unsigned int			dl_server         : 1;
-	unsigned int			dl_defer	  : 1;
-	unsigned int			dl_defer_armed	  : 1;
-	unsigned int			dl_defer_running  : 1;
 
 	/*
 	 * Bandwidth enforcement timer. Each -deadline task has its
@@ -694,7 +670,7 @@ struct sched_dl_entity {
 	 */
 	struct rq			*rq;
 	dl_server_has_tasks_f		server_has_tasks;
-	dl_server_pick_f		server_pick_task;
+	dl_server_pick_f		server_pick;
 
 #ifdef CONFIG_RT_MUTEXES
 	/*
@@ -757,12 +733,6 @@ enum perf_event_task_context {
 	perf_sw_context,
 	perf_nr_task_contexts,
 };
-
-/*
- * Number of contexts where an event can trigger:
- *      task, softirq, hardirq, nmi.
- */
-#define PERF_NR_CONTEXTS	4
 
 struct wake_q_node {
 	struct wake_q_node *next;
@@ -832,9 +802,6 @@ struct task_struct {
 	struct sched_rt_entity		rt;
 	struct sched_dl_entity		dl;
 	struct sched_dl_entity		*dl_server;
-#ifdef CONFIG_SCHED_CLASS_EXT
-	struct sched_ext_entity		scx;
-#endif
 	const struct sched_class	*sched_class;
 
 #ifdef CONFIG_SCHED_CORE
@@ -967,7 +934,7 @@ struct task_struct {
 #ifndef TIF_RESTORE_SIGMASK
 	unsigned			restore_sigmask:1;
 #endif
-#ifdef CONFIG_MEMCG_V1
+#ifdef CONFIG_MEMCG
 	unsigned			in_user_fault:1;
 #endif
 #ifdef CONFIG_LRU_GEN
@@ -1008,9 +975,7 @@ struct task_struct {
 	/* delay due to memory thrashing */
 	unsigned                        in_thrashing:1;
 #endif
-#ifdef CONFIG_PREEMPT_RT
-	struct netdev_xmit		net_xmit;
-#endif
+
 	unsigned long			atomic_flags; /* Flags requiring atomic access. */
 
 	struct restart_block		restart_block;
@@ -1268,6 +1233,7 @@ struct task_struct {
 	/* Sequence number to catch updates: */
 	seqcount_spinlock_t		mems_allowed_seq;
 	int				cpuset_mem_spread_rotor;
+	int				cpuset_slab_spread_rotor;
 #endif
 #ifdef CONFIG_CGROUPS
 	/* Control Group info protected by css_set_lock: */
@@ -1290,7 +1256,6 @@ struct task_struct {
 	unsigned int			futex_state;
 #endif
 #ifdef CONFIG_PERF_EVENTS
-	u8				perf_recursion[PERF_NR_CONTEXTS];
 	struct perf_event_context	*perf_event_ctxp;
 	struct mutex			perf_event_mutex;
 	struct list_head		perf_event_list;
@@ -1437,7 +1402,7 @@ struct task_struct {
 	int				curr_ret_depth;
 
 	/* Stack of return addresses for return function tracing: */
-	unsigned long			*ret_stack;
+	struct ftrace_ret_stack		*ret_stack;
 
 	/* Timestamp for last schedule: */
 	unsigned long long		ftrace_timestamp;
@@ -1482,18 +1447,17 @@ struct task_struct {
 	unsigned int			kcov_softirq;
 #endif
 
-#ifdef CONFIG_MEMCG_V1
-	struct mem_cgroup		*memcg_in_oom;
-#endif
-
 #ifdef CONFIG_MEMCG
+	struct mem_cgroup		*memcg_in_oom;
+
 	/* Number of pages to reclaim on returning to userland: */
 	unsigned int			memcg_nr_pages_over_high;
 
 	/* Used by memcontrol for targeted memcg charge: */
 	struct mem_cgroup		*active_memcg;
+#endif
 
-	/* Cache for current->cgroups->memcg->objcg lookups: */
+#ifdef CONFIG_MEMCG_KMEM
 	struct obj_cgroup		*objcg;
 #endif
 
@@ -1542,8 +1506,6 @@ struct task_struct {
 	/* Used for BPF run context */
 	struct bpf_run_ctx		*bpf_ctx;
 #endif
-	/* Used by BPF for per-TASK xdp storage */
-	struct bpf_net_context		*bpf_net_context;
 
 #ifdef CONFIG_GCC_PLUGIN_STACKLEAK
 	unsigned long			lowest_stack;
@@ -1642,7 +1604,7 @@ static inline char task_index_to_char(unsigned int state)
 {
 	static const char state_char[] = "RSDTtXZPI";
 
-	BUILD_BUG_ON(TASK_REPORT_MAX * 2 != 1 << (sizeof(state_char) - 1));
+	BUILD_BUG_ON(1 + ilog2(TASK_REPORT_MAX) != sizeof(state_char) - 1);
 
 	return state_char[state];
 }
@@ -1681,8 +1643,8 @@ extern struct pid *cad_pid;
 						 * I am cleaning dirty pages from some other bdi. */
 #define PF_KTHREAD		0x00200000	/* I am a kernel thread */
 #define PF_RANDOMIZE		0x00400000	/* Randomize virtual address space */
-#define PF__HOLE__00800000	0x00800000
-#define PF__HOLE__01000000	0x01000000
+#define PF_MEMALLOC_NORECLAIM	0x00800000	/* All allocation requests will clear __GFP_DIRECT_RECLAIM */
+#define PF_MEMALLOC_NOWARN	0x01000000	/* All allocation requests will inherit __GFP_NOWARN */
 #define PF__HOLE__02000000	0x02000000
 #define PF_NO_SETAFFINITY	0x04000000	/* Userland is not allowed to meddle with cpus_mask */
 #define PF_MCE_EARLY		0x08000000      /* Early kill for mce process policy */
@@ -1816,8 +1778,7 @@ static inline void do_set_cpus_allowed(struct task_struct *p, const struct cpuma
 }
 static inline int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 {
-	/* Opencoded cpumask_test_cpu(0, new_mask) to avoid dependency on cpumask.h */
-	if ((*cpumask_bits(new_mask) & 1) == 0)
+	if (!cpumask_test_cpu(0, new_mask))
 		return -EINVAL;
 	return 0;
 }
@@ -2102,6 +2063,47 @@ extern int __cond_resched_rwlock_write(rwlock_t *lock);
 	__might_resched(__FILE__, __LINE__, PREEMPT_LOCK_RESCHED_OFFSETS);	\
 	__cond_resched_rwlock_write(lock);					\
 })
+
+#ifdef CONFIG_PREEMPT_DYNAMIC
+
+extern bool preempt_model_none(void);
+extern bool preempt_model_voluntary(void);
+extern bool preempt_model_full(void);
+
+#else
+
+static inline bool preempt_model_none(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_NONE);
+}
+static inline bool preempt_model_voluntary(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_VOLUNTARY);
+}
+static inline bool preempt_model_full(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT);
+}
+
+#endif
+
+static inline bool preempt_model_rt(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_RT);
+}
+
+/*
+ * Does the preemption model allow non-cooperative preemption?
+ *
+ * For !CONFIG_PREEMPT_DYNAMIC kernels this is an exact match with
+ * CONFIG_PREEMPTION; for CONFIG_PREEMPT_DYNAMIC this doesn't work as the
+ * kernel is *built* with CONFIG_PREEMPTION=y but may run with e.g. the
+ * PREEMPT_NONE model.
+ */
+static inline bool preempt_model_preemptible(void)
+{
+	return preempt_model_full() || preempt_model_rt();
+}
 
 static __always_inline bool need_resched(void)
 {

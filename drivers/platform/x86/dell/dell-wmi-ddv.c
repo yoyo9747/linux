@@ -31,7 +31,7 @@
 
 #include <acpi/battery.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define DRIVER_NAME	"dell-wmi-ddv"
 

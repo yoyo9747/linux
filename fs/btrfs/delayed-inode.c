@@ -77,14 +77,14 @@ static struct btrfs_delayed_node *btrfs_get_delayed_node(
 		return node;
 	}
 
-	xa_lock(&root->delayed_nodes);
+	spin_lock(&root->inode_lock);
 	node = xa_load(&root->delayed_nodes, ino);
 
 	if (node) {
 		if (btrfs_inode->delayed_node) {
 			refcount_inc(&node->refs);	/* can be accessed */
 			BUG_ON(btrfs_inode->delayed_node != node);
-			xa_unlock(&root->delayed_nodes);
+			spin_unlock(&root->inode_lock);
 			return node;
 		}
 
@@ -111,10 +111,10 @@ static struct btrfs_delayed_node *btrfs_get_delayed_node(
 			node = NULL;
 		}
 
-		xa_unlock(&root->delayed_nodes);
+		spin_unlock(&root->inode_lock);
 		return node;
 	}
-	xa_unlock(&root->delayed_nodes);
+	spin_unlock(&root->inode_lock);
 
 	return NULL;
 }
@@ -148,21 +148,21 @@ again:
 		kmem_cache_free(delayed_node_cache, node);
 		return ERR_PTR(-ENOMEM);
 	}
-	xa_lock(&root->delayed_nodes);
+	spin_lock(&root->inode_lock);
 	ptr = xa_load(&root->delayed_nodes, ino);
 	if (ptr) {
 		/* Somebody inserted it, go back and read it. */
-		xa_unlock(&root->delayed_nodes);
+		spin_unlock(&root->inode_lock);
 		kmem_cache_free(delayed_node_cache, node);
 		node = NULL;
 		goto again;
 	}
-	ptr = __xa_store(&root->delayed_nodes, ino, node, GFP_ATOMIC);
+	ptr = xa_store(&root->delayed_nodes, ino, node, GFP_ATOMIC);
 	ASSERT(xa_err(ptr) != -EINVAL);
 	ASSERT(xa_err(ptr) != -ENOMEM);
 	ASSERT(ptr == NULL);
 	btrfs_inode->delayed_node = node;
-	xa_unlock(&root->delayed_nodes);
+	spin_unlock(&root->inode_lock);
 
 	return node;
 }
@@ -275,12 +275,14 @@ static void __btrfs_release_delayed_node(
 	if (refcount_dec_and_test(&delayed_node->refs)) {
 		struct btrfs_root *root = delayed_node->root;
 
-		xa_erase(&root->delayed_nodes, delayed_node->inode_id);
+		spin_lock(&root->inode_lock);
 		/*
 		 * Once our refcount goes to zero, nobody is allowed to bump it
 		 * back up.  We can delete it now.
 		 */
 		ASSERT(refcount_read(&delayed_node->refs) == 0);
+		xa_erase(&root->delayed_nodes, delayed_node->inode_id);
+		spin_unlock(&root->inode_lock);
 		kmem_cache_free(delayed_node_cache, delayed_node);
 	}
 }
@@ -1469,7 +1471,7 @@ static void btrfs_release_dir_index_item_space(struct btrfs_trans_handle *trans)
 int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
 				   const char *name, int name_len,
 				   struct btrfs_inode *dir,
-				   const struct btrfs_disk_key *disk_key, u8 flags,
+				   struct btrfs_disk_key *disk_key, u8 flags,
 				   u64 index)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
@@ -1682,7 +1684,7 @@ int btrfs_inode_delayed_dir_index_count(struct btrfs_inode *inode)
 	return 0;
 }
 
-bool btrfs_readdir_get_delayed_items(struct btrfs_inode *inode,
+bool btrfs_readdir_get_delayed_items(struct inode *inode,
 				     u64 last_index,
 				     struct list_head *ins_list,
 				     struct list_head *del_list)
@@ -1690,7 +1692,7 @@ bool btrfs_readdir_get_delayed_items(struct btrfs_inode *inode,
 	struct btrfs_delayed_node *delayed_node;
 	struct btrfs_delayed_item *item;
 
-	delayed_node = btrfs_get_delayed_node(inode);
+	delayed_node = btrfs_get_delayed_node(BTRFS_I(inode));
 	if (!delayed_node)
 		return false;
 
@@ -1698,8 +1700,8 @@ bool btrfs_readdir_get_delayed_items(struct btrfs_inode *inode,
 	 * We can only do one readdir with delayed items at a time because of
 	 * item->readdir_list.
 	 */
-	btrfs_inode_unlock(inode, BTRFS_ILOCK_SHARED);
-	btrfs_inode_lock(inode, 0);
+	btrfs_inode_unlock(BTRFS_I(inode), BTRFS_ILOCK_SHARED);
+	btrfs_inode_lock(BTRFS_I(inode), 0);
 
 	mutex_lock(&delayed_node->mutex);
 	item = __btrfs_first_delayed_insertion_item(delayed_node);
@@ -1730,7 +1732,7 @@ bool btrfs_readdir_get_delayed_items(struct btrfs_inode *inode,
 	return true;
 }
 
-void btrfs_readdir_put_delayed_items(struct btrfs_inode *inode,
+void btrfs_readdir_put_delayed_items(struct inode *inode,
 				     struct list_head *ins_list,
 				     struct list_head *del_list)
 {
@@ -1752,10 +1754,10 @@ void btrfs_readdir_put_delayed_items(struct btrfs_inode *inode,
 	 * The VFS is going to do up_read(), so we need to downgrade back to a
 	 * read lock.
 	 */
-	downgrade_write(&inode->vfs_inode.i_rwsem);
+	downgrade_write(&inode->i_rwsem);
 }
 
-int btrfs_should_delete_dir_index(const struct list_head *del_list,
+int btrfs_should_delete_dir_index(struct list_head *del_list,
 				  u64 index)
 {
 	struct btrfs_delayed_item *curr;
@@ -1776,7 +1778,7 @@ int btrfs_should_delete_dir_index(const struct list_head *del_list,
  * Read dir info stored in the delayed tree.
  */
 int btrfs_readdir_delayed_dir_index(struct dir_context *ctx,
-				    const struct list_head *ins_list)
+				    struct list_head *ins_list)
 {
 	struct btrfs_dir_item *di;
 	struct btrfs_delayed_item *curr, *next;
@@ -1914,8 +1916,7 @@ int btrfs_fill_inode(struct inode *inode, u32 *rdev)
 	BTRFS_I(inode)->i_otime_nsec = btrfs_stack_timespec_nsec(&inode_item->otime);
 
 	inode->i_generation = BTRFS_I(inode)->generation;
-	if (S_ISDIR(inode->i_mode))
-		BTRFS_I(inode)->index_cnt = (u64)-1;
+	BTRFS_I(inode)->index_cnt = (u64)-1;
 
 	mutex_unlock(&delayed_node->mutex);
 	btrfs_release_delayed_node(delayed_node);
@@ -2056,9 +2057,9 @@ void btrfs_kill_all_delayed_nodes(struct btrfs_root *root)
 		struct btrfs_delayed_node *node;
 		int count;
 
-		xa_lock(&root->delayed_nodes);
+		spin_lock(&root->inode_lock);
 		if (xa_empty(&root->delayed_nodes)) {
-			xa_unlock(&root->delayed_nodes);
+			spin_unlock(&root->inode_lock);
 			return;
 		}
 
@@ -2075,7 +2076,7 @@ void btrfs_kill_all_delayed_nodes(struct btrfs_root *root)
 			if (count >= ARRAY_SIZE(delayed_nodes))
 				break;
 		}
-		xa_unlock(&root->delayed_nodes);
+		spin_unlock(&root->inode_lock);
 		index++;
 
 		for (int i = 0; i < count; i++) {

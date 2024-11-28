@@ -349,9 +349,9 @@ struct eventfd_ctx *eventfd_ctx_fdget(int fd)
 {
 	struct eventfd_ctx *ctx;
 	struct fd f = fdget(fd);
-	if (!fd_file(f))
+	if (!f.file)
 		return ERR_PTR(-EBADF);
-	ctx = eventfd_ctx_fileget(fd_file(f));
+	ctx = eventfd_ctx_fileget(f.file);
 	fdput(f);
 	return ctx;
 }

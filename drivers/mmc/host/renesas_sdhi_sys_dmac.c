@@ -11,14 +11,13 @@
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
+#include <linux/mfd/tmio.h>
 #include <linux/mmc/host.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/pagemap.h>
-#include <linux/platform_data/tmio.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
+#include <linux/pagemap.h>
 #include <linux/scatterlist.h>
 #include <linux/sys_soc.h>
 
@@ -313,9 +312,9 @@ static void renesas_sdhi_sys_dmac_start_dma(struct tmio_mmc_host *host,
 	}
 }
 
-static void renesas_sdhi_sys_dmac_issue_work_fn(struct work_struct *work)
+static void renesas_sdhi_sys_dmac_issue_tasklet_fn(unsigned long priv)
 {
-	struct tmio_mmc_host *host = from_work(host, work, dma_issue);
+	struct tmio_mmc_host *host = (struct tmio_mmc_host *)priv;
 	struct dma_chan *chan = NULL;
 
 	spin_lock_irq(&host->lock);
@@ -402,8 +401,9 @@ static void renesas_sdhi_sys_dmac_request_dma(struct tmio_mmc_host *host,
 			goto ebouncebuf;
 
 		init_completion(&priv->dma_priv.dma_dataend);
-		INIT_WORK(&host->dma_issue,
-			  renesas_sdhi_sys_dmac_issue_work_fn);
+		tasklet_init(&host->dma_issue,
+			     renesas_sdhi_sys_dmac_issue_tasklet_fn,
+			     (unsigned long)host);
 	}
 
 	renesas_sdhi_sys_dmac_enable_dma(host, true);

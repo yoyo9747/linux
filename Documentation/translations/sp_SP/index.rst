@@ -78,4 +78,3 @@ Traducciones al español
 
    process/index
    wrappers/memory-barriers
-   scheduler/index

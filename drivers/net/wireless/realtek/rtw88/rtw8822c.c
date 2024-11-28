@@ -49,7 +49,6 @@ static int rtw8822c_read_efuse(struct rtw_dev *rtwdev, u8 *log_map)
 
 	map = (struct rtw8822c_efuse *)log_map;
 
-	efuse->usb_mode_switch = u8_get_bits(map->usb_mode, BIT(7));
 	efuse->rfe_option = map->rfe_option;
 	efuse->rf_board_option = map->rf_board_option;
 	efuse->crystal_cap = map->xtal_k & XCAP_MASK;
@@ -2576,10 +2575,9 @@ static void query_phy_status_page0(struct rtw_dev *rtwdev, u8 *phy_status,
 	rx_power[RF_PATH_B] -= 110;
 
 	channel = GET_PHY_STAT_P0_CHANNEL(phy_status);
-	if (channel != 0)
-		rtw_set_rx_freq_band(pkt_stat, channel);
-	else
-		pkt_stat->channel_invalid = true;
+	if (channel == 0)
+		channel = rtwdev->hal.current_channel;
+	rtw_set_rx_freq_band(pkt_stat, channel);
 
 	pkt_stat->rx_power[RF_PATH_A] = rx_power[RF_PATH_A];
 	pkt_stat->rx_power[RF_PATH_B] = rx_power[RF_PATH_B];
@@ -2613,14 +2611,12 @@ static void query_phy_status_page1(struct rtw_dev *rtwdev, u8 *phy_status,
 	else
 		rxsc = GET_PHY_STAT_P1_HT_RXSC(phy_status);
 
-	if (rxsc == 0)
-		bw = rtwdev->hal.current_band_width;
-	else if (rxsc >= 1 && rxsc <= 8)
-		bw = RTW_CHANNEL_WIDTH_20;
-	else if (rxsc >= 9 && rxsc <= 12)
+	if (rxsc >= 9 && rxsc <= 12)
 		bw = RTW_CHANNEL_WIDTH_40;
-	else
+	else if (rxsc >= 13)
 		bw = RTW_CHANNEL_WIDTH_80;
+	else
+		bw = RTW_CHANNEL_WIDTH_20;
 
 	channel = GET_PHY_STAT_P1_CHANNEL(phy_status);
 	rtw_set_rx_freq_band(pkt_stat, channel);
@@ -5370,7 +5366,6 @@ const struct rtw_chip_info rtw8822c_hw_spec = {
 	.band = RTW_BAND_2G | RTW_BAND_5G,
 	.page_size = TX_PAGE_SIZE,
 	.dig_min = 0x20,
-	.usb_tx_agg_desc_num = 3,
 	.default_1ss_tx_path = BB_PATH_A,
 	.path_div_supported = true,
 	.ht_supported = true,

@@ -64,14 +64,7 @@ struct dpu_vsync_source_cfg {
 	u32 pp_count;
 	u32 frame_rate;
 	u32 ppnumber[PINGPONG_MAX];
-	enum dpu_vsync_source vsync_source;
-};
-
-enum dpu_dp_phy_sel {
-	DPU_DP_PHY_NONE,
-	DPU_DP_PHY_0,
-	DPU_DP_PHY_1,
-	DPU_DP_PHY_2,
+	u32 vsync_source;
 };
 
 /**
@@ -133,13 +126,6 @@ struct dpu_hw_mdp_ops {
 			struct dpu_danger_safe_status *status);
 
 	/**
-	 * dp_phy_intf_sel - configure intf to phy mapping
-	 * @mdp: mdp top context driver
-	 * @phys: list of phys the DP interfaces should be connected to. 0 disables the INTF.
-	 */
-	void (*dp_phy_intf_sel)(struct dpu_hw_mdp *mdp, enum dpu_dp_phy_sel phys[2]);
-
-	/**
 	 * intf_audio_select - select the external interface for audio
 	 * @mdp: mdp top context driver
 	 */
@@ -162,12 +148,12 @@ struct dpu_hw_mdp {
  * @dev:  Corresponding device for devres management
  * @cfg:  MDP TOP configuration from catalog
  * @addr: Mapped register io address of MDP
- * @mdss_rev: dpu core's major and minor versions
+ * @m:    Pointer to mdss catalog data
  */
 struct dpu_hw_mdp *dpu_hw_mdptop_init(struct drm_device *dev,
 				      const struct dpu_mdp_cfg *cfg,
 				      void __iomem *addr,
-				      const struct dpu_mdss_version *mdss_rev);
+				      const struct dpu_mdss_cfg *m);
 
 void dpu_hw_mdp_destroy(struct dpu_hw_mdp *mdp);
 

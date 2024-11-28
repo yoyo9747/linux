@@ -13,7 +13,6 @@
 
 #include <linux/bitfield.h>
 #include <linux/bitops.h>
-#include <linux/cleanup.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -22,7 +21,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <linux/iio/iio.h>
 #include <linux/iio/buffer.h>
@@ -796,19 +795,21 @@ static int bma400_enable_steps(struct bma400_data *data, int val)
 
 static int bma400_get_steps_reg(struct bma400_data *data, int *val)
 {
+	u8 *steps_raw;
 	int ret;
 
-	u8 *steps_raw __free(kfree) = kmalloc(BMA400_STEP_RAW_LEN, GFP_KERNEL);
+	steps_raw = kmalloc(BMA400_STEP_RAW_LEN, GFP_KERNEL);
 	if (!steps_raw)
 		return -ENOMEM;
 
 	ret = regmap_bulk_read(data->regmap, BMA400_STEP_CNT0_REG,
 			       steps_raw, BMA400_STEP_RAW_LEN);
-	if (ret)
+	if (ret) {
+		kfree(steps_raw);
 		return ret;
-
+	}
 	*val = get_unaligned_le24(steps_raw);
-
+	kfree(steps_raw);
 	return IIO_VAL_INT;
 }
 

@@ -1175,5 +1175,4 @@ static void __exit loopback_exit(void)
 }
 module_exit(loopback_exit);
 
-MODULE_DESCRIPTION("Loopback bridge driver for the Greybus loopback module");
 MODULE_LICENSE("GPL v2");

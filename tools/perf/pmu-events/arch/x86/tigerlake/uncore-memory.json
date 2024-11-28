@@ -1,7 +1,6 @@
 [
     {
         "BriefDescription": "Counts every read (RdCAS) issued by the Memory Controller to DRAM (sum of all channels). All requests result in 64 byte data transfers from DRAM.",
-        "Counter": "1",
         "EventCode": "0xff",
         "EventName": "UNC_MC0_RDCAS_COUNT_FREERUN",
         "PerPkg": "1",
@@ -10,7 +9,6 @@
     },
     {
         "BriefDescription": "Counts every 64B read and write request entering the Memory Controller to DRAM (sum of all channels). Each write request counts as a new request incrementing this counter. However, same cache line write requests (both full and partial) are combined to a single 64 byte data transfer to DRAM.",
-        "Counter": "0",
         "EventCode": "0xff",
         "EventName": "UNC_MC0_TOTAL_REQCOUNT_FREERUN",
         "PerPkg": "1",
@@ -19,7 +17,6 @@
     },
     {
         "BriefDescription": "Counts every write (WrCAS) issued by the Memory Controller to DRAM (sum of all channels). All requests result in 64 byte data transfers from DRAM.",
-        "Counter": "2",
         "EventCode": "0xff",
         "EventName": "UNC_MC0_WRCAS_COUNT_FREERUN",
         "PerPkg": "1",
@@ -28,7 +25,6 @@
     },
     {
         "BriefDescription": "Counts every read (RdCAS) issued by the Memory Controller to DRAM (sum of all channels). All requests result in 64 byte data transfers from DRAM.",
-        "Counter": "4",
         "EventCode": "0xff",
         "EventName": "UNC_MC1_RDCAS_COUNT_FREERUN",
         "PerPkg": "1",
@@ -37,7 +33,6 @@
     },
     {
         "BriefDescription": "Counts every 64B read and write request entering the Memory Controller to DRAM (sum of all channels). Each write request counts as a new request incrementing this counter. However, same cache line write requests (both full and partial) are combined to a single 64 byte data transfer to DRAM.",
-        "Counter": "3",
         "EventCode": "0xff",
         "EventName": "UNC_MC1_TOTAL_REQCOUNT_FREERUN",
         "PerPkg": "1",
@@ -46,7 +41,6 @@
     },
     {
         "BriefDescription": "Counts every write (WrCAS) issued by the Memory Controller to DRAM (sum of all channels). All requests result in 64 byte data transfers from DRAM.",
-        "Counter": "5",
         "EventCode": "0xff",
         "EventName": "UNC_MC1_WRCAS_COUNT_FREERUN",
         "PerPkg": "1",

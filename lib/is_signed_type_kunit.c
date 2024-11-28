@@ -46,5 +46,4 @@ static struct kunit_suite is_signed_type_test_suite = {
 
 kunit_test_suite(is_signed_type_test_suite);
 
-MODULE_DESCRIPTION("is_signed_type() KUnit test suite");
 MODULE_LICENSE("Dual MIT/GPL");

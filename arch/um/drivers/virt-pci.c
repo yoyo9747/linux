@@ -14,7 +14,7 @@
 #include <linux/virtio-uml.h>
 #include <linux/delay.h>
 #include <linux/msi.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <irq_kern.h>
 
 #define MAX_DEVICES 8
@@ -567,14 +567,12 @@ struct device_node *pcibios_get_phb_of_node(struct pci_bus *bus)
 
 static int um_pci_init_vqs(struct um_pci_device *dev)
 {
-	struct virtqueue_info vqs_info[] = {
-		{ "cmd", um_pci_cmd_vq_cb },
-		{ "irq", um_pci_irq_vq_cb },
-	};
 	struct virtqueue *vqs[2];
+	static const char *const names[2] = { "cmd", "irq" };
+	vq_callback_t *cbs[2] = { um_pci_cmd_vq_cb, um_pci_irq_vq_cb };
 	int err, i;
 
-	err = virtio_find_vqs(dev->vdev, 2, vqs, vqs_info, NULL);
+	err = virtio_find_vqs(dev->vdev, 2, vqs, cbs, names, NULL);
 	if (err)
 		return err;
 
@@ -988,11 +986,6 @@ static struct resource virt_platform_resource = {
 
 static int __init um_pci_init(void)
 {
-	struct irq_domain_info inner_domain_info = {
-		.size		= MAX_MSI_VECTORS,
-		.hwirq_max	= MAX_MSI_VECTORS,
-		.ops		= &um_pci_inner_domain_ops,
-	};
 	int err, i;
 
 	WARN_ON(logic_iomem_add_region(&virt_cfgspace_resource,
@@ -1022,10 +1015,11 @@ static int __init um_pci_init(void)
 		goto free;
 	}
 
-	inner_domain_info.fwnode = um_pci_fwnode;
-	um_pci_inner_domain = irq_domain_instantiate(&inner_domain_info);
-	if (IS_ERR(um_pci_inner_domain)) {
-		err = PTR_ERR(um_pci_inner_domain);
+	um_pci_inner_domain = __irq_domain_add(um_pci_fwnode, MAX_MSI_VECTORS,
+					       MAX_MSI_VECTORS, 0,
+					       &um_pci_inner_domain_ops, NULL);
+	if (!um_pci_inner_domain) {
+		err = -ENOMEM;
 		goto free;
 	}
 
@@ -1062,7 +1056,7 @@ static int __init um_pci_init(void)
 		goto free;
 	return 0;
 free:
-	if (!IS_ERR_OR_NULL(um_pci_inner_domain))
+	if (um_pci_inner_domain)
 		irq_domain_remove(um_pci_inner_domain);
 	if (um_pci_fwnode)
 		irq_domain_free_fwnode(um_pci_fwnode);

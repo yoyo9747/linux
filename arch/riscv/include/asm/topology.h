@@ -4,10 +4,6 @@
 
 #include <linux/arch_topology.h>
 
-#ifdef CONFIG_NUMA
-#include <asm/numa.h>
-#endif
-
 /* Replace task scheduler's default frequency-invariant accounting */
 #define arch_scale_freq_tick		topology_scale_freq_tick
 #define arch_set_freq_scale		topology_set_freq_scale

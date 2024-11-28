@@ -5,6 +5,8 @@
 #include <xen/events.h>
 
 #include "xen-ops.h"
+#include "smp.h"
+
 
 static void __init xen_hvm_smp_prepare_boot_cpu(void)
 {

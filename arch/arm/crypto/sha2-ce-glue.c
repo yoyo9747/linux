@@ -16,7 +16,7 @@
 #include <asm/hwcap.h>
 #include <asm/simd.h>
 #include <asm/neon.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "sha256_glue.h"
 

@@ -8,7 +8,7 @@
 #include <os.h>
 
 static void kmsg_dumper_stdout(struct kmsg_dumper *dumper,
-				struct kmsg_dump_detail *detail)
+				enum kmsg_dump_reason reason)
 {
 	static struct kmsg_dump_iter iter;
 	static DEFINE_SPINLOCK(lock);

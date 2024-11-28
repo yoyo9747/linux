@@ -107,18 +107,6 @@ static inline int is_module_addr(void *addr)
 	return 1;
 }
 
-#ifdef CONFIG_KMSAN
-#define KMSAN_VMALLOC_SIZE (VMALLOC_END - VMALLOC_START)
-#define KMSAN_VMALLOC_SHADOW_START VMALLOC_END
-#define KMSAN_VMALLOC_SHADOW_END (KMSAN_VMALLOC_SHADOW_START + KMSAN_VMALLOC_SIZE)
-#define KMSAN_VMALLOC_ORIGIN_START KMSAN_VMALLOC_SHADOW_END
-#define KMSAN_VMALLOC_ORIGIN_END (KMSAN_VMALLOC_ORIGIN_START + KMSAN_VMALLOC_SIZE)
-#define KMSAN_MODULES_SHADOW_START KMSAN_VMALLOC_ORIGIN_END
-#define KMSAN_MODULES_SHADOW_END (KMSAN_MODULES_SHADOW_START + MODULES_LEN)
-#define KMSAN_MODULES_ORIGIN_START KMSAN_MODULES_SHADOW_END
-#define KMSAN_MODULES_ORIGIN_END (KMSAN_MODULES_ORIGIN_START + MODULES_LEN)
-#endif
-
 #ifdef CONFIG_RANDOMIZE_BASE
 #define KASLR_LEN	(1UL << 31)
 #else
@@ -621,15 +609,7 @@ static inline void csp(unsigned int *ptr, unsigned int old, unsigned int new)
 		: "cc");
 }
 
-/**
- * cspg() - Compare and Swap and Purge (CSPG)
- * @ptr: Pointer to the value to be exchanged
- * @old: The expected old value
- * @new: The new value
- *
- * Return: True if compare and swap was successful, otherwise false.
- */
-static inline bool cspg(unsigned long *ptr, unsigned long old, unsigned long new)
+static inline void cspg(unsigned long *ptr, unsigned long old, unsigned long new)
 {
 	union register_pair r1 = { .even = old, .odd = new, };
 	unsigned long address = (unsigned long)ptr | 1;
@@ -639,7 +619,6 @@ static inline bool cspg(unsigned long *ptr, unsigned long old, unsigned long new
 		: [r1] "+&d" (r1.pair), "+m" (*ptr)
 		: [address] "d" (address)
 		: "cc");
-	return old == r1.even;
 }
 
 #define CRDTE_DTT_PAGE		0x00UL
@@ -648,18 +627,7 @@ static inline bool cspg(unsigned long *ptr, unsigned long old, unsigned long new
 #define CRDTE_DTT_REGION2	0x18UL
 #define CRDTE_DTT_REGION1	0x1cUL
 
-/**
- * crdte() - Compare and Replace DAT Table Entry
- * @old:     The expected old value
- * @new:     The new value
- * @table:   Pointer to the value to be exchanged
- * @dtt:     Table type of the table to be exchanged
- * @address: The address mapped by the entry to be replaced
- * @asce:    The ASCE of this entry
- *
- * Return: True if compare and replace was successful, otherwise false.
- */
-static inline bool crdte(unsigned long old, unsigned long new,
+static inline void crdte(unsigned long old, unsigned long new,
 			 unsigned long *table, unsigned long dtt,
 			 unsigned long address, unsigned long asce)
 {
@@ -670,7 +638,6 @@ static inline bool crdte(unsigned long old, unsigned long new,
 		     : [r1] "+&d" (r1.pair)
 		     : [r2] "d" (r2.pair), [asce] "a" (asce)
 		     : "memory", "cc");
-	return old == r1.even;
 }
 
 /*
@@ -955,7 +922,6 @@ static inline int pte_unused(pte_t pte)
  * young/old accounting is not supported, i.e _PAGE_PROTECT and _PAGE_INVALID
  * must not be set.
  */
-#define pte_pgprot pte_pgprot
 static inline pgprot_t pte_pgprot(pte_t pte)
 {
 	unsigned long pte_flags = pte_val(pte) & _PAGE_CHG_MASK;
@@ -1201,7 +1167,7 @@ static inline pte_t ptep_get_and_clear(struct mm_struct *mm,
 	res = ptep_xchg_lazy(mm, addr, ptep, __pte(_PAGE_INVALID));
 	/* At this point the reference through the mapping is still present */
 	if (mm_is_protected(mm) && pte_present(res))
-		uv_convert_from_secure_pte(res);
+		uv_convert_owned_from_secure(pte_val(res) & PAGE_MASK);
 	return res;
 }
 
@@ -1219,7 +1185,7 @@ static inline pte_t ptep_clear_flush(struct vm_area_struct *vma,
 	res = ptep_xchg_direct(vma->vm_mm, addr, ptep, __pte(_PAGE_INVALID));
 	/* At this point the reference through the mapping is still present */
 	if (mm_is_protected(vma->vm_mm) && pte_present(res))
-		uv_convert_from_secure_pte(res);
+		uv_convert_owned_from_secure(pte_val(res) & PAGE_MASK);
 	return res;
 }
 
@@ -1251,14 +1217,14 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 	 * The notifier should have destroyed all protected vCPUs at this
 	 * point, so the destroy should be successful.
 	 */
-	if (full && !uv_destroy_pte(res))
+	if (full && !uv_destroy_owned_page(pte_val(res) & PAGE_MASK))
 		return res;
 	/*
 	 * If something went wrong and the page could not be destroyed, or
 	 * if this is not a mm teardown, the slower export is used as
 	 * fallback instead.
 	 */
-	uv_convert_from_secure_pte(res);
+	uv_convert_owned_from_secure(pte_val(res) & PAGE_MASK);
 	return res;
 }
 

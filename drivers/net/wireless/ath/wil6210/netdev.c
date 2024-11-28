@@ -453,21 +453,16 @@ int wil_if_add(struct wil6210_priv *wil)
 		return rc;
 	}
 
-	wil->napi_ndev = alloc_netdev_dummy(0);
-	if (!wil->napi_ndev) {
-		wil_err(wil, "failed to allocate dummy netdev");
-		rc = -ENOMEM;
-		goto out_wiphy;
-	}
+	init_dummy_netdev(&wil->napi_ndev);
 	if (wil->use_enhanced_dma_hw) {
-		netif_napi_add(wil->napi_ndev, &wil->napi_rx,
+		netif_napi_add(&wil->napi_ndev, &wil->napi_rx,
 			       wil6210_netdev_poll_rx_edma);
-		netif_napi_add_tx(wil->napi_ndev,
+		netif_napi_add_tx(&wil->napi_ndev,
 				  &wil->napi_tx, wil6210_netdev_poll_tx_edma);
 	} else {
-		netif_napi_add(wil->napi_ndev, &wil->napi_rx,
+		netif_napi_add(&wil->napi_ndev, &wil->napi_rx,
 			       wil6210_netdev_poll_rx);
-		netif_napi_add_tx(wil->napi_ndev,
+		netif_napi_add_tx(&wil->napi_ndev,
 				  &wil->napi_tx, wil6210_netdev_poll_tx);
 	}
 
@@ -479,12 +474,10 @@ int wil_if_add(struct wil6210_priv *wil)
 	wiphy_unlock(wiphy);
 	rtnl_unlock();
 	if (rc < 0)
-		goto free_dummy;
+		goto out_wiphy;
 
 	return 0;
 
-free_dummy:
-	free_netdev(wil->napi_ndev);
 out_wiphy:
 	wiphy_unregister(wiphy);
 	return rc;
@@ -560,8 +553,6 @@ void wil_if_remove(struct wil6210_priv *wil)
 
 	netif_napi_del(&wil->napi_tx);
 	netif_napi_del(&wil->napi_rx);
-
-	free_netdev(wil->napi_ndev);
 
 	wiphy_unregister(wiphy);
 }

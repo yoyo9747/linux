@@ -108,7 +108,9 @@ static inline u8 mwifiex_space_avail_for_new_ba_stream(
 
 	for (i = 0; i < adapter->priv_num; i++) {
 		priv = adapter->priv[i];
-		ba_stream_num += list_count_nodes(&priv->tx_ba_stream_tbl_ptr);
+		if (priv)
+			ba_stream_num += list_count_nodes(
+				&priv->tx_ba_stream_tbl_ptr);
 	}
 
 	if (adapter->fw_api_ver == MWIFIEX_FW_V15) {

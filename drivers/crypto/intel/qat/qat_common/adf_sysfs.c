@@ -62,7 +62,7 @@ static ssize_t state_store(struct device *dev, struct device_attribute *attr,
 			break;
 		}
 
-		ret = adf_dev_down(accel_dev);
+		ret = adf_dev_down(accel_dev, true);
 		if (ret)
 			return ret;
 
@@ -76,7 +76,7 @@ static ssize_t state_store(struct device *dev, struct device_attribute *attr,
 		} else if (ret) {
 			dev_err(dev, "Failed to start device qat_dev%d\n",
 				accel_id);
-			adf_dev_down(accel_dev);
+			adf_dev_down(accel_dev, true);
 			return ret;
 		}
 		break;

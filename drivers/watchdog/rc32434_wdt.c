@@ -242,6 +242,7 @@ static long rc32434_wdt_ioctl(struct file *file, unsigned int cmd,
 
 static const struct file_operations rc32434_wdt_fops = {
 	.owner		= THIS_MODULE,
+	.llseek		= no_llseek,
 	.write		= rc32434_wdt_write,
 	.unlocked_ioctl	= rc32434_wdt_ioctl,
 	.compat_ioctl	= compat_ptr_ioctl,

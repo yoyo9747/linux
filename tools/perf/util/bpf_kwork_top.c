@@ -151,12 +151,14 @@ static int setup_filters(struct perf_kwork *kwork)
 			bpf_map_update_elem(fd, &cpu.cpu, &val, BPF_ANY);
 		}
 		perf_cpu_map__put(map);
+
+		skel->bss->has_cpu_filter = 1;
 	}
 
 	return 0;
 }
 
-int perf_kwork__top_prepare_bpf(struct perf_kwork *kwork)
+int perf_kwork__top_prepare_bpf(struct perf_kwork *kwork __maybe_unused)
 {
 	struct bpf_program *prog;
 	struct kwork_class *class;
@@ -190,9 +192,6 @@ int perf_kwork__top_prepare_bpf(struct perf_kwork *kwork)
 		if (class_bpf->load_prepare)
 			class_bpf->load_prepare();
 	}
-
-	if (kwork->cpu_list)
-		skel->rodata->has_cpu_filter = 1;
 
 	if (kwork_top_bpf__load(skel)) {
 		pr_debug("Failed to load kwork top skeleton\n");

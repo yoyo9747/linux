@@ -90,23 +90,23 @@ static long cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
 	}
 
 	src_file = fdget(srcfd);
-	if (!fd_file(src_file)) {
+	if (!src_file.file) {
 		rc = -EBADF;
 		goto out_drop_write;
 	}
 
-	if (fd_file(src_file)->f_op->unlocked_ioctl != cifs_ioctl) {
+	if (src_file.file->f_op->unlocked_ioctl != cifs_ioctl) {
 		rc = -EBADF;
 		cifs_dbg(VFS, "src file seems to be from a different filesystem type\n");
 		goto out_fput;
 	}
 
-	src_inode = file_inode(fd_file(src_file));
+	src_inode = file_inode(src_file.file);
 	rc = -EINVAL;
 	if (S_ISDIR(src_inode->i_mode))
 		goto out_fput;
 
-	rc = cifs_file_copychunk_range(xid, fd_file(src_file), 0, dst_file, 0,
+	rc = cifs_file_copychunk_range(xid, src_file.file, 0, dst_file, 0,
 					src_inode->i_size, 0);
 	if (rc > 0)
 		rc = 0;
@@ -170,10 +170,7 @@ static long smb_mnt_get_fsinfo(unsigned int xid, struct cifs_tcon *tcon,
 static int cifs_shutdown(struct super_block *sb, unsigned long arg)
 {
 	struct cifs_sb_info *sbi = CIFS_SB(sb);
-	struct tcon_link *tlink;
-	struct cifs_tcon *tcon;
 	__u32 flags;
-	int rc;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -181,21 +178,14 @@ static int cifs_shutdown(struct super_block *sb, unsigned long arg)
 	if (get_user(flags, (__u32 __user *)arg))
 		return -EFAULT;
 
-	tlink = cifs_sb_tlink(sbi);
-	if (IS_ERR(tlink))
-		return PTR_ERR(tlink);
-	tcon = tlink_tcon(tlink);
-
-	trace_smb3_shutdown_enter(flags, tcon->tid);
-	if (flags > CIFS_GOING_FLAGS_NOLOGFLUSH) {
-		rc = -EINVAL;
-		goto shutdown_out_err;
-	}
+	if (flags > CIFS_GOING_FLAGS_NOLOGFLUSH)
+		return -EINVAL;
 
 	if (cifs_forced_shutdown(sbi))
-		goto shutdown_good;
+		return 0;
 
 	cifs_dbg(VFS, "shut down requested (%d)", flags);
+/*	trace_cifs_shutdown(sb, flags);*/
 
 	/*
 	 * see:
@@ -211,8 +201,7 @@ static int cifs_shutdown(struct super_block *sb, unsigned long arg)
 	 */
 	case CIFS_GOING_FLAGS_DEFAULT:
 		cifs_dbg(FYI, "shutdown with default flag not supported\n");
-		rc = -EINVAL;
-		goto shutdown_out_err;
+		return -EINVAL;
 	/*
 	 * FLAGS_LOGFLUSH is easy since it asks to write out metadata (not
 	 * data) but metadata writes are not cached on the client, so can treat
@@ -221,20 +210,11 @@ static int cifs_shutdown(struct super_block *sb, unsigned long arg)
 	case CIFS_GOING_FLAGS_LOGFLUSH:
 	case CIFS_GOING_FLAGS_NOLOGFLUSH:
 		sbi->mnt_cifs_flags |= CIFS_MOUNT_SHUTDOWN;
-		goto shutdown_good;
+		return 0;
 	default:
-		rc = -EINVAL;
-		goto shutdown_out_err;
+		return -EINVAL;
 	}
-
-shutdown_good:
-	trace_smb3_shutdown_done(flags, tcon->tid);
-	cifs_put_tlink(tlink);
 	return 0;
-shutdown_out_err:
-	trace_smb3_shutdown_err(rc, flags, tcon->tid);
-	cifs_put_tlink(tlink);
-	return rc;
 }
 
 static int cifs_dump_full_key(struct cifs_tcon *tcon, struct smb3_full_key_debug_info __user *in)

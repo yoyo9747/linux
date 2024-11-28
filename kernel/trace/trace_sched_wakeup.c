@@ -112,15 +112,14 @@ static int wakeup_display_graph(struct trace_array *tr, int set)
 	return start_func_tracer(tr, set);
 }
 
-static int wakeup_graph_entry(struct ftrace_graph_ent *trace,
-			      struct fgraph_ops *gops)
+static int wakeup_graph_entry(struct ftrace_graph_ent *trace)
 {
 	struct trace_array *tr = wakeup_trace;
 	struct trace_array_cpu *data;
 	unsigned int trace_ctx;
 	int ret = 0;
 
-	if (ftrace_graph_ignore_func(gops, trace))
+	if (ftrace_graph_ignore_func(trace))
 		return 0;
 	/*
 	 * Do not trace a function if it's filtered by set_graph_notrace.
@@ -142,14 +141,13 @@ static int wakeup_graph_entry(struct ftrace_graph_ent *trace,
 	return ret;
 }
 
-static void wakeup_graph_return(struct ftrace_graph_ret *trace,
-				struct fgraph_ops *gops)
+static void wakeup_graph_return(struct ftrace_graph_ret *trace)
 {
 	struct trace_array *tr = wakeup_trace;
 	struct trace_array_cpu *data;
 	unsigned int trace_ctx;
 
-	ftrace_graph_addr_finish(gops, trace);
+	ftrace_graph_addr_finish(trace);
 
 	if (!func_prolog_preempt_disable(tr, &data, &trace_ctx))
 		return;
@@ -547,7 +545,7 @@ probe_wakeup(void *ignore, struct task_struct *p)
 	 *  - wakeup_dl handles tasks belonging to sched_dl class only.
 	 */
 	if (tracing_dl || (wakeup_dl && !dl_task(p)) ||
-	    (wakeup_rt && !rt_or_dl_task(p)) ||
+	    (wakeup_rt && !dl_task(p) && !rt_task(p)) ||
 	    (!dl_task(p) && (p->prio >= wakeup_prio || p->prio >= current->prio)))
 		return;
 

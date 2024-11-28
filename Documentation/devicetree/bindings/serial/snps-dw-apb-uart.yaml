@@ -13,20 +13,6 @@ allOf:
   - $ref: serial.yaml#
   - $ref: rs485.yaml#
 
-  - if:
-      properties:
-        compatible:
-          contains:
-            const: starfive,jh7110-uart
-    then:
-      properties:
-        resets:
-          minItems: 2
-    else:
-      properties:
-        resets:
-          maxItems: 1
-
 properties:
   compatible:
     oneOf:
@@ -62,7 +48,6 @@ properties:
           - enum:
               - starfive,jh7100-hsuart
               - starfive,jh7100-uart
-              - starfive,jh7110-uart
           - const: snps,dw-apb-uart
       - const: snps,dw-apb-uart
 
@@ -97,8 +82,7 @@ properties:
     type: boolean
 
   resets:
-    minItems: 1
-    maxItems: 2
+    maxItems: 1
 
   reg-shift: true
 

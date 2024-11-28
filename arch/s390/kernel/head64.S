@@ -10,7 +10,6 @@
 
 #include <linux/init.h>
 #include <linux/linkage.h>
-#include <asm/lowcore.h>
 #include <asm/asm-offsets.h>
 #include <asm/thread_info.h>
 #include <asm/page.h>
@@ -19,15 +18,14 @@
 __HEAD
 SYM_CODE_START(startup_continue)
 	larl	%r1,tod_clock_base
-	GET_LC	%r2
-	mvc	0(16,%r1),__LC_BOOT_CLOCK(%r2)
+	mvc	0(16,%r1),__LC_BOOT_CLOCK
 #
 # Setup stack
 #
 	larl	%r14,init_task
-	stg	%r14,__LC_CURRENT(%r2)
+	stg	%r14,__LC_CURRENT
 	larl	%r15,init_thread_union+STACK_INIT_OFFSET
-	stg	%r15,__LC_KERNEL_STACK(%r2)
+	stg	%r15,__LC_KERNEL_STACK
 	brasl	%r14,sclp_early_adjust_va	# allow sclp_early_printk
 	brasl	%r14,startup_init		# s390 specific early init
 	brasl	%r14,start_kernel		# common init code

@@ -254,12 +254,12 @@ media_request_get_by_fd(struct media_device *mdev, int request_fd)
 		return ERR_PTR(-EBADR);
 
 	f = fdget(request_fd);
-	if (!fd_file(f))
+	if (!f.file)
 		goto err_no_req_fd;
 
-	if (fd_file(f)->f_op != &request_fops)
+	if (f.file->f_op != &request_fops)
 		goto err_fput;
-	req = fd_file(f)->private_data;
+	req = f.file->private_data;
 	if (req->mdev != mdev)
 		goto err_fput;
 

@@ -5528,6 +5528,7 @@ static int beiscsi_dev_probe(struct pci_dev *pcidev,
 	struct beiscsi_hba *phba = NULL;
 	struct be_eq_obj *pbe_eq;
 	unsigned int s_handle;
+	char wq_name[20];
 	int ret, i;
 
 	ret = beiscsi_enable_pci(pcidev);
@@ -5633,8 +5634,9 @@ static int beiscsi_dev_probe(struct pci_dev *pcidev,
 
 	phba->ctrl.mcc_alloc_index = phba->ctrl.mcc_free_index = 0;
 
-	phba->wq = alloc_workqueue("beiscsi_%02x_wq", WQ_MEM_RECLAIM, 1,
-				   phba->shost->host_no);
+	snprintf(wq_name, sizeof(wq_name), "beiscsi_%02x_wq",
+		 phba->shost->host_no);
+	phba->wq = alloc_workqueue("%s", WQ_MEM_RECLAIM, 1, wq_name);
 	if (!phba->wq) {
 		beiscsi_log(phba, KERN_ERR, BEISCSI_LOG_INIT,
 			    "BM_%d : beiscsi_dev_probe-"

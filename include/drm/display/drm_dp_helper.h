@@ -112,8 +112,7 @@ struct drm_dp_vsc_sdp {
  * @target_rr: Target Refresh
  * @duration_incr_ms: Successive frame duration increase
  * @duration_decr_ms: Successive frame duration decrease
- * @target_rr_divider: Target refresh rate divider
- * @mode: Adaptive Sync Operation Mode
+ * @operation_mode: Adaptive Sync Operation Mode
  */
 struct drm_dp_as_sdp {
 	unsigned char sdp_type;
@@ -123,7 +122,6 @@ struct drm_dp_as_sdp {
 	int target_rr;
 	int duration_incr_ms;
 	int duration_decr_ms;
-	bool target_rr_divider;
 	enum operation_mode mode;
 };
 
@@ -657,8 +655,6 @@ struct drm_dp_desc {
 
 int drm_dp_read_desc(struct drm_dp_aux *aux, struct drm_dp_desc *desc,
 		     bool is_branch);
-
-int drm_dp_dump_lttpr_desc(struct drm_dp_aux *aux, enum drm_dp_phy dp_phy);
 
 /**
  * enum drm_dp_quirk - Display Port sink/branch device specific quirks

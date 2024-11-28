@@ -1019,7 +1019,7 @@ rtl8187_start_exit:
 	return ret;
 }
 
-static void rtl8187_stop(struct ieee80211_hw *dev, bool suspend)
+static void rtl8187_stop(struct ieee80211_hw *dev)
 {
 	struct rtl8187_priv *priv = dev->priv;
 	struct sk_buff *skb;

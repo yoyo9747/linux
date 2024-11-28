@@ -86,7 +86,7 @@ static void dax_set_mapping(struct vm_fault *vmf, pfn_t pfn,
 		nr_pages = 1;
 
 	pgoff = linear_page_index(vmf->vma,
-			ALIGN_DOWN(vmf->address, fault_size));
+			ALIGN(vmf->address, fault_size));
 
 	for (i = 0; i < nr_pages; i++) {
 		struct page *page = pfn_to_page(pfn_t_to_pfn(pfn) + i);
@@ -235,9 +235,9 @@ static vm_fault_t dev_dax_huge_fault(struct vm_fault *vmf, unsigned int order)
 	int id;
 	struct dev_dax *dev_dax = filp->private_data;
 
-	dev_dbg(&dev_dax->dev, "%s: op=%s addr=%#lx order=%d\n", current->comm,
-		(vmf->flags & FAULT_FLAG_WRITE) ? "write" : "read",
-		vmf->address & ~((1UL << (order + PAGE_SHIFT)) - 1), order);
+	dev_dbg(&dev_dax->dev, "%s: %s (%#lx - %#lx) order:%d\n", current->comm,
+			(vmf->flags & FAULT_FLAG_WRITE) ? "write" : "read",
+			vmf->vma->vm_start, vmf->vma->vm_end, order);
 
 	id = dax_read_lock();
 	if (order == 0)
@@ -482,7 +482,6 @@ static void __exit dax_exit(void)
 }
 
 MODULE_AUTHOR("Intel Corporation");
-MODULE_DESCRIPTION("Device DAX: direct access device driver");
 MODULE_LICENSE("GPL v2");
 module_init(dax_init);
 module_exit(dax_exit);

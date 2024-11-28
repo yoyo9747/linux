@@ -111,8 +111,7 @@ int slim_do_transfer(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 	bool need_tid = false, clk_pause_msg = false;
-	int ret;
-	unsigned long time_left;
+	int ret, timeout;
 
 	/*
 	 * do not vote for runtime-PM if the transactions are part of clock
@@ -152,9 +151,9 @@ int slim_do_transfer(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 	if (!ret && need_tid && !txn->msg->comp) {
 		unsigned long ms = txn->rl + HZ;
 
-		time_left = wait_for_completion_timeout(txn->comp,
-							msecs_to_jiffies(ms));
-		if (!time_left) {
+		timeout = wait_for_completion_timeout(txn->comp,
+						      msecs_to_jiffies(ms));
+		if (!timeout) {
 			ret = -ETIMEDOUT;
 			slim_free_txn_tid(ctrl, txn);
 		}

@@ -116,15 +116,7 @@ static void *server_fn(void *arg)
 	sk = test_sk_restore(&img, &ao_img, &saddr, this_ip_dest,
 			     client_new_port, &ao1);
 
-	trace_ao_event_sne_expect(TCP_AO_SND_SNE_UPDATE, this_ip_addr,
-			this_ip_dest, test_server_port + 1, client_new_port, 1);
-	trace_ao_event_sne_expect(TCP_AO_SND_SNE_UPDATE, this_ip_dest,
-			this_ip_addr, client_new_port, test_server_port + 1, 1);
-	trace_ao_event_sne_expect(TCP_AO_RCV_SNE_UPDATE, this_ip_addr,
-			this_ip_dest, test_server_port + 1, client_new_port, 1);
-	trace_ao_event_sne_expect(TCP_AO_RCV_SNE_UPDATE, this_ip_dest,
-			this_ip_addr, client_new_port, test_server_port + 1, 1);
-	synchronize_threads(); /* 5: verify the connection during SEQ-number rollover */
+	synchronize_threads(); /* 5: verify counters during SEQ-number rollover */
 	bytes = test_server_run(sk, quota, TEST_TIMEOUT_SEC);
 	if (bytes != quota) {
 		if (bytes > 0)
@@ -135,7 +127,6 @@ static void *server_fn(void *arg)
 		test_ok("server alive");
 	}
 
-	synchronize_threads(); /* 6: verify counters after SEQ-number rollover */
 	if (test_get_tcp_ao_counters(sk, &ao2))
 		test_error("test_get_tcp_ao_counters()");
 	after_good = netstat_get_one("TCPAOGood", NULL);
@@ -143,15 +134,15 @@ static void *server_fn(void *arg)
 	test_tcp_ao_counters_cmp(NULL, &ao1, &ao2, TEST_CNT_GOOD);
 
 	if (after_good <= before_good) {
-		test_fail("TCPAOGood counter did not increase: %" PRIu64 " <= %" PRIu64,
+		test_fail("TCPAOGood counter did not increase: %zu <= %zu",
 			  after_good, before_good);
 	} else {
-		test_ok("TCPAOGood counter increased %" PRIu64 " => %" PRIu64,
+		test_ok("TCPAOGood counter increased %zu => %zu",
 			before_good, after_good);
 	}
 	after_bad = netstat_get_one("TCPAOBad", NULL);
 	if (after_bad)
-		test_fail("TCPAOBad counter is non-zero: %" PRIu64, after_bad);
+		test_fail("TCPAOBad counter is non-zero: %zu", after_bad);
 	else
 		test_ok("TCPAOBad counter didn't increase");
 	test_enable_repair(sk);
@@ -215,13 +206,12 @@ static void *client_fn(void *arg)
 	sk = test_sk_restore(&img, &ao_img, &saddr, this_ip_dest,
 			     test_server_port + 1, &ao1);
 
-	synchronize_threads(); /* 5: verify the connection during SEQ-number rollover */
+	synchronize_threads(); /* 5: verify counters during SEQ-number rollover */
 	if (test_client_verify(sk, msg_len, nr_packets, TEST_TIMEOUT_SEC))
 		test_fail("post-migrate verify failed");
 	else
 		test_ok("post-migrate connection alive");
 
-	synchronize_threads(); /* 5: verify counters after SEQ-number rollover */
 	if (test_get_tcp_ao_counters(sk, &ao2))
 		test_error("test_get_tcp_ao_counters()");
 	after_good = netstat_get_one("TCPAOGood", NULL);
@@ -229,15 +219,15 @@ static void *client_fn(void *arg)
 	test_tcp_ao_counters_cmp(NULL, &ao1, &ao2, TEST_CNT_GOOD);
 
 	if (after_good <= before_good) {
-		test_fail("TCPAOGood counter did not increase: %" PRIu64 " <= %" PRIu64,
+		test_fail("TCPAOGood counter did not increase: %zu <= %zu",
 			  after_good, before_good);
 	} else {
-		test_ok("TCPAOGood counter increased %" PRIu64 " => %" PRIu64,
+		test_ok("TCPAOGood counter increased %zu => %zu",
 			before_good, after_good);
 	}
 	after_bad = netstat_get_one("TCPAOBad", NULL);
 	if (after_bad)
-		test_fail("TCPAOBad counter is non-zero: %" PRIu64, after_bad);
+		test_fail("TCPAOBad counter is non-zero: %zu", after_bad);
 	else
 		test_ok("TCPAOBad counter didn't increase");
 
@@ -250,6 +240,6 @@ static void *client_fn(void *arg)
 
 int main(int argc, char *argv[])
 {
-	test_init(8, server_fn, client_fn);
+	test_init(7, server_fn, client_fn);
 	return 0;
 }

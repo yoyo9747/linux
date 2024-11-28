@@ -13,7 +13,6 @@ ARM64 Architecture
     asymmetric-32bit
     booting
     cpu-feature-registers
-    cpu-hotplug
     elf_hwcaps
     hugetlbpage
     kdump

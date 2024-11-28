@@ -404,6 +404,7 @@ static int rzn1_dt_node_to_map(struct pinctrl_dev *pctldev,
 			       struct pinctrl_map **map,
 			       unsigned int *num_maps)
 {
+	struct device_node *child;
 	int ret;
 
 	*map = NULL;
@@ -413,10 +414,12 @@ static int rzn1_dt_node_to_map(struct pinctrl_dev *pctldev,
 	if (ret < 0)
 		return ret;
 
-	for_each_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		ret = rzn1_dt_node_to_map_one(pctldev, child, map, num_maps);
-		if (ret < 0)
+		if (ret < 0) {
+			of_node_put(child);
 			return ret;
+		}
 	}
 
 	return 0;
@@ -737,12 +740,13 @@ static int rzn1_pinctrl_parse_groups(struct device_node *np,
 
 static int rzn1_pinctrl_count_function_groups(struct device_node *np)
 {
+	struct device_node *child;
 	int count = 0;
 
 	if (of_property_count_u32_elems(np, RZN1_PINS_PROP) > 0)
 		count++;
 
-	for_each_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		if (of_property_count_u32_elems(child, RZN1_PINS_PROP) > 0)
 			count++;
 	}
@@ -756,6 +760,7 @@ static int rzn1_pinctrl_parse_functions(struct device_node *np,
 {
 	struct rzn1_pmx_func *func;
 	struct rzn1_pin_group *grp;
+	struct device_node *child;
 	unsigned int i = 0;
 	int ret;
 
@@ -788,13 +793,15 @@ static int rzn1_pinctrl_parse_functions(struct device_node *np,
 		ipctl->ngroups++;
 	}
 
-	for_each_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		func->groups[i] = child->name;
 		grp = &ipctl->groups[ipctl->ngroups];
 		grp->func = func->name;
 		ret = rzn1_pinctrl_parse_groups(child, grp, ipctl);
-		if (ret < 0)
+		if (ret < 0) {
+			of_node_put(child);
 			return ret;
+		}
 		i++;
 		ipctl->ngroups++;
 	}
@@ -809,6 +816,7 @@ static int rzn1_pinctrl_probe_dt(struct platform_device *pdev,
 				 struct rzn1_pinctrl *ipctl)
 {
 	struct device_node *np = pdev->dev.of_node;
+	struct device_node *child;
 	unsigned int maxgroups = 0;
 	unsigned int i = 0;
 	int nfuncs = 0;
@@ -826,7 +834,7 @@ static int rzn1_pinctrl_probe_dt(struct platform_device *pdev,
 		return -ENOMEM;
 
 	ipctl->ngroups = 0;
-	for_each_child_of_node_scoped(np, child)
+	for_each_child_of_node(np, child)
 		maxgroups += rzn1_pinctrl_count_function_groups(child);
 
 	ipctl->groups = devm_kmalloc_array(&pdev->dev,
@@ -836,10 +844,12 @@ static int rzn1_pinctrl_probe_dt(struct platform_device *pdev,
 	if (!ipctl->groups)
 		return -ENOMEM;
 
-	for_each_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		ret = rzn1_pinctrl_parse_functions(child, ipctl, i++);
-		if (ret < 0)
+		if (ret < 0) {
+			of_node_put(child);
 			return ret;
+		}
 	}
 
 	return 0;

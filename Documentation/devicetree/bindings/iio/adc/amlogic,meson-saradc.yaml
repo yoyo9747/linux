@@ -66,9 +66,6 @@ properties:
   nvmem-cell-names:
     const: temperature_calib
 
-  power-domains:
-    maxItems: 1
-
 allOf:
   - if:
       properties:

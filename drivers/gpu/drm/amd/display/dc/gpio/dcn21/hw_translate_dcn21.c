@@ -179,7 +179,7 @@ static bool offset_to_id(
  */
 	/* UNEXPECTED */
 	default:
-/*	case REG(DC_GPIO_SYNCA_A): not exist */
+/*	case REG(DC_GPIO_SYNCA_A): not exista */
 		ASSERT_CRITICAL(false);
 		return false;
 	}

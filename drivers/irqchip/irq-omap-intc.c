@@ -325,7 +325,8 @@ static int __init omap_init_irq(u32 base, struct device_node *node)
 	return ret;
 }
 
-static void __exception_irq_entry omap_intc_handle_irq(struct pt_regs *regs)
+static asmlinkage void __exception_irq_entry
+omap_intc_handle_irq(struct pt_regs *regs)
 {
 	extern unsigned long irq_err_count;
 	u32 irqnr;

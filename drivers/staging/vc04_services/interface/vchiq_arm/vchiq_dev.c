@@ -304,11 +304,6 @@ static int vchiq_irq_queue_bulk_tx_rx(struct vchiq_instance *instance,
 		}
 
 		userdata = &waiter->bulk_waiter;
-
-		status = vchiq_bulk_xfer_blocking_interruptible(instance, args->handle,
-								NULL, args->data, args->size,
-								userdata, dir);
-
 	} else if (args->mode == VCHIQ_BULK_MODE_WAITING) {
 		mutex_lock(&instance->bulk_waiter_list_mutex);
 		list_for_each_entry(iter, &instance->bulk_waiter_list,
@@ -329,16 +324,12 @@ static int vchiq_irq_queue_bulk_tx_rx(struct vchiq_instance *instance,
 		dev_dbg(service->state->dev, "arm: found bulk_waiter %pK for pid %d\n",
 			waiter, current->pid);
 		userdata = &waiter->bulk_waiter;
-
-		status = vchiq_bulk_xfer_waiting_interruptible(instance, args->handle, userdata);
 	} else {
 		userdata = args->userdata;
-
-		status = vchiq_bulk_xfer_callback_interruptible(instance, args->handle, NULL,
-								args->data, args->size,
-								args->mode, userdata, dir);
-
 	}
+
+	status = vchiq_bulk_transfer(instance, args->handle, NULL, args->data, args->size,
+				     userdata, args->mode, dir);
 
 	if (!waiter) {
 		ret = 0;
@@ -1333,7 +1324,7 @@ static struct miscdevice vchiq_miscdev = {
  *	vchiq_register_chrdev - Register the char driver for vchiq
  *				and create the necessary class and
  *				device files in userspace.
- *	@parent:	The parent of the char device.
+ *	@parent		The parent of the char device.
  *
  *	Returns 0 on success else returns the error code.
  */

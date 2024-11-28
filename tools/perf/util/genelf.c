@@ -54,6 +54,11 @@ typedef struct {
   char         name[0]; /* Start of the name+desc data */
 } Elf_Note;
 
+struct options {
+	char *output;
+	int fd;
+};
+
 static char shd_string_table[] = {
 	0,
 	'.', 't', 'e', 'x', 't', 0,			/*  1 */

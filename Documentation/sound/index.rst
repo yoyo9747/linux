@@ -13,7 +13,6 @@ Sound Subsystem Documentation
    alsa-configuration
    hd-audio/index
    cards/index
-   utimers
 
 .. only::  subproject and html
 

@@ -349,67 +349,34 @@ static inline void update_stat(struct virtio_balloon *vb, int idx,
 
 #define pages_to_bytes(x) ((u64)(x) << PAGE_SHIFT)
 
-#ifdef CONFIG_VM_EVENT_COUNTERS
-/* Return the number of entries filled by vm events */
-static inline unsigned int update_balloon_vm_stats(struct virtio_balloon *vb)
+static unsigned int update_balloon_stats(struct virtio_balloon *vb)
 {
 	unsigned long events[NR_VM_EVENT_ITEMS];
+	struct sysinfo i;
 	unsigned int idx = 0;
-	unsigned int zid;
-	unsigned long stall = 0;
+	long available;
+	unsigned long caches;
 
 	all_vm_events(events);
+	si_meminfo(&i);
+
+	available = si_mem_available();
+	caches = global_node_page_state(NR_FILE_PAGES);
+
+#ifdef CONFIG_VM_EVENT_COUNTERS
 	update_stat(vb, idx++, VIRTIO_BALLOON_S_SWAP_IN,
-		    pages_to_bytes(events[PSWPIN]));
+				pages_to_bytes(events[PSWPIN]));
 	update_stat(vb, idx++, VIRTIO_BALLOON_S_SWAP_OUT,
-		    pages_to_bytes(events[PSWPOUT]));
+				pages_to_bytes(events[PSWPOUT]));
 	update_stat(vb, idx++, VIRTIO_BALLOON_S_MAJFLT, events[PGMAJFAULT]);
 	update_stat(vb, idx++, VIRTIO_BALLOON_S_MINFLT, events[PGFAULT]);
-	update_stat(vb, idx++, VIRTIO_BALLOON_S_OOM_KILL, events[OOM_KILL]);
-
-	/* sum all the stall events */
-	for (zid = 0; zid < MAX_NR_ZONES; zid++)
-		stall += events[ALLOCSTALL_NORMAL - ZONE_NORMAL + zid];
-
-	update_stat(vb, idx++, VIRTIO_BALLOON_S_ALLOC_STALL, stall);
-
-	update_stat(vb, idx++, VIRTIO_BALLOON_S_ASYNC_SCAN,
-		    pages_to_bytes(events[PGSCAN_KSWAPD]));
-	update_stat(vb, idx++, VIRTIO_BALLOON_S_DIRECT_SCAN,
-		    pages_to_bytes(events[PGSCAN_DIRECT]));
-	update_stat(vb, idx++, VIRTIO_BALLOON_S_ASYNC_RECLAIM,
-		    pages_to_bytes(events[PGSTEAL_KSWAPD]));
-	update_stat(vb, idx++, VIRTIO_BALLOON_S_DIRECT_RECLAIM,
-		    pages_to_bytes(events[PGSTEAL_DIRECT]));
-
 #ifdef CONFIG_HUGETLB_PAGE
 	update_stat(vb, idx++, VIRTIO_BALLOON_S_HTLB_PGALLOC,
 		    events[HTLB_BUDDY_PGALLOC]);
 	update_stat(vb, idx++, VIRTIO_BALLOON_S_HTLB_PGFAIL,
 		    events[HTLB_BUDDY_PGALLOC_FAIL]);
-#endif /* CONFIG_HUGETLB_PAGE */
-
-	return idx;
-}
-#else /* CONFIG_VM_EVENT_COUNTERS */
-static inline unsigned int update_balloon_vm_stats(struct virtio_balloon *vb)
-{
-	return 0;
-}
-#endif /* CONFIG_VM_EVENT_COUNTERS */
-
-static unsigned int update_balloon_stats(struct virtio_balloon *vb)
-{
-	struct sysinfo i;
-	unsigned int idx;
-	long available;
-	unsigned long caches;
-
-	idx = update_balloon_vm_stats(vb);
-
-	si_meminfo(&i);
-	available = si_mem_available();
-	caches = global_node_page_state(NR_FILE_PAGES);
+#endif
+#endif
 	update_stat(vb, idx++, VIRTIO_BALLOON_S_MEMFREE,
 				pages_to_bytes(i.freeram));
 	update_stat(vb, idx++, VIRTIO_BALLOON_S_MEMTOT,
@@ -578,8 +545,9 @@ static void update_balloon_size_func(struct work_struct *work)
 
 static int init_vqs(struct virtio_balloon *vb)
 {
-	struct virtqueue_info vqs_info[VIRTIO_BALLOON_VQ_MAX] = {};
 	struct virtqueue *vqs[VIRTIO_BALLOON_VQ_MAX];
+	vq_callback_t *callbacks[VIRTIO_BALLOON_VQ_MAX];
+	const char *names[VIRTIO_BALLOON_VQ_MAX];
 	int err;
 
 	/*
@@ -587,26 +555,33 @@ static int init_vqs(struct virtio_balloon *vb)
 	 * will be NULL if the related feature is not enabled, which will
 	 * cause no allocation for the corresponding virtqueue in find_vqs.
 	 */
-	vqs_info[VIRTIO_BALLOON_VQ_INFLATE].callback = balloon_ack;
-	vqs_info[VIRTIO_BALLOON_VQ_INFLATE].name = "inflate";
-	vqs_info[VIRTIO_BALLOON_VQ_DEFLATE].callback = balloon_ack;
-	vqs_info[VIRTIO_BALLOON_VQ_DEFLATE].name = "deflate";
+	callbacks[VIRTIO_BALLOON_VQ_INFLATE] = balloon_ack;
+	names[VIRTIO_BALLOON_VQ_INFLATE] = "inflate";
+	callbacks[VIRTIO_BALLOON_VQ_DEFLATE] = balloon_ack;
+	names[VIRTIO_BALLOON_VQ_DEFLATE] = "deflate";
+	callbacks[VIRTIO_BALLOON_VQ_STATS] = NULL;
+	names[VIRTIO_BALLOON_VQ_STATS] = NULL;
+	callbacks[VIRTIO_BALLOON_VQ_FREE_PAGE] = NULL;
+	names[VIRTIO_BALLOON_VQ_FREE_PAGE] = NULL;
+	names[VIRTIO_BALLOON_VQ_REPORTING] = NULL;
 
 	if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_STATS_VQ)) {
-		vqs_info[VIRTIO_BALLOON_VQ_STATS].name = "stats";
-		vqs_info[VIRTIO_BALLOON_VQ_STATS].callback = stats_request;
+		names[VIRTIO_BALLOON_VQ_STATS] = "stats";
+		callbacks[VIRTIO_BALLOON_VQ_STATS] = stats_request;
 	}
 
-	if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_FREE_PAGE_HINT))
-		vqs_info[VIRTIO_BALLOON_VQ_FREE_PAGE].name = "free_page_vq";
+	if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_FREE_PAGE_HINT)) {
+		names[VIRTIO_BALLOON_VQ_FREE_PAGE] = "free_page_vq";
+		callbacks[VIRTIO_BALLOON_VQ_FREE_PAGE] = NULL;
+	}
 
 	if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_REPORTING)) {
-		vqs_info[VIRTIO_BALLOON_VQ_REPORTING].name = "reporting_vq";
-		vqs_info[VIRTIO_BALLOON_VQ_REPORTING].callback = balloon_ack;
+		names[VIRTIO_BALLOON_VQ_REPORTING] = "reporting_vq";
+		callbacks[VIRTIO_BALLOON_VQ_REPORTING] = balloon_ack;
 	}
 
 	err = virtio_find_vqs(vb->vdev, VIRTIO_BALLOON_VQ_MAX, vqs,
-			      vqs_info, NULL);
+			      callbacks, names, NULL);
 	if (err)
 		return err;
 

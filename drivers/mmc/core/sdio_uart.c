@@ -1162,5 +1162,4 @@ module_init(sdio_uart_init);
 module_exit(sdio_uart_exit);
 
 MODULE_AUTHOR("Nicolas Pitre");
-MODULE_DESCRIPTION("SDIO UART/GPS driver");
 MODULE_LICENSE("GPL");

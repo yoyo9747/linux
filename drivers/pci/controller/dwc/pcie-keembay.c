@@ -442,7 +442,7 @@ static int keembay_pcie_probe(struct platform_device *pdev)
 			return ret;
 		}
 
-		pci_epc_init_notify(pci->ep.epc);
+		dw_pcie_ep_init_notify(&pci->ep);
 
 		break;
 	default:

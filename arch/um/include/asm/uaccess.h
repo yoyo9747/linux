@@ -8,7 +8,7 @@
 #define __UM_UACCESS_H
 
 #include <asm/elf.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define __under_task_size(addr, size) \
 	(((unsigned long) (addr) < TASK_SIZE) && \

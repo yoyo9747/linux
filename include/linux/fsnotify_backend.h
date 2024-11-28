@@ -217,6 +217,7 @@ struct fsnotify_group {
 
 #define FSNOTIFY_GROUP_USER	0x01 /* user allocated group */
 #define FSNOTIFY_GROUP_DUPS	0x02 /* allow multiple marks per object */
+#define FSNOTIFY_GROUP_NOFS	0x04 /* group lock is not direct reclaim safe */
 	int flags;
 	unsigned int owner_flags;	/* stored flags of mark_mutex owner */
 
@@ -267,19 +268,22 @@ struct fsnotify_group {
 static inline void fsnotify_group_lock(struct fsnotify_group *group)
 {
 	mutex_lock(&group->mark_mutex);
-	group->owner_flags = memalloc_nofs_save();
+	if (group->flags & FSNOTIFY_GROUP_NOFS)
+		group->owner_flags = memalloc_nofs_save();
 }
 
 static inline void fsnotify_group_unlock(struct fsnotify_group *group)
 {
-	memalloc_nofs_restore(group->owner_flags);
+	if (group->flags & FSNOTIFY_GROUP_NOFS)
+		memalloc_nofs_restore(group->owner_flags);
 	mutex_unlock(&group->mark_mutex);
 }
 
 static inline void fsnotify_group_assert_locked(struct fsnotify_group *group)
 {
 	WARN_ON_ONCE(!mutex_is_locked(&group->mark_mutex));
-	WARN_ON_ONCE(!(current->flags & PF_MEMALLOC_NOFS));
+	if (group->flags & FSNOTIFY_GROUP_NOFS)
+		WARN_ON_ONCE(!(current->flags & PF_MEMALLOC_NOFS));
 }
 
 /* When calling fsnotify tell it if the data is a path or inode */
@@ -590,14 +594,12 @@ static inline __u32 fsnotify_parent_needed_mask(__u32 mask)
 
 static inline int fsnotify_inode_watches_children(struct inode *inode)
 {
-	__u32 parent_mask = READ_ONCE(inode->i_fsnotify_mask);
-
 	/* FS_EVENT_ON_CHILD is set if the inode may care */
-	if (!(parent_mask & FS_EVENT_ON_CHILD))
+	if (!(inode->i_fsnotify_mask & FS_EVENT_ON_CHILD))
 		return 0;
 	/* this inode might care about child events, does it care about the
 	 * specific set of events that can happen on a child? */
-	return parent_mask & FS_EVENTS_POSS_ON_CHILD;
+	return inode->i_fsnotify_mask & FS_EVENTS_POSS_ON_CHILD;
 }
 
 /*
@@ -611,7 +613,7 @@ static inline void fsnotify_update_flags(struct dentry *dentry)
 	/*
 	 * Serialisation of setting PARENT_WATCHED on the dentries is provided
 	 * by d_lock. If inotify_inode_watched changes after we have taken
-	 * d_lock, the following fsnotify_set_children_dentry_flags call will
+	 * d_lock, the following __fsnotify_update_child_dentry_flags call will
 	 * find our entry, so it will spin until we complete here, and update
 	 * us with the new state.
 	 */

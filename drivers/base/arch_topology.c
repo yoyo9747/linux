@@ -8,7 +8,6 @@
 
 #include <linux/acpi.h>
 #include <linux/cacheinfo.h>
-#include <linux/cleanup.h>
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
 #include <linux/device.h>
@@ -514,10 +513,10 @@ core_initcall(free_raw_capacity);
  */
 static int __init get_cpu_for_node(struct device_node *node)
 {
+	struct device_node *cpu_node;
 	int cpu;
-	struct device_node *cpu_node __free(device_node) =
-		of_parse_phandle(node, "cpu", 0);
 
+	cpu_node = of_parse_phandle(node, "cpu", 0);
 	if (!cpu_node)
 		return -1;
 
@@ -528,6 +527,7 @@ static int __init get_cpu_for_node(struct device_node *node)
 		pr_info("CPU node for %pOF exist but the possible cpu range is :%*pbl\n",
 			cpu_node, cpumask_pr_args(cpu_possible_mask));
 
+	of_node_put(cpu_node);
 	return cpu;
 }
 
@@ -538,28 +538,28 @@ static int __init parse_core(struct device_node *core, int package_id,
 	bool leaf = true;
 	int i = 0;
 	int cpu;
+	struct device_node *t;
 
 	do {
 		snprintf(name, sizeof(name), "thread%d", i);
-		struct device_node *t __free(device_node) =
-			of_get_child_by_name(core, name);
-
-		if (!t)
-			break;
-
-		leaf = false;
-		cpu = get_cpu_for_node(t);
-		if (cpu >= 0) {
-			cpu_topology[cpu].package_id = package_id;
-			cpu_topology[cpu].cluster_id = cluster_id;
-			cpu_topology[cpu].core_id = core_id;
-			cpu_topology[cpu].thread_id = i;
-		} else if (cpu != -ENODEV) {
-			pr_err("%pOF: Can't get CPU for thread\n", t);
-			return -EINVAL;
+		t = of_get_child_by_name(core, name);
+		if (t) {
+			leaf = false;
+			cpu = get_cpu_for_node(t);
+			if (cpu >= 0) {
+				cpu_topology[cpu].package_id = package_id;
+				cpu_topology[cpu].cluster_id = cluster_id;
+				cpu_topology[cpu].core_id = core_id;
+				cpu_topology[cpu].thread_id = i;
+			} else if (cpu != -ENODEV) {
+				pr_err("%pOF: Can't get CPU for thread\n", t);
+				of_node_put(t);
+				return -EINVAL;
+			}
+			of_node_put(t);
 		}
 		i++;
-	} while (1);
+	} while (t);
 
 	cpu = get_cpu_for_node(core);
 	if (cpu >= 0) {
@@ -586,6 +586,7 @@ static int __init parse_cluster(struct device_node *cluster, int package_id,
 	char name[20];
 	bool leaf = true;
 	bool has_cores = false;
+	struct device_node *c;
 	int core_id = 0;
 	int i, ret;
 
@@ -597,50 +598,49 @@ static int __init parse_cluster(struct device_node *cluster, int package_id,
 	i = 0;
 	do {
 		snprintf(name, sizeof(name), "cluster%d", i);
-		struct device_node *c __free(device_node) =
-			of_get_child_by_name(cluster, name);
-
-		if (!c)
-			break;
-
-		leaf = false;
-		ret = parse_cluster(c, package_id, i, depth + 1);
-		if (depth > 0)
-			pr_warn("Topology for clusters of clusters not yet supported\n");
-		if (ret != 0)
-			return ret;
+		c = of_get_child_by_name(cluster, name);
+		if (c) {
+			leaf = false;
+			ret = parse_cluster(c, package_id, i, depth + 1);
+			if (depth > 0)
+				pr_warn("Topology for clusters of clusters not yet supported\n");
+			of_node_put(c);
+			if (ret != 0)
+				return ret;
+		}
 		i++;
-	} while (1);
+	} while (c);
 
 	/* Now check for cores */
 	i = 0;
 	do {
 		snprintf(name, sizeof(name), "core%d", i);
-		struct device_node *c __free(device_node) =
-			of_get_child_by_name(cluster, name);
+		c = of_get_child_by_name(cluster, name);
+		if (c) {
+			has_cores = true;
 
-		if (!c)
-			break;
+			if (depth == 0) {
+				pr_err("%pOF: cpu-map children should be clusters\n",
+				       c);
+				of_node_put(c);
+				return -EINVAL;
+			}
 
-		has_cores = true;
+			if (leaf) {
+				ret = parse_core(c, package_id, cluster_id,
+						 core_id++);
+			} else {
+				pr_err("%pOF: Non-leaf cluster with core %s\n",
+				       cluster, name);
+				ret = -EINVAL;
+			}
 
-		if (depth == 0) {
-			pr_err("%pOF: cpu-map children should be clusters\n", c);
-			return -EINVAL;
-		}
-
-		if (leaf) {
-			ret = parse_core(c, package_id, cluster_id, core_id++);
+			of_node_put(c);
 			if (ret != 0)
 				return ret;
-		} else {
-			pr_err("%pOF: Non-leaf cluster with core %s\n",
-			       cluster, name);
-			return -EINVAL;
 		}
-
 		i++;
-	} while (1);
+	} while (c);
 
 	if (leaf && !has_cores)
 		pr_warn("%pOF: empty cluster\n", cluster);
@@ -651,24 +651,22 @@ static int __init parse_cluster(struct device_node *cluster, int package_id,
 static int __init parse_socket(struct device_node *socket)
 {
 	char name[20];
+	struct device_node *c;
 	bool has_socket = false;
 	int package_id = 0, ret;
 
 	do {
 		snprintf(name, sizeof(name), "socket%d", package_id);
-		struct device_node *c __free(device_node) =
-			of_get_child_by_name(socket, name);
-
-		if (!c)
-			break;
-
-		has_socket = true;
-		ret = parse_cluster(c, package_id, -1, 0);
-		if (ret != 0)
-			return ret;
-
+		c = of_get_child_by_name(socket, name);
+		if (c) {
+			has_socket = true;
+			ret = parse_cluster(c, package_id, -1, 0);
+			of_node_put(c);
+			if (ret != 0)
+				return ret;
+		}
 		package_id++;
-	} while (1);
+	} while (c);
 
 	if (!has_socket)
 		ret = parse_cluster(socket, 0, -1, 0);
@@ -678,11 +676,11 @@ static int __init parse_socket(struct device_node *socket)
 
 static int __init parse_dt_topology(void)
 {
+	struct device_node *cn, *map;
 	int ret = 0;
 	int cpu;
-	struct device_node *cn __free(device_node) =
-		of_find_node_by_path("/cpus");
 
+	cn = of_find_node_by_path("/cpus");
 	if (!cn) {
 		pr_err("No CPU information found in DT\n");
 		return 0;
@@ -692,15 +690,13 @@ static int __init parse_dt_topology(void)
 	 * When topology is provided cpu-map is essentially a root
 	 * cluster with restricted subnodes.
 	 */
-	struct device_node *map __free(device_node) =
-		of_get_child_by_name(cn, "cpu-map");
-
+	map = of_get_child_by_name(cn, "cpu-map");
 	if (!map)
-		return ret;
+		goto out;
 
 	ret = parse_socket(map);
 	if (ret != 0)
-		return ret;
+		goto out_map;
 
 	topology_normalize_cpu_scale();
 
@@ -710,9 +706,14 @@ static int __init parse_dt_topology(void)
 	 */
 	for_each_possible_cpu(cpu)
 		if (cpu_topology[cpu].package_id < 0) {
-			return -EINVAL;
+			ret = -EINVAL;
+			break;
 		}
 
+out_map:
+	of_node_put(map);
+out:
+	of_node_put(cn);
 	return ret;
 }
 #endif

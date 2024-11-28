@@ -171,7 +171,6 @@ struct record {
 	bool			timestamp_filename;
 	bool			timestamp_boundary;
 	bool			off_cpu;
-	const char		*filter_action;
 	struct switch_output	switch_output;
 	unsigned long long	samples;
 	unsigned long		output_max_size;	/* = 0: unlimited */
@@ -193,15 +192,6 @@ static DEFINE_TRIGGER(switch_output_trigger);
 static const char *affinity_tags[PERF_AFFINITY_MAX] = {
 	"SYS", "NODE", "CPU"
 };
-
-static int build_id__process_mmap(const struct perf_tool *tool, union perf_event *event,
-				  struct perf_sample *sample, struct machine *machine);
-static int build_id__process_mmap2(const struct perf_tool *tool, union perf_event *event,
-				   struct perf_sample *sample, struct machine *machine);
-static int process_timestamp_boundary(const struct perf_tool *tool,
-				      union perf_event *event,
-				      struct perf_sample *sample,
-				      struct machine *machine);
 
 #ifndef HAVE_GETTID
 static inline pid_t gettid(void)
@@ -618,7 +608,7 @@ static int record__comp_enabled(struct record *rec)
 	return rec->opts.comp_level > 0;
 }
 
-static int process_synthesized_event(const struct perf_tool *tool,
+static int process_synthesized_event(struct perf_tool *tool,
 				     union perf_event *event,
 				     struct perf_sample *sample __maybe_unused,
 				     struct machine *machine __maybe_unused)
@@ -629,7 +619,7 @@ static int process_synthesized_event(const struct perf_tool *tool,
 
 static struct mutex synth_lock;
 
-static int process_locked_synthesized_event(const struct perf_tool *tool,
+static int process_locked_synthesized_event(struct perf_tool *tool,
 				     union perf_event *event,
 				     struct perf_sample *sample __maybe_unused,
 				     struct machine *machine __maybe_unused)
@@ -714,7 +704,7 @@ static void record__sig_exit(void)
 
 #ifdef HAVE_AUXTRACE_SUPPORT
 
-static int record__process_auxtrace(const struct perf_tool *tool,
+static int record__process_auxtrace(struct perf_tool *tool,
 				    struct mmap *map,
 				    union perf_event *event, void *data1,
 				    size_t len1, void *data2, size_t len2)
@@ -1399,7 +1389,7 @@ try_again:
 "even with a suitable vmlinux or kallsyms file.\n\n");
 	}
 
-	if (evlist__apply_filters(evlist, &pos, &opts->target)) {
+	if (evlist__apply_filters(evlist, &pos)) {
 		pr_err("failed to set filter \"%s\" on event %s with %d (%s)\n",
 			pos->filter ?: "BPF", evsel__name(pos), errno,
 			str_error_r(errno, msg, sizeof(msg)));
@@ -1426,7 +1416,7 @@ static void set_timestamp_boundary(struct record *rec, u64 sample_time)
 		rec->evlist->last_sample_time = sample_time;
 }
 
-static int process_sample_event(const struct perf_tool *tool,
+static int process_sample_event(struct perf_tool *tool,
 				union perf_event *event,
 				struct perf_sample *sample,
 				struct evsel *evsel,
@@ -1468,7 +1458,7 @@ static int process_buildids(struct record *rec)
 	 * first/last samples.
 	 */
 	if (rec->buildid_all && !rec->timestamp_boundary)
-		rec->tool.sample = process_event_sample_stub;
+		rec->tool.sample = NULL;
 
 	return perf_session__process_events(session);
 }
@@ -1936,7 +1926,7 @@ static void __record__save_lost_samples(struct record *rec, struct evsel *evsel,
 static void record__read_lost_samples(struct record *rec)
 {
 	struct perf_session *session = rec->session;
-	struct perf_record_lost_samples_and_ids lost;
+	struct perf_record_lost_samples *lost = NULL;
 	struct evsel *evsel;
 
 	/* there was an error during record__open */
@@ -1961,13 +1951,19 @@ static void record__read_lost_samples(struct record *rec)
 
 				if (perf_evsel__read(&evsel->core, x, y, &count) < 0) {
 					pr_debug("read LOST count failed\n");
-					return;
+					goto out;
 				}
 
 				if (count.lost) {
-					memset(&lost, 0, sizeof(lost));
-					lost.lost.header.type = PERF_RECORD_LOST_SAMPLES;
-					__record__save_lost_samples(rec, evsel, &lost.lost,
+					if (!lost) {
+						lost = zalloc(PERF_SAMPLE_MAX_SIZE);
+						if (!lost) {
+							pr_debug("Memory allocation failed\n");
+							return;
+						}
+						lost->header.type = PERF_RECORD_LOST_SAMPLES;
+					}
+					__record__save_lost_samples(rec, evsel, lost,
 								    x, y, count.lost, 0);
 				}
 			}
@@ -1975,12 +1971,20 @@ static void record__read_lost_samples(struct record *rec)
 
 		lost_count = perf_bpf_filter__lost_count(evsel);
 		if (lost_count) {
-			memset(&lost, 0, sizeof(lost));
-			lost.lost.header.type = PERF_RECORD_LOST_SAMPLES;
-			__record__save_lost_samples(rec, evsel, &lost.lost, 0, 0, lost_count,
+			if (!lost) {
+				lost = zalloc(PERF_SAMPLE_MAX_SIZE);
+				if (!lost) {
+					pr_debug("Memory allocation failed\n");
+					return;
+				}
+				lost->header.type = PERF_RECORD_LOST_SAMPLES;
+			}
+			__record__save_lost_samples(rec, evsel, lost, 0, 0, lost_count,
 						    PERF_RECORD_MISC_LOST_SAMPLES_BPF);
 		}
 	}
+out:
+	free(lost);
 }
 
 static volatile sig_atomic_t workload_exec_errno;
@@ -2374,8 +2378,13 @@ static int __cmd_record(struct record *rec, int argc, const char **argv)
 	signal(SIGTERM, sig_handler);
 	signal(SIGSEGV, sigsegv_handler);
 
+	if (rec->opts.record_namespaces)
+		tool->namespace_events = true;
+
 	if (rec->opts.record_cgroup) {
-#ifndef HAVE_FILE_HANDLE
+#ifdef HAVE_FILE_HANDLE
+		tool->cgroup_events = true;
+#else
 		pr_err("cgroup tracking is not supported\n");
 		return -1;
 #endif
@@ -2391,18 +2400,6 @@ static int __cmd_record(struct record *rec, int argc, const char **argv)
 		signal(SIGUSR2, SIG_IGN);
 	}
 
-	perf_tool__init(tool, /*ordered_events=*/true);
-	tool->sample		= process_sample_event;
-	tool->fork		= perf_event__process_fork;
-	tool->exit		= perf_event__process_exit;
-	tool->comm		= perf_event__process_comm;
-	tool->namespaces	= perf_event__process_namespaces;
-	tool->mmap		= build_id__process_mmap;
-	tool->mmap2		= build_id__process_mmap2;
-	tool->itrace_start	= process_timestamp_boundary;
-	tool->aux		= process_timestamp_boundary;
-	tool->namespace_events	= rec->opts.record_namespaces;
-	tool->cgroup_events	= rec->opts.record_cgroup;
 	session = perf_session__new(data, tool);
 	if (IS_ERR(session)) {
 		pr_err("Perf session creation failed.\n");
@@ -3199,7 +3196,7 @@ static int switch_output_setup(struct record *rec)
 	unsigned long val;
 
 	/*
-	 * If we're using --switch-output-events, then we imply its
+	 * If we're using --switch-output-events, then we imply its 
 	 * --switch-output=signal, as we'll send a SIGUSR2 from the side band
 	 *  thread to its parent.
 	 */
@@ -3260,7 +3257,7 @@ static const char * const __record_usage[] = {
 };
 const char * const *record_usage = __record_usage;
 
-static int build_id__process_mmap(const struct perf_tool *tool, union perf_event *event,
+static int build_id__process_mmap(struct perf_tool *tool, union perf_event *event,
 				  struct perf_sample *sample, struct machine *machine)
 {
 	/*
@@ -3272,7 +3269,7 @@ static int build_id__process_mmap(const struct perf_tool *tool, union perf_event
 	return perf_event__process_mmap(tool, event, sample, machine);
 }
 
-static int build_id__process_mmap2(const struct perf_tool *tool, union perf_event *event,
+static int build_id__process_mmap2(struct perf_tool *tool, union perf_event *event,
 				   struct perf_sample *sample, struct machine *machine)
 {
 	/*
@@ -3285,7 +3282,7 @@ static int build_id__process_mmap2(const struct perf_tool *tool, union perf_even
 	return perf_event__process_mmap2(tool, event, sample, machine);
 }
 
-static int process_timestamp_boundary(const struct perf_tool *tool,
+static int process_timestamp_boundary(struct perf_tool *tool,
 				      union perf_event *event __maybe_unused,
 				      struct perf_sample *sample,
 				      struct machine *machine __maybe_unused)
@@ -3342,6 +3339,18 @@ static struct record record = {
 		.ctl_fd              = -1,
 		.ctl_fd_ack          = -1,
 		.synth               = PERF_SYNTH_ALL,
+	},
+	.tool = {
+		.sample		= process_sample_event,
+		.fork		= perf_event__process_fork,
+		.exit		= perf_event__process_exit,
+		.comm		= perf_event__process_comm,
+		.namespaces	= perf_event__process_namespaces,
+		.mmap		= build_id__process_mmap,
+		.mmap2		= build_id__process_mmap2,
+		.itrace_start	= process_timestamp_boundary,
+		.aux		= process_timestamp_boundary,
+		.ordered_events	= true,
 	},
 };
 
@@ -3562,8 +3571,6 @@ static struct option __record_options[] = {
 			    "write collected trace data into several data files using parallel threads",
 			    record__parse_threads),
 	OPT_BOOLEAN(0, "off-cpu", &record.off_cpu, "Enable off-cpu analysis"),
-	OPT_STRING(0, "setup-filter", &record.filter_action, "pin|unpin",
-		   "BPF filter action"),
 	OPT_END()
 };
 
@@ -4093,18 +4100,6 @@ int cmd_record(int argc, const char **argv)
 		pr_warning("WARNING: --timestamp-filename option is not available in parallel streaming mode.\n");
 	}
 
-	if (rec->filter_action) {
-		if (!strcmp(rec->filter_action, "pin"))
-			err = perf_bpf_filter__pin();
-		else if (!strcmp(rec->filter_action, "unpin"))
-			err = perf_bpf_filter__unpin();
-		else {
-			pr_warning("Unknown BPF filter action: %s\n", rec->filter_action);
-			err = -EINVAL;
-		}
-		goto out_opts;
-	}
-
 	/*
 	 * Allow aliases to facilitate the lookup of symbols for address
 	 * filters. Refer to auxtrace_parse_filters().
@@ -4261,13 +4256,13 @@ int cmd_record(int argc, const char **argv)
 
 	err = __cmd_record(&record, argc, argv);
 out:
-	record__free_thread_masks(rec, rec->nr_threads);
-	rec->nr_threads = 0;
+	evlist__delete(rec->evlist);
 	symbol__exit();
 	auxtrace_record__free(rec->itr);
 out_opts:
+	record__free_thread_masks(rec, rec->nr_threads);
+	rec->nr_threads = 0;
 	evlist__close_control(rec->opts.ctl_fd, rec->opts.ctl_fd_ack, &rec->opts.ctl_fd_close);
-	evlist__delete(rec->evlist);
 	return err;
 }
 

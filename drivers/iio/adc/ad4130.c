@@ -23,7 +23,7 @@
 #include <linux/units.h>
 
 #include <asm/div64.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <linux/iio/buffer.h>
 #include <linux/iio/iio.h>
@@ -1883,8 +1883,8 @@ static int ad4130_setup(struct iio_dev *indio_dev)
 	if (ret)
 		return ret;
 
-	ret = regmap_clear_bits(st->regmap, AD4130_FIFO_CONTROL_REG,
-				AD4130_FIFO_CONTROL_HEADER_MASK);
+	ret = regmap_update_bits(st->regmap, AD4130_FIFO_CONTROL_REG,
+				 AD4130_FIFO_CONTROL_HEADER_MASK, 0);
 	if (ret)
 		return ret;
 

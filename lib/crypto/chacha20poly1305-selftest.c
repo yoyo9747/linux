@@ -7,7 +7,7 @@
 #include <crypto/chacha.h>
 #include <crypto/poly1305.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/bug.h>
 #include <linux/init.h>
 #include <linux/mm.h>

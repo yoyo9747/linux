@@ -96,7 +96,8 @@ int of_dma_configure_id(struct device *dev, struct device_node *np,
 	const struct bus_dma_region *map = NULL;
 	struct device_node *bus_np;
 	u64 mask, end = 0;
-	bool coherent, set_map = false;
+	bool coherent;
+	int iommu_ret;
 	int ret;
 
 	if (np == dev->of_node)
@@ -117,7 +118,6 @@ int of_dma_configure_id(struct device *dev, struct device_node *np,
 	} else {
 		/* Determine the overall bounds of all DMA regions */
 		end = dma_range_map_max(map);
-		set_map = true;
 	}
 
 	/*
@@ -144,7 +144,7 @@ int of_dma_configure_id(struct device *dev, struct device_node *np,
 	dev->coherent_dma_mask &= mask;
 	*dev->dma_mask &= mask;
 	/* ...but only set bus limit and range map if we found valid dma-ranges earlier */
-	if (set_map) {
+	if (!ret) {
 		dev->bus_dma_limit = end;
 		dev->dma_range_map = map;
 	}
@@ -153,21 +153,29 @@ int of_dma_configure_id(struct device *dev, struct device_node *np,
 	dev_dbg(dev, "device is%sdma coherent\n",
 		coherent ? " " : " not ");
 
-	ret = of_iommu_configure(dev, np, id);
-	if (ret == -EPROBE_DEFER) {
+	iommu_ret = of_iommu_configure(dev, np, id);
+	if (iommu_ret == -EPROBE_DEFER) {
 		/* Don't touch range map if it wasn't set from a valid dma-ranges */
-		if (set_map)
+		if (!ret)
 			dev->dma_range_map = NULL;
 		kfree(map);
 		return -EPROBE_DEFER;
-	}
-	/* Take all other IOMMU errors to mean we'll just carry on without it */
-	dev_dbg(dev, "device is%sbehind an iommu\n",
-		!ret ? " " : " not ");
+	} else if (iommu_ret == -ENODEV) {
+		dev_dbg(dev, "device is not behind an iommu\n");
+	} else if (iommu_ret) {
+		dev_err(dev, "iommu configuration for device failed with %pe\n",
+			ERR_PTR(iommu_ret));
+
+		/*
+		 * Historically this routine doesn't fail driver probing
+		 * due to errors in of_iommu_configure()
+		 */
+	} else
+		dev_dbg(dev, "device is behind an iommu\n");
 
 	arch_setup_dma_ops(dev, coherent);
 
-	if (ret)
+	if (iommu_ret)
 		of_dma_set_restricted_buffer(dev, np);
 
 	return 0;

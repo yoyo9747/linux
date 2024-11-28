@@ -24,7 +24,7 @@
  * Third Edition.
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <crypto/algapi.h>
 #include <crypto/twofish.h>
 #include <linux/module.h>

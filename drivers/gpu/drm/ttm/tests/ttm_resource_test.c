@@ -11,8 +11,8 @@
 
 struct ttm_resource_test_case {
 	const char *description;
-	u32 mem_type;
-	u32 flags;
+	uint32_t mem_type;
+	uint32_t flags;
 };
 
 struct ttm_resource_test_priv {
@@ -47,20 +47,20 @@ static void ttm_resource_test_fini(struct kunit *test)
 
 static void ttm_init_test_mocks(struct kunit *test,
 				struct ttm_resource_test_priv *priv,
-				u32 mem_type, u32 flags)
+				uint32_t mem_type, uint32_t flags)
 {
 	size_t size = RES_SIZE;
 
 	/* Make sure we have what we need for a good BO mock */
 	KUNIT_ASSERT_NOT_NULL(test, priv->devs->ttm_dev);
 
-	priv->bo = ttm_bo_kunit_init(test, priv->devs, size, NULL);
+	priv->bo = ttm_bo_kunit_init(test, priv->devs, size);
 	priv->place = ttm_place_kunit_init(test, mem_type, flags);
 }
 
 static void ttm_init_test_manager(struct kunit *test,
 				  struct ttm_resource_test_priv *priv,
-				  u32 mem_type)
+				  uint32_t mem_type)
 {
 	struct ttm_device *ttm_dev = priv->devs->ttm_dev;
 	struct ttm_resource_manager *man;
@@ -112,7 +112,7 @@ static void ttm_resource_init_basic(struct kunit *test)
 	struct ttm_buffer_object *bo;
 	struct ttm_place *place;
 	struct ttm_resource_manager *man;
-	u64 expected_usage;
+	uint64_t expected_usage;
 
 	ttm_init_test_mocks(test, priv, params->mem_type, params->flags);
 	bo = priv->bo;
@@ -198,7 +198,7 @@ static void ttm_resource_fini_basic(struct kunit *test)
 	ttm_resource_init(bo, place, res);
 	ttm_resource_fini(man, res);
 
-	KUNIT_ASSERT_TRUE(test, list_empty(&res->lru.link));
+	KUNIT_ASSERT_TRUE(test, list_empty(&res->lru));
 	KUNIT_ASSERT_EQ(test, man->usage, 0);
 }
 
@@ -230,7 +230,7 @@ static void ttm_resource_manager_usage_basic(struct kunit *test)
 	struct ttm_buffer_object *bo;
 	struct ttm_place *place;
 	struct ttm_resource_manager *man;
-	u64 actual_usage;
+	uint64_t actual_usage;
 
 	ttm_init_test_mocks(test, priv, TTM_PL_SYSTEM, TTM_PL_FLAG_TOPDOWN);
 	bo = priv->bo;
@@ -268,7 +268,7 @@ static void ttm_sys_man_alloc_basic(struct kunit *test)
 	struct ttm_buffer_object *bo;
 	struct ttm_place *place;
 	struct ttm_resource *res;
-	u32 mem_type = TTM_PL_SYSTEM;
+	uint32_t mem_type = TTM_PL_SYSTEM;
 	int ret;
 
 	ttm_init_test_mocks(test, priv, mem_type, 0);
@@ -293,7 +293,7 @@ static void ttm_sys_man_free_basic(struct kunit *test)
 	struct ttm_buffer_object *bo;
 	struct ttm_place *place;
 	struct ttm_resource *res;
-	u32 mem_type = TTM_PL_SYSTEM;
+	uint32_t mem_type = TTM_PL_SYSTEM;
 
 	ttm_init_test_mocks(test, priv, mem_type, 0);
 	bo = priv->bo;
@@ -332,5 +332,4 @@ static struct kunit_suite ttm_resource_test_suite = {
 
 kunit_test_suites(&ttm_resource_test_suite);
 
-MODULE_DESCRIPTION("KUnit tests for ttm_resource and ttm_sys_man APIs");
-MODULE_LICENSE("GPL and additional rights");
+MODULE_LICENSE("GPL");

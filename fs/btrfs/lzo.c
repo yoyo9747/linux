@@ -258,8 +258,8 @@ int lzo_compress_folios(struct list_head *ws, struct address_space *mapping,
 				       workspace->cbuf, &out_len,
 				       workspace->mem);
 		kunmap_local(data_in);
-		if (unlikely(ret < 0)) {
-			/* lzo1x_1_compress never fails. */
+		if (ret < 0) {
+			pr_debug("BTRFS: lzo in loop returned %d\n", ret);
 			ret = -EIO;
 			goto out;
 		}
@@ -354,14 +354,11 @@ int lzo_decompress_bio(struct list_head *ws, struct compressed_bio *cb)
 	 * and all sectors should be used.
 	 * If this happens, it means the compressed extent is corrupted.
 	 */
-	if (unlikely(len_in > min_t(size_t, BTRFS_MAX_COMPRESSED, cb->compressed_len) ||
-		     round_up(len_in, sectorsize) < cb->compressed_len)) {
-		struct btrfs_inode *inode = cb->bbio.inode;
-
+	if (len_in > min_t(size_t, BTRFS_MAX_COMPRESSED, cb->compressed_len) ||
+	    round_up(len_in, sectorsize) < cb->compressed_len) {
 		btrfs_err(fs_info,
-"lzo header invalid, root %llu inode %llu offset %llu lzo len %u compressed len %u",
-			  btrfs_root_id(inode->root), btrfs_ino(inode),
-			  cb->start, len_in, cb->compressed_len);
+			"invalid lzo header, lzo len %u compressed len %u",
+			len_in, cb->compressed_len);
 		return -EUCLEAN;
 	}
 
@@ -386,17 +383,13 @@ int lzo_decompress_bio(struct list_head *ws, struct compressed_bio *cb)
 		kunmap_local(kaddr);
 		cur_in += LZO_LEN;
 
-		if (unlikely(seg_len > WORKSPACE_CBUF_LENGTH)) {
-			struct btrfs_inode *inode = cb->bbio.inode;
-
+		if (seg_len > WORKSPACE_CBUF_LENGTH) {
 			/*
 			 * seg_len shouldn't be larger than we have allocated
 			 * for workspace->cbuf
 			 */
-			btrfs_err(fs_info,
-			"lzo segment too big, root %llu inode %llu offset %llu len %u",
-				  btrfs_root_id(inode->root), btrfs_ino(inode),
-				  cb->start, seg_len);
+			btrfs_err(fs_info, "unexpectedly large lzo segment len %u",
+					seg_len);
 			return -EIO;
 		}
 
@@ -406,13 +399,8 @@ int lzo_decompress_bio(struct list_head *ws, struct compressed_bio *cb)
 		/* Decompress the data */
 		ret = lzo1x_decompress_safe(workspace->cbuf, seg_len,
 					    workspace->buf, &out_len);
-		if (unlikely(ret != LZO_E_OK)) {
-			struct btrfs_inode *inode = cb->bbio.inode;
-
-			btrfs_err(fs_info,
-		"lzo decompression failed, error %d root %llu inode %llu offset %llu",
-				  ret, btrfs_root_id(inode->root), btrfs_ino(inode),
-				  cb->start);
+		if (ret != LZO_E_OK) {
+			btrfs_err(fs_info, "failed to decompress");
 			return -EIO;
 		}
 
@@ -438,11 +426,11 @@ int lzo_decompress_bio(struct list_head *ws, struct compressed_bio *cb)
 }
 
 int lzo_decompress(struct list_head *ws, const u8 *data_in,
-		struct folio *dest_folio, unsigned long dest_pgoff, size_t srclen,
+		struct page *dest_page, unsigned long dest_pgoff, size_t srclen,
 		size_t destlen)
 {
 	struct workspace *workspace = list_entry(ws, struct workspace, list);
-	struct btrfs_fs_info *fs_info = folio_to_fs_info(dest_folio);
+	struct btrfs_fs_info *fs_info = page_to_fs_info(dest_page);
 	const u32 sectorsize = fs_info->sectorsize;
 	size_t in_len;
 	size_t out_len;
@@ -466,23 +454,18 @@ int lzo_decompress(struct list_head *ws, const u8 *data_in,
 
 	out_len = sectorsize;
 	ret = lzo1x_decompress_safe(data_in, in_len, workspace->buf, &out_len);
-	if (unlikely(ret != LZO_E_OK)) {
-		struct btrfs_inode *inode = folio_to_inode(dest_folio);
-
-		btrfs_err(fs_info,
-		"lzo decompression failed, error %d root %llu inode %llu offset %llu",
-			  ret, btrfs_root_id(inode->root), btrfs_ino(inode),
-			  folio_pos(dest_folio));
+	if (ret != LZO_E_OK) {
+		pr_warn("BTRFS: decompress failed!\n");
 		ret = -EIO;
 		goto out;
 	}
 
 	ASSERT(out_len <= sectorsize);
-	memcpy_to_folio(dest_folio, dest_pgoff, workspace->buf, out_len);
+	memcpy_to_page(dest_page, dest_pgoff, workspace->buf, out_len);
 	/* Early end, considered as an error. */
 	if (unlikely(out_len < destlen)) {
 		ret = -EIO;
-		folio_zero_range(dest_folio, dest_pgoff + out_len, destlen - out_len);
+		memzero_page(dest_page, dest_pgoff + out_len, destlen - out_len);
 	}
 out:
 	return ret;

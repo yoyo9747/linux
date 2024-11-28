@@ -14,7 +14,7 @@
 
 #include <memory/renesas-rpc-if.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 static void rpcif_spi_mem_prepare(struct spi_device *spi_dev,
 				  const struct spi_mem_op *spi_op,
@@ -95,16 +95,16 @@ static int rpcif_spi_mem_dirmap_create(struct spi_mem_dirmap_desc *desc)
 		spi_controller_get_devdata(desc->mem->spi->controller);
 
 	if (desc->info.offset + desc->info.length > U32_MAX)
-		return -EINVAL;
+		return -ENOTSUPP;
 
 	if (!rpcif_spi_mem_supports_op(desc->mem, &desc->info.op_tmpl))
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 
-	if (!rpc->dirmap)
-		return -EOPNOTSUPP;
+	if (!rpc->dirmap && desc->info.op_tmpl.data.dir == SPI_MEM_DATA_IN)
+		return -ENOTSUPP;
 
-	if (desc->info.op_tmpl.data.dir != SPI_MEM_DATA_IN)
-		return -EOPNOTSUPP;
+	if (desc->info.op_tmpl.data.dir == SPI_MEM_DATA_OUT)
+		return -ENOTSUPP;
 
 	return 0;
 }
@@ -198,16 +198,9 @@ static int __maybe_unused rpcif_spi_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(rpcif_spi_pm_ops, rpcif_spi_suspend, rpcif_spi_resume);
 
-static const struct platform_device_id rpc_if_spi_id_table[] = {
-	{ .name = "rpc-if-spi" },
-	{ /* sentinel */ }
-};
-MODULE_DEVICE_TABLE(platform, rpc_if_spi_id_table);
-
 static struct platform_driver rpcif_spi_driver = {
 	.probe	= rpcif_spi_probe,
 	.remove_new = rpcif_spi_remove,
-	.id_table = rpc_if_spi_id_table,
 	.driver = {
 		.name	= "rpc-if-spi",
 #ifdef CONFIG_PM_SLEEP

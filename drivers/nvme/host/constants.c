@@ -173,7 +173,7 @@ static const char * const nvme_statuses[] = {
 
 const char *nvme_get_error_status_str(u16 status)
 {
-	status &= NVME_SCT_SC_MASK;
+	status &= 0x7ff;
 	if (status < ARRAY_SIZE(nvme_statuses) && nvme_statuses[status])
 		return nvme_statuses[status];
 	return "Unknown";

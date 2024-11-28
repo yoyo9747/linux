@@ -681,5 +681,4 @@ static __exit void aha1740_exit (void)
 module_init (aha1740_init);
 module_exit (aha1740_exit);
 
-MODULE_DESCRIPTION("Adaptec AHA1740 SCSI host adapter driver");
 MODULE_LICENSE("GPL");

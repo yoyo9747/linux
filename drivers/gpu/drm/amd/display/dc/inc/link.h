@@ -272,7 +272,7 @@ struct link_service {
 			uint16_t psr_vtotal_idle,
 			uint16_t psr_vtotal_su);
 	void (*edp_get_psr_residency)(
-			const struct dc_link *link, uint32_t *residency, enum psr_residency_mode mode);
+			const struct dc_link *link, uint32_t *residency);
 
 	bool (*edp_get_replay_state)(
 			const struct dc_link *link, uint64_t *state);

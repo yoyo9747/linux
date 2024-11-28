@@ -53,7 +53,6 @@ properties:
               - mediatek,mt8195-pcie
           - const: mediatek,mt8192-pcie
       - const: mediatek,mt8192-pcie
-      - const: airoha,en7581-pcie
 
   reg:
     maxItems: 1
@@ -77,20 +76,20 @@ properties:
 
   resets:
     minItems: 1
-    maxItems: 3
+    maxItems: 2
 
   reset-names:
     minItems: 1
-    maxItems: 3
+    maxItems: 2
     items:
-      enum: [ phy, mac, phy-lane0, phy-lane1, phy-lane2 ]
+      enum: [ phy, mac ]
 
   clocks:
-    minItems: 1
+    minItems: 4
     maxItems: 6
 
   clock-names:
-    minItems: 1
+    minItems: 4
     maxItems: 6
 
   assigned-clocks:
@@ -148,9 +147,6 @@ allOf:
           const: mediatek,mt8192-pcie
     then:
       properties:
-        clocks:
-          minItems: 4
-
         clock-names:
           items:
             - const: pl_250m
@@ -159,15 +155,6 @@ allOf:
             - const: tl_32k
             - const: peri_26m
             - const: top_133m
-
-        resets:
-          minItems: 1
-          maxItems: 2
-
-        reset-names:
-          minItems: 1
-          maxItems: 2
-
   - if:
       properties:
         compatible:
@@ -177,9 +164,6 @@ allOf:
               - mediatek,mt8195-pcie
     then:
       properties:
-        clocks:
-          minItems: 4
-
         clock-names:
           items:
             - const: pl_250m
@@ -188,15 +172,6 @@ allOf:
             - const: tl_32k
             - const: peri_26m
             - const: peri_mem
-
-        resets:
-          minItems: 1
-          maxItems: 2
-
-        reset-names:
-          minItems: 1
-          maxItems: 2
-
   - if:
       properties:
         compatible:
@@ -205,45 +180,12 @@ allOf:
               - mediatek,mt7986-pcie
     then:
       properties:
-        clocks:
-          minItems: 4
-
         clock-names:
           items:
             - const: pl_250m
             - const: tl_26m
             - const: peri_26m
             - const: top_133m
-
-        resets:
-          minItems: 1
-          maxItems: 2
-
-        reset-names:
-          minItems: 1
-          maxItems: 2
-
-  - if:
-      properties:
-        compatible:
-          const: airoha,en7581-pcie
-    then:
-      properties:
-        clocks:
-          maxItems: 1
-
-        clock-names:
-          items:
-            - const: sys-ck
-
-        resets:
-          minItems: 3
-
-        reset-names:
-          items:
-            - const: phy-lane0
-            - const: phy-lane1
-            - const: phy-lane2
 
 unevaluatedProperties: false
 

@@ -311,5 +311,4 @@ module_exit(primes_exit);
 module_param_named(selftest, selftest_max, ulong, 0400);
 
 MODULE_AUTHOR("Intel Corporation");
-MODULE_DESCRIPTION("Prime number library");
 MODULE_LICENSE("GPL");

@@ -101,6 +101,5 @@ static void __exit cbe_powerbutton_exit(void)
 module_init(cbe_powerbutton_init);
 module_exit(cbe_powerbutton_exit);
 
-MODULE_DESCRIPTION("Driver for powerbutton on IBM cell blades");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Christian Krafft <krafft@de.ibm.com>");

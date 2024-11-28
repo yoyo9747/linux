@@ -230,5 +230,4 @@ static struct platform_driver lgm_pwm_driver = {
 };
 module_platform_driver(lgm_pwm_driver);
 
-MODULE_DESCRIPTION("Intel LGM Pulse Width Modulator driver");
 MODULE_LICENSE("GPL v2");

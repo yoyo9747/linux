@@ -21,9 +21,7 @@ properties:
     items:
       - const: lg,sw43408
 
-  reg:
-    maxItems: 1
-
+  reg: true
   port: true
   vddi-supply: true
   vpnl-supply: true

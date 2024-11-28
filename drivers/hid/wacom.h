@@ -89,7 +89,7 @@
 #include <linux/usb/input.h>
 #include <linux/power_supply.h>
 #include <linux/timer.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 /*
  * Version Information

@@ -17,7 +17,6 @@ maintainers:
 
 allOf:
   - $ref: nvmem.yaml#
-  - $ref: nvmem-deprecated-cells.yaml#
 
 properties:
   compatible:
@@ -33,8 +32,6 @@ properties:
 patternProperties:
   "^.*@[0-9a-f]+$":
     type: object
-    $ref: layouts/fixed-cell.yaml
-    unevaluatedProperties: false
 
     properties:
       st,non-secure-otp:

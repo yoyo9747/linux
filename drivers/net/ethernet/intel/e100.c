@@ -146,7 +146,7 @@
 #include <linux/string.h>
 #include <linux/firmware.h>
 #include <linux/rtnetlink.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 
 #define DRV_NAME		"e100"
@@ -161,6 +161,7 @@
 #define FIRMWARE_D102E		"e100/d102e_ucode.bin"
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_AUTHOR(DRV_COPYRIGHT);
 MODULE_LICENSE("GPL v2");
 MODULE_FIRMWARE(FIRMWARE_D101M);
 MODULE_FIRMWARE(FIRMWARE_D101S);

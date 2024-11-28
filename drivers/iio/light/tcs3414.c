@@ -206,7 +206,8 @@ static irqreturn_t tcs3414_trigger_handler(int irq, void *p)
 	struct tcs3414_data *data = iio_priv(indio_dev);
 	int i, j = 0;
 
-	iio_for_each_active_channel(indio_dev, i) {
+	for_each_set_bit(i, indio_dev->active_scan_mask,
+		indio_dev->masklength) {
 		int ret = i2c_smbus_read_word_data(data->client,
 			TCS3414_DATA_GREEN + 2*i);
 		if (ret < 0)
@@ -362,7 +363,7 @@ static DEFINE_SIMPLE_DEV_PM_OPS(tcs3414_pm_ops, tcs3414_suspend,
 				tcs3414_resume);
 
 static const struct i2c_device_id tcs3414_id[] = {
-	{ "tcs3414" },
+	{ "tcs3414", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tcs3414_id);

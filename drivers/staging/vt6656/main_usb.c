@@ -613,7 +613,7 @@ err:
 	return ret;
 }
 
-static void vnt_stop(struct ieee80211_hw *hw, bool suspend)
+static void vnt_stop(struct ieee80211_hw *hw)
 {
 	struct vnt_private *priv = hw->priv;
 	int i;

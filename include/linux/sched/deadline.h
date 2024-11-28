@@ -10,16 +10,16 @@
 
 #include <linux/sched.h>
 
-static inline bool dl_prio(int prio)
+#define MAX_DL_PRIO		0
+
+static inline int dl_prio(int prio)
 {
-	return unlikely(prio < MAX_DL_PRIO);
+	if (unlikely(prio < MAX_DL_PRIO))
+		return 1;
+	return 0;
 }
 
-/*
- * Returns true if a task has a priority that belongs to DL class. PI-boosted
- * tasks will return true. Use dl_policy() to ignore PI-boosted tasks.
- */
-static inline bool dl_task(struct task_struct *p)
+static inline int dl_task(struct task_struct *p)
 {
 	return dl_prio(p->prio);
 }

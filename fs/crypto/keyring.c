@@ -18,7 +18,7 @@
  * information about these ioctls.
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <crypto/skcipher.h>
 #include <linux/key-type.h>
 #include <linux/random.h>

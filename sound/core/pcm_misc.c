@@ -494,20 +494,18 @@ EXPORT_SYMBOL(snd_pcm_format_set_silence);
 int snd_pcm_hw_limit_rates(struct snd_pcm_hardware *hw)
 {
 	int i;
-	unsigned int rmin, rmax;
-
-	rmin = UINT_MAX;
-	rmax = 0;
 	for (i = 0; i < (int)snd_pcm_known_rates.count; i++) {
 		if (hw->rates & (1 << i)) {
-			rmin = min(rmin, snd_pcm_known_rates.list[i]);
-			rmax = max(rmax, snd_pcm_known_rates.list[i]);
+			hw->rate_min = snd_pcm_known_rates.list[i];
+			break;
 		}
 	}
-	if (rmin > rmax)
-		return -EINVAL;
-	hw->rate_min = rmin;
-	hw->rate_max = rmax;
+	for (i = (int)snd_pcm_known_rates.count - 1; i >= 0; i--) {
+		if (hw->rates & (1 << i)) {
+			hw->rate_max = snd_pcm_known_rates.list[i];
+			break;
+		}
+	}
 	return 0;
 }
 EXPORT_SYMBOL(snd_pcm_hw_limit_rates);

@@ -82,10 +82,6 @@ void __init mmu_init(void)
 pgd_t swapper_pg_dir[PTRS_PER_PGD] __aligned(PAGE_SIZE);
 pte_t invalid_pte_table[PTRS_PER_PTE] __aligned(PAGE_SIZE);
 static struct page *kuser_page[1];
-static struct vm_special_mapping vdso_mapping = {
-	.name = "[vdso]",
-	.pages = kuser_page,
-};
 
 static int alloc_kuser_page(void)
 {
@@ -110,18 +106,18 @@ arch_initcall(alloc_kuser_page);
 int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 {
 	struct mm_struct *mm = current->mm;
-	struct vm_area_struct *vma;
+	int ret;
 
 	mmap_write_lock(mm);
 
 	/* Map kuser helpers to user space address */
-	vma = _install_special_mapping(mm, KUSER_BASE, KUSER_SIZE,
+	ret = install_special_mapping(mm, KUSER_BASE, KUSER_SIZE,
 				      VM_READ | VM_EXEC | VM_MAYREAD |
-				      VM_MAYEXEC, &vdso_mapping);
+				      VM_MAYEXEC, kuser_page);
 
 	mmap_write_unlock(mm);
 
-	return IS_ERR(vma) ? PTR_ERR(vma) : 0;
+	return ret;
 }
 
 const char *arch_vma_name(struct vm_area_struct *vma)

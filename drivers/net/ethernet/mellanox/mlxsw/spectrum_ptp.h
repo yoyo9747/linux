@@ -11,6 +11,14 @@ struct mlxsw_sp;
 struct mlxsw_sp_port;
 struct mlxsw_sp_ptp_clock;
 
+static inline int mlxsw_sp_ptp_get_ts_info_noptp(struct ethtool_ts_info *info)
+{
+	info->so_timestamping = SOF_TIMESTAMPING_RX_SOFTWARE |
+				SOF_TIMESTAMPING_SOFTWARE;
+	info->phc_index = -1;
+	return 0;
+}
+
 #if IS_REACHABLE(CONFIG_PTP_1588_CLOCK)
 
 struct mlxsw_sp_ptp_clock *
@@ -42,7 +50,7 @@ int mlxsw_sp1_ptp_hwtstamp_set(struct mlxsw_sp_port *mlxsw_sp_port,
 void mlxsw_sp1_ptp_shaper_work(struct work_struct *work);
 
 int mlxsw_sp1_ptp_get_ts_info(struct mlxsw_sp *mlxsw_sp,
-			      struct kernel_ethtool_ts_info *info);
+			      struct ethtool_ts_info *info);
 
 int mlxsw_sp1_get_stats_count(void);
 void mlxsw_sp1_get_stats_strings(u8 **p);
@@ -76,7 +84,7 @@ int mlxsw_sp2_ptp_hwtstamp_set(struct mlxsw_sp_port *mlxsw_sp_port,
 			       struct hwtstamp_config *config);
 
 int mlxsw_sp2_ptp_get_ts_info(struct mlxsw_sp *mlxsw_sp,
-			      struct kernel_ethtool_ts_info *info);
+			      struct ethtool_ts_info *info);
 
 int mlxsw_sp2_ptp_txhdr_construct(struct mlxsw_core *mlxsw_core,
 				  struct mlxsw_sp_port *mlxsw_sp_port,
@@ -141,6 +149,12 @@ mlxsw_sp1_ptp_hwtstamp_set(struct mlxsw_sp_port *mlxsw_sp_port,
 
 static inline void mlxsw_sp1_ptp_shaper_work(struct work_struct *work)
 {
+}
+
+static inline int mlxsw_sp1_ptp_get_ts_info(struct mlxsw_sp *mlxsw_sp,
+					    struct ethtool_ts_info *info)
+{
+	return mlxsw_sp_ptp_get_ts_info_noptp(info);
 }
 
 static inline int mlxsw_sp1_get_stats_count(void)
@@ -210,6 +224,12 @@ mlxsw_sp2_ptp_hwtstamp_set(struct mlxsw_sp_port *mlxsw_sp_port,
 			   struct hwtstamp_config *config)
 {
 	return -EOPNOTSUPP;
+}
+
+static inline int mlxsw_sp2_ptp_get_ts_info(struct mlxsw_sp *mlxsw_sp,
+					    struct ethtool_ts_info *info)
+{
+	return mlxsw_sp_ptp_get_ts_info_noptp(info);
 }
 
 static inline int

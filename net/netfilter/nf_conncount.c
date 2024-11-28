@@ -321,6 +321,7 @@ insert_tree(struct net *net,
 	struct nf_conncount_rb *rbconn;
 	struct nf_conncount_tuple *conn;
 	unsigned int count = 0, gc_count = 0;
+	u8 keylen = data->keylen;
 	bool do_gc = true;
 
 	spin_lock_bh(&nf_conncount_locks[hash]);
@@ -332,7 +333,7 @@ restart:
 		rbconn = rb_entry(*rbnode, struct nf_conncount_rb, node);
 
 		parent = *rbnode;
-		diff = key_diff(key, rbconn->key, data->keylen);
+		diff = key_diff(key, rbconn->key, keylen);
 		if (diff < 0) {
 			rbnode = &((*rbnode)->rb_left);
 		} else if (diff > 0) {
@@ -377,7 +378,7 @@ restart:
 
 	conn->tuple = *tuple;
 	conn->zone = *zone;
-	memcpy(rbconn->key, key, sizeof(u32) * data->keylen);
+	memcpy(rbconn->key, key, sizeof(u32) * keylen);
 
 	nf_conncount_list_init(&rbconn->list);
 	list_add(&conn->node, &rbconn->list.head);
@@ -402,6 +403,7 @@ count_tree(struct net *net,
 	struct rb_node *parent;
 	struct nf_conncount_rb *rbconn;
 	unsigned int hash;
+	u8 keylen = data->keylen;
 
 	hash = jhash2(key, data->keylen, conncount_rnd) % CONNCOUNT_SLOTS;
 	root = &data->root[hash];
@@ -412,7 +414,7 @@ count_tree(struct net *net,
 
 		rbconn = rb_entry(parent, struct nf_conncount_rb, node);
 
-		diff = key_diff(key, rbconn->key, data->keylen);
+		diff = key_diff(key, rbconn->key, keylen);
 		if (diff < 0) {
 			parent = rcu_dereference_raw(parent->rb_left);
 		} else if (diff > 0) {
@@ -522,10 +524,11 @@ unsigned int nf_conncount_count(struct net *net,
 }
 EXPORT_SYMBOL_GPL(nf_conncount_count);
 
-struct nf_conncount_data *nf_conncount_init(struct net *net, unsigned int keylen)
+struct nf_conncount_data *nf_conncount_init(struct net *net, unsigned int family,
+					    unsigned int keylen)
 {
 	struct nf_conncount_data *data;
-	int i;
+	int ret, i;
 
 	if (keylen % sizeof(u32) ||
 	    keylen / sizeof(u32) > MAX_KEYLEN ||
@@ -537,6 +540,12 @@ struct nf_conncount_data *nf_conncount_init(struct net *net, unsigned int keylen
 	data = kmalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return ERR_PTR(-ENOMEM);
+
+	ret = nf_ct_netns_get(net, family);
+	if (ret < 0) {
+		kfree(data);
+		return ERR_PTR(ret);
+	}
 
 	for (i = 0; i < ARRAY_SIZE(data->root); ++i)
 		data->root[i] = RB_ROOT;
@@ -574,11 +583,13 @@ static void destroy_tree(struct rb_root *r)
 	}
 }
 
-void nf_conncount_destroy(struct net *net, struct nf_conncount_data *data)
+void nf_conncount_destroy(struct net *net, unsigned int family,
+			  struct nf_conncount_data *data)
 {
 	unsigned int i;
 
 	cancel_work_sync(&data->gc_work);
+	nf_ct_netns_put(net, family);
 
 	for (i = 0; i < ARRAY_SIZE(data->root); ++i)
 		destroy_tree(&data->root[i]);

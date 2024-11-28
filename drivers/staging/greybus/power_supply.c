@@ -1136,5 +1136,4 @@ static struct greybus_driver gb_power_supply_driver = {
 };
 module_greybus_driver(gb_power_supply_driver);
 
-MODULE_DESCRIPTION("Power Supply driver for a Greybus module");
 MODULE_LICENSE("GPL v2");

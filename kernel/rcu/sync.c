@@ -122,7 +122,7 @@ void rcu_sync_enter(struct rcu_sync *rsp)
 		 * we are called at early boot time but this shouldn't happen.
 		 */
 	}
-	rsp->gp_count++;
+	WRITE_ONCE(rsp->gp_count, rsp->gp_count + 1);
 	spin_unlock_irq(&rsp->rss_lock);
 
 	if (gp_state == GP_IDLE) {
@@ -151,11 +151,15 @@ void rcu_sync_enter(struct rcu_sync *rsp)
  */
 void rcu_sync_exit(struct rcu_sync *rsp)
 {
+	int gpc;
+
 	WARN_ON_ONCE(READ_ONCE(rsp->gp_state) == GP_IDLE);
+	WARN_ON_ONCE(READ_ONCE(rsp->gp_count) == 0);
 
 	spin_lock_irq(&rsp->rss_lock);
-	WARN_ON_ONCE(rsp->gp_count == 0);
-	if (!--rsp->gp_count) {
+	gpc = rsp->gp_count - 1;
+	WRITE_ONCE(rsp->gp_count, gpc);
+	if (!gpc) {
 		if (rsp->gp_state == GP_PASSED) {
 			WRITE_ONCE(rsp->gp_state, GP_EXIT);
 			rcu_sync_call(rsp);
@@ -174,10 +178,10 @@ void rcu_sync_dtor(struct rcu_sync *rsp)
 {
 	int gp_state;
 
+	WARN_ON_ONCE(READ_ONCE(rsp->gp_count));
 	WARN_ON_ONCE(READ_ONCE(rsp->gp_state) == GP_PASSED);
 
 	spin_lock_irq(&rsp->rss_lock);
-	WARN_ON_ONCE(rsp->gp_count);
 	if (rsp->gp_state == GP_REPLAY)
 		WRITE_ONCE(rsp->gp_state, GP_EXIT);
 	gp_state = rsp->gp_state;

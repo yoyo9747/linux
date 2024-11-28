@@ -854,24 +854,33 @@ static const struct regmap_config ltc2992_regmap_config = {
 
 static int ltc2992_parse_dt(struct ltc2992_state *st)
 {
+	struct fwnode_handle *fwnode;
+	struct fwnode_handle *child;
 	u32 addr;
 	u32 val;
 	int ret;
 
-	device_for_each_child_node_scoped(&st->client->dev, child) {
-		ret = fwnode_property_read_u32(child, "reg", &addr);
-		if (ret < 0)
-			return ret;
+	fwnode = dev_fwnode(&st->client->dev);
 
-		if (addr > 1)
+	fwnode_for_each_available_child_node(fwnode, child) {
+		ret = fwnode_property_read_u32(child, "reg", &addr);
+		if (ret < 0) {
+			fwnode_handle_put(child);
+			return ret;
+		}
+
+		if (addr > 1) {
+			fwnode_handle_put(child);
 			return -EINVAL;
+		}
 
 		ret = fwnode_property_read_u32(child, "shunt-resistor-micro-ohms", &val);
 		if (!ret) {
-			if (!val)
+			if (!val) {
+				fwnode_handle_put(child);
 				return dev_err_probe(&st->client->dev, -EINVAL,
 						     "shunt resistor value cannot be zero\n");
-
+			}
 			st->r_sense_uohm[addr] = val;
 		}
 	}

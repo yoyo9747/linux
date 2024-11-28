@@ -323,6 +323,7 @@
 		display-timings {
 			native-mode = <&timing5>;
 			timing0: timing0 {
+				panel-name = "VGA";
 				clock-frequency = <25175000>;
 				hactive = <640>;
 				vactive = <480>;
@@ -339,6 +340,7 @@
 			};
 
 			timing1: timing1 {
+				panel-name = "ETV570";
 				clock-frequency = <25175000>;
 				hactive = <640>;
 				vactive = <480>;
@@ -355,6 +357,7 @@
 			};
 
 			timing2: timing2 {
+				panel-name = "ET0350";
 				clock-frequency = <6500000>;
 				hactive = <320>;
 				vactive = <240>;
@@ -371,6 +374,7 @@
 			};
 
 			timing3: timing3 {
+				panel-name = "ET0430";
 				clock-frequency = <9000000>;
 				hactive = <480>;
 				vactive = <272>;
@@ -387,6 +391,7 @@
 			};
 
 			timing4: timing4 {
+				panel-name = "ET0500", "ET0700";
 				clock-frequency = <33260000>;
 				hactive = <800>;
 				vactive = <480>;
@@ -403,6 +408,7 @@
 			};
 
 			timing5: timing5 {
+				panel-name = "ETQ570";
 				clock-frequency = <6400000>;
 				hactive = <320>;
 				vactive = <240>;
@@ -615,13 +621,13 @@
 &saif0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&saif0_pins_b>;
+	fsl,saif-master;
 	status = "okay";
 };
 
 &saif1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&saif1_pins_a>;
-	fsl,saif-master = <&saif0>;
 	status = "okay";
 };
 

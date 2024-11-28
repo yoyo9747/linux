@@ -6,7 +6,6 @@
  */
 
 #include <linux/device.h>
-#include <linux/of.h>
 #include <linux/property.h>
 #include <linux/slab.h>
 
@@ -307,9 +306,9 @@ const void *ssam_device_get_match_data(const struct ssam_device *dev)
 }
 EXPORT_SYMBOL_GPL(ssam_device_get_match_data);
 
-static int ssam_bus_match(struct device *dev, const struct device_driver *drv)
+static int ssam_bus_match(struct device *dev, struct device_driver *drv)
 {
-	const struct ssam_device_driver *sdrv = to_ssam_device_driver(drv);
+	struct ssam_device_driver *sdrv = to_ssam_device_driver(drv);
 	struct ssam_device *sdev = to_ssam_device(dev);
 
 	if (!is_ssam_device(dev))
@@ -442,7 +441,6 @@ static int ssam_add_client_device(struct device *parent, struct ssam_controller 
 
 	sdev->dev.parent = parent;
 	sdev->dev.fwnode = fwnode_handle_get(node);
-	sdev->dev.of_node = to_of_node(node);
 
 	status = ssam_device_add(sdev);
 	if (status)

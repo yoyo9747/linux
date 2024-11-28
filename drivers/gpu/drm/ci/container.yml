@@ -28,14 +28,6 @@ debian/x86_64_test-vk:
   rules:
     - when: never
 
-debian/arm64_test-vk:
-  rules:
-    - when: never
-
-debian/arm64_test-gl:
-  rules:
-    - when: never
-
 fedora/x86_64_build:
   rules:
     - when: never
@@ -44,15 +36,15 @@ debian/android_build:
   rules:
     - when: never
 
-.debian/x86_64_test-android:
+debian/x86_64_test-android:
   rules:
     - when: never
 
-windows_build_msvc:
+windows_build_vs2019:
   rules:
     - when: never
 
-windows_test_msvc:
+windows_test_vs2019:
   rules:
     - when: never
 
@@ -64,6 +56,10 @@ rustfmt:
    rules:
     - when: never
 
-windows_msvc:
+windows_vs2019:
+   rules:
+    - when: never
+
+clang-format:
    rules:
     - when: never

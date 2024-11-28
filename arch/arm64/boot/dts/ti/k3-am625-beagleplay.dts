@@ -888,8 +888,7 @@
 
 	mcu {
 		compatible = "ti,cc1352p7";
-		bootloader-backdoor-gpios = <&main_gpio0 13 GPIO_ACTIVE_HIGH>;
-		reset-gpios = <&main_gpio0 14 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&main_gpio0 72 GPIO_ACTIVE_LOW>;
 		vdds-supply = <&vdd_3v3>;
 	};
 };
@@ -925,4 +924,6 @@
 	       0 0 0 0
 	       0 0 0 0
 	>;
+	tx-num-evt = <32>;
+	rx-num-evt = <32>;
 };

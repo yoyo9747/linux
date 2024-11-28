@@ -188,7 +188,10 @@ static void mt76x02u_pre_tbtt_work(struct work_struct *work)
 	struct sk_buff *skb;
 	int nbeacons;
 
-	if (!dev->mt76.beacon_mask || dev->mphy.offchannel)
+	if (!dev->mt76.beacon_mask)
+		return;
+
+	if (mt76_hw(dev)->conf.flags & IEEE80211_CONF_OFFCHANNEL)
 		return;
 
 	__skb_queue_head_init(&data.q);

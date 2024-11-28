@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/fault-inject.h>
-#include <linux/debugfs.h>
-#include <linux/error-injection.h>
 #include <linux/mm.h>
 
 static struct {
@@ -23,7 +21,7 @@ static int __init setup_fail_page_alloc(char *str)
 }
 __setup("fail_page_alloc=", setup_fail_page_alloc);
 
-bool should_fail_alloc_page(gfp_t gfp_mask, unsigned int order)
+bool __should_fail_alloc_page(gfp_t gfp_mask, unsigned int order)
 {
 	int flags = 0;
 
@@ -43,7 +41,6 @@ bool should_fail_alloc_page(gfp_t gfp_mask, unsigned int order)
 
 	return should_fail_ex(&fail_page_alloc.attr, 1 << order, flags);
 }
-ALLOW_ERROR_INJECTION(should_fail_alloc_page, TRUE);
 
 #ifdef CONFIG_FAULT_INJECTION_DEBUG_FS
 

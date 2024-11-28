@@ -616,7 +616,6 @@ static int do_tls_setsockopt_conf(struct sock *sk, sockptr_t optval,
 	struct tls_crypto_info *alt_crypto_info;
 	struct tls_context *ctx = tls_get_ctx(sk);
 	const struct tls_cipher_desc *cipher_desc;
-	union tls_crypto_context *crypto_ctx;
 	int rc = 0;
 	int conf;
 
@@ -624,14 +623,12 @@ static int do_tls_setsockopt_conf(struct sock *sk, sockptr_t optval,
 		return -EINVAL;
 
 	if (tx) {
-		crypto_ctx = &ctx->crypto_send;
+		crypto_info = &ctx->crypto_send.info;
 		alt_crypto_info = &ctx->crypto_recv.info;
 	} else {
-		crypto_ctx = &ctx->crypto_recv;
+		crypto_info = &ctx->crypto_recv.info;
 		alt_crypto_info = &ctx->crypto_send.info;
 	}
-
-	crypto_info = &crypto_ctx->info;
 
 	/* Currently we don't support set crypto info more than one time */
 	if (TLS_CRYPTO_INFO_READY(crypto_info))
@@ -713,7 +710,7 @@ static int do_tls_setsockopt_conf(struct sock *sk, sockptr_t optval,
 	return 0;
 
 err_crypto_info:
-	memzero_explicit(crypto_ctx, sizeof(*crypto_ctx));
+	memzero_explicit(crypto_info, sizeof(union tls_crypto_context));
 	return rc;
 }
 

@@ -8,7 +8,6 @@
 #include <linux/smp.h>
 
 #ifdef CONFIG_NUMA
-#include <asm/numa.h>
 
 extern cpumask_t cpus_on_node[];
 

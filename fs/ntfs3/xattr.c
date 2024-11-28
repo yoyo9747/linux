@@ -195,8 +195,10 @@ static ssize_t ntfs_list_ea(struct ntfs_inode *ni, char *buffer,
 {
 	const struct EA_INFO *info;
 	struct EA_FULL *ea_all = NULL;
+	const struct EA_FULL *ea;
 	u32 off, size;
 	int err;
+	int ea_size;
 	size_t ret;
 
 	err = ntfs_read_ea(ni, &ea_all, 0, &info);
@@ -210,18 +212,16 @@ static ssize_t ntfs_list_ea(struct ntfs_inode *ni, char *buffer,
 
 	/* Enumerate all xattrs. */
 	ret = 0;
-	off = 0;
-	while (off + sizeof(struct EA_FULL) < size) {
-		const struct EA_FULL *ea = Add2Ptr(ea_all, off);
-		int ea_size = unpacked_ea_size(ea);
-		u8 name_len = ea->name_len;
+	for (off = 0; off + sizeof(struct EA_FULL) < size; off += ea_size) {
+		ea = Add2Ptr(ea_all, off);
+		ea_size = unpacked_ea_size(ea);
 
-		if (!name_len)
+		if (!ea->name_len)
 			break;
 
-		if (name_len > ea_size) {
+		if (ea->name_len > ea_size) {
 			ntfs_set_state(ni->mi.sbi, NTFS_DIRTY_ERROR);
-			err = -EINVAL; /* corrupted fs. */
+			err = -EINVAL; /* corrupted fs */
 			break;
 		}
 
@@ -230,17 +230,16 @@ static ssize_t ntfs_list_ea(struct ntfs_inode *ni, char *buffer,
 			if (off + ea_size > size)
 				break;
 
-			if (ret + name_len + 1 > bytes_per_buffer) {
+			if (ret + ea->name_len + 1 > bytes_per_buffer) {
 				err = -ERANGE;
 				goto out;
 			}
 
-			memcpy(buffer + ret, ea->name, name_len);
-			buffer[ret + name_len] = 0;
+			memcpy(buffer + ret, ea->name, ea->name_len);
+			buffer[ret + ea->name_len] = 0;
 		}
 
-		ret += name_len + 1;
-		off += ea_size;
+		ret += ea->name_len + 1;
 	}
 
 out:
@@ -705,7 +704,7 @@ int ntfs_init_acl(struct mnt_idmap *idmap, struct inode *inode,
 #endif
 
 /*
- * ntfs_acl_chmod - Helper for ntfs_setattr().
+ * ntfs_acl_chmod - Helper for ntfs3_setattr().
  */
 int ntfs_acl_chmod(struct mnt_idmap *idmap, struct dentry *dentry)
 {

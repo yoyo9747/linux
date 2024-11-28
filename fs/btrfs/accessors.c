@@ -3,7 +3,7 @@
  * Copyright (C) 2007 Oracle.  All rights reserved.
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include "messages.h"
 #include "extent_io.h"
 #include "fs.h"

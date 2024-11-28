@@ -4,7 +4,7 @@
  */
 
 #include <linux/slab.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/buffer_head.h>
 #include <linux/blkdev.h>
 

@@ -6,7 +6,7 @@
 #ifndef _CRYPTO_INTERNAL_POLY1305_H
 #define _CRYPTO_INTERNAL_POLY1305_H
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/types.h>
 #include <crypto/poly1305.h>
 

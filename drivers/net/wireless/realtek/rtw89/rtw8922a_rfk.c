@@ -255,8 +255,7 @@ static void rtw8922a_chlk_ktbl_sel(struct rtw89_dev *rtwdev, u8 kpath, u8 idx)
 static void rtw8922a_chlk_reload(struct rtw89_dev *rtwdev)
 {
 	struct rtw89_rfk_mcc_info *rfk_mcc = &rtwdev->rfk_mcc;
-	struct rtw89_rfk_chan_desc desc[__RTW89_RFK_CHS_NR_V1] = {};
-	enum rtw89_chanctx_idx chanctx_idx;
+	enum rtw89_sub_entity_idx sub_entity_idx;
 	const struct rtw89_chan *chan;
 	enum rtw89_entity_mode mode;
 	u8 s0_tbl, s1_tbl;
@@ -265,28 +264,16 @@ static void rtw8922a_chlk_reload(struct rtw89_dev *rtwdev)
 	mode = rtw89_get_entity_mode(rtwdev);
 	switch (mode) {
 	case RTW89_ENTITY_MODE_MCC_PREPARE:
-		chanctx_idx = RTW89_CHANCTX_1;
+		sub_entity_idx = RTW89_SUB_ENTITY_1;
+		tbl_sel = 1;
 		break;
 	default:
-		chanctx_idx = RTW89_CHANCTX_0;
+		sub_entity_idx = RTW89_SUB_ENTITY_0;
+		tbl_sel = 0;
 		break;
 	}
 
-	chan = rtw89_chan_get(rtwdev, chanctx_idx);
-
-	for (tbl_sel = 0; tbl_sel < ARRAY_SIZE(desc); tbl_sel++) {
-		struct rtw89_rfk_chan_desc *p = &desc[tbl_sel];
-
-		p->ch = rfk_mcc->ch[tbl_sel];
-
-		p->has_band = true;
-		p->band = rfk_mcc->band[tbl_sel];
-
-		p->has_bw = true;
-		p->bw = rfk_mcc->bw[tbl_sel];
-	}
-
-	tbl_sel = rtw89_rfk_chan_lookup(rtwdev, desc, ARRAY_SIZE(desc), chan);
+	chan = rtw89_chan_get(rtwdev, sub_entity_idx);
 
 	rfk_mcc->ch[tbl_sel] = chan->channel;
 	rfk_mcc->band[tbl_sel] = chan->band_type;

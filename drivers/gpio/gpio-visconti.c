@@ -8,7 +8,6 @@
  * Nobuhiro Iwamatsu <nobuhiro1.iwamatsu@toshiba.co.jp>
  */
 
-#include <linux/bitops.h>
 #include <linux/gpio/driver.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -16,8 +15,8 @@
 #include <linux/io.h>
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/seq_file.h>
+#include <linux/bitops.h>
 
 /* register offset */
 #define GPIO_DIR	0x00
@@ -203,7 +202,7 @@ static int visconti_gpio_probe(struct platform_device *pdev)
 
 	girq = &priv->gpio_chip.irq;
 	gpio_irq_chip_set_chip(girq, &visconti_gpio_irq_chip);
-	girq->fwnode = dev_fwnode(dev);
+	girq->fwnode = of_node_to_fwnode(dev->of_node);
 	girq->parent_domain = parent;
 	girq->child_to_parent_hwirq = visconti_gpio_child_to_parent_hwirq;
 	girq->populate_parent_alloc_arg = visconti_gpio_populate_parent_fwspec;

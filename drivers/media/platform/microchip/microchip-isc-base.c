@@ -902,11 +902,8 @@ static int isc_set_fmt(struct isc_device *isc, struct v4l2_format *f)
 	return 0;
 }
 
-static int isc_link_validate(struct media_link *link)
+static int isc_validate(struct isc_device *isc)
 {
-	struct video_device *vdev =
-		media_entity_to_video_device(link->sink->entity);
-	struct isc_device *isc = video_get_drvdata(vdev);
 	int ret;
 	int i;
 	struct isc_format *sd_fmt = NULL;
@@ -1908,6 +1905,20 @@ int microchip_isc_pipeline_init(struct isc_device *isc)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(microchip_isc_pipeline_init);
+
+static int isc_link_validate(struct media_link *link)
+{
+	struct video_device *vdev =
+		media_entity_to_video_device(link->sink->entity);
+	struct isc_device *isc = video_get_drvdata(vdev);
+	int ret;
+
+	ret = v4l2_subdev_link_validate(link);
+	if (ret)
+		return ret;
+
+	return isc_validate(isc);
+}
 
 static const struct media_entity_operations isc_entity_operations = {
 	.link_validate = isc_link_validate,

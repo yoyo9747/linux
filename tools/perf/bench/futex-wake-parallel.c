@@ -149,7 +149,7 @@ static void block_threads(pthread_t *w, struct perf_cpu_map *cpu)
 {
 	cpu_set_t *cpuset;
 	unsigned int i;
-	int nrcpus = cpu__max_cpu().cpu;
+	int nrcpus = perf_cpu_map__nr(cpu);
 	size_t size;
 
 	threads_starting = params.nthreads;
@@ -318,7 +318,7 @@ int bench_futex_wake_parallel(int argc, const char **argv)
 		cond_broadcast(&thread_worker);
 		mutex_unlock(&thread_lock);
 
-		usleep(200000);
+		usleep(100000);
 
 		/* Ok, all threads are patiently blocked, start waking folks up */
 		wakeup_threads(waking_worker);

@@ -46,15 +46,14 @@ struct cb_compound_hdr_res {
 
 struct cb_getattrargs {
 	struct nfs_fh fh;
-	uint32_t bitmap[3];
+	uint32_t bitmap[2];
 };
 
 struct cb_getattrres {
 	__be32 status;
-	uint32_t bitmap[3];
+	uint32_t bitmap[2];
 	uint64_t size;
 	uint64_t change_attr;
-	struct timespec64 atime;
 	struct timespec64 ctime;
 	struct timespec64 mtime;
 };

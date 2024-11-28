@@ -69,10 +69,7 @@ struct bch_alloc_v4 {
 	__u64			io_time[2];
 	__u32			stripe;
 	__u32			nr_external_backpointers;
-	/* end of fields in original version of alloc_v4 */
-	__u64			_fragmentation_lru; /* obsolete */
-	__u32			stripe_sectors;
-	__u32			pad;
+	__u64			fragmentation_lru;
 } __packed __aligned(8);
 
 #define BCH_ALLOC_V4_U64s_V0	6

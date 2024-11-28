@@ -45,7 +45,7 @@ static int mpl115_i2c_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id mpl115_i2c_id[] = {
-	{ "mpl115" },
+	{ "mpl115", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, mpl115_i2c_id);

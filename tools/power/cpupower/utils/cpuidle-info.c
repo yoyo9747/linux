@@ -64,8 +64,6 @@ static void cpuidle_cpu_output(unsigned int cpu, int verbose)
 
 		printf(_("Latency: %lu\n"),
 		       cpuidle_state_latency(cpu, idlestate));
-		printf(_("Residency: %lu\n"),
-		       cpuidle_state_residency(cpu, idlestate));
 		printf(_("Usage: %lu\n"),
 		       cpuidle_state_usage(cpu, idlestate));
 		printf(_("Duration: %llu\n"),
@@ -117,8 +115,6 @@ static void proc_cpuidle_cpu_output(unsigned int cpu)
 		printf(_("promotion[--] demotion[--] "));
 		printf(_("latency[%03lu] "),
 		       cpuidle_state_latency(cpu, cstate));
-		printf(_("residency[%05lu] "),
-		       cpuidle_state_residency(cpu, cstate));
 		printf(_("usage[%08lu] "),
 		       cpuidle_state_usage(cpu, cstate));
 		printf(_("duration[%020Lu] \n"),

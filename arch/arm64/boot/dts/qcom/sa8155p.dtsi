@@ -9,10 +9,6 @@
 
 #include "sm8150.dtsi"
 
-&camcc {
-	power-domains = <&rpmhpd SA8155P_CX>;
-};
-
 &dispcc {
 	power-domains = <&rpmhpd SA8155P_CX>;
 };
@@ -41,8 +37,4 @@
 	 * necessitate adjusting entries that actually differ
 	 */
 	compatible = "qcom,sa8155p-rpmhpd";
-};
-
-&videocc {
-	power-domains = <&rpmhpd SA8155P_CX>;
 };

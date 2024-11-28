@@ -130,9 +130,6 @@ Enabling the driver and kconfig options
 
 |    Build support for software-managed steering in the NIC.
 
-**CONFIG_MLX5_HW_STEERING=(y/n)**
-
-|    Build support for hardware-managed steering in the NIC.
 
 **CONFIG_MLX5_TC_CT=(y/n)**
 

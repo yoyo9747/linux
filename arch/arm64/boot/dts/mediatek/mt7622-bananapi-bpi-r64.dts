@@ -149,9 +149,9 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		switch@1f {
+		switch@0 {
 			compatible = "mediatek,mt7531";
-			reg = <0x1f>;
+			reg = <0>;
 			interrupt-controller;
 			#interrupt-cells = <1>;
 			interrupts-extended = <&pio 53 IRQ_TYPE_LEVEL_HIGH>;
@@ -329,8 +329,8 @@
 	/* eMMC is shared pin with parallel NAND */
 	emmc_pins_default: emmc-pins-default {
 		mux {
-			function = "emmc";
-			groups = "emmc", "emmc_rst";
+			function = "emmc", "emmc_rst";
+			groups = "emmc";
 		};
 
 		/* "NDL0","NDL1","NDL2","NDL3","NDL4","NDL5","NDL6","NDL7",

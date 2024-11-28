@@ -53,7 +53,7 @@
 #include <linux/exportfs.h>
 #include <linux/hashtable.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "orangefs-dev-proto.h"
 

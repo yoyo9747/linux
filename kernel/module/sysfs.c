@@ -69,13 +69,12 @@ static void free_sect_attrs(struct module_sect_attrs *sect_attrs)
 	kfree(sect_attrs);
 }
 
-static int add_sect_attrs(struct module *mod, const struct load_info *info)
+static void add_sect_attrs(struct module *mod, const struct load_info *info)
 {
 	unsigned int nloaded = 0, i, size[2];
 	struct module_sect_attrs *sect_attrs;
 	struct module_sect_attr *sattr;
 	struct bin_attribute **gattr;
-	int ret;
 
 	/* Count loaded sections and allocate structures */
 	for (i = 0; i < info->hdr->e_shnum; i++)
@@ -86,7 +85,7 @@ static int add_sect_attrs(struct module *mod, const struct load_info *info)
 	size[1] = (nloaded + 1) * sizeof(sect_attrs->grp.bin_attrs[0]);
 	sect_attrs = kzalloc(size[0] + size[1], GFP_KERNEL);
 	if (!sect_attrs)
-		return -ENOMEM;
+		return;
 
 	/* Setup section attributes. */
 	sect_attrs->grp.name = "sections";
@@ -104,10 +103,8 @@ static int add_sect_attrs(struct module *mod, const struct load_info *info)
 		sattr->address = sec->sh_addr;
 		sattr->battr.attr.name =
 			kstrdup(info->secstrings + sec->sh_name, GFP_KERNEL);
-		if (!sattr->battr.attr.name) {
-			ret = -ENOMEM;
+		if (!sattr->battr.attr.name)
 			goto out;
-		}
 		sect_attrs->nsections++;
 		sattr->battr.read = module_sect_read;
 		sattr->battr.size = MODULE_SECT_READ_SIZE;
@@ -116,15 +113,13 @@ static int add_sect_attrs(struct module *mod, const struct load_info *info)
 	}
 	*gattr = NULL;
 
-	ret = sysfs_create_group(&mod->mkobj.kobj, &sect_attrs->grp);
-	if (ret)
+	if (sysfs_create_group(&mod->mkobj.kobj, &sect_attrs->grp))
 		goto out;
 
 	mod->sect_attrs = sect_attrs;
-	return 0;
+	return;
 out:
 	free_sect_attrs(sect_attrs);
-	return ret;
 }
 
 static void remove_sect_attrs(struct module *mod)
@@ -163,12 +158,15 @@ static void free_notes_attrs(struct module_notes_attrs *notes_attrs,
 	kfree(notes_attrs);
 }
 
-static int add_notes_attrs(struct module *mod, const struct load_info *info)
+static void add_notes_attrs(struct module *mod, const struct load_info *info)
 {
 	unsigned int notes, loaded, i;
 	struct module_notes_attrs *notes_attrs;
 	struct bin_attribute *nattr;
-	int ret;
+
+	/* failed to create section attributes, so can't create notes */
+	if (!mod->sect_attrs)
+		return;
 
 	/* Count notes sections and allocate structures.  */
 	notes = 0;
@@ -178,12 +176,12 @@ static int add_notes_attrs(struct module *mod, const struct load_info *info)
 			++notes;
 
 	if (notes == 0)
-		return 0;
+		return;
 
 	notes_attrs = kzalloc(struct_size(notes_attrs, attrs, notes),
 			      GFP_KERNEL);
 	if (!notes_attrs)
-		return -ENOMEM;
+		return;
 
 	notes_attrs->notes = notes;
 	nattr = &notes_attrs->attrs[0];
@@ -203,23 +201,19 @@ static int add_notes_attrs(struct module *mod, const struct load_info *info)
 	}
 
 	notes_attrs->dir = kobject_create_and_add("notes", &mod->mkobj.kobj);
-	if (!notes_attrs->dir) {
-		ret = -ENOMEM;
+	if (!notes_attrs->dir)
 		goto out;
-	}
 
-	for (i = 0; i < notes; ++i) {
-		ret = sysfs_create_bin_file(notes_attrs->dir, &notes_attrs->attrs[i]);
-		if (ret)
+	for (i = 0; i < notes; ++i)
+		if (sysfs_create_bin_file(notes_attrs->dir,
+					  &notes_attrs->attrs[i]))
 			goto out;
-	}
 
 	mod->notes_attrs = notes_attrs;
-	return 0;
+	return;
 
 out:
 	free_notes_attrs(notes_attrs, i);
-	return ret;
 }
 
 static void remove_notes_attrs(struct module *mod)
@@ -229,15 +223,9 @@ static void remove_notes_attrs(struct module *mod)
 }
 
 #else /* !CONFIG_KALLSYMS */
-static inline int add_sect_attrs(struct module *mod, const struct load_info *info)
-{
-	return 0;
-}
+static inline void add_sect_attrs(struct module *mod, const struct load_info *info) { }
 static inline void remove_sect_attrs(struct module *mod) { }
-static inline int add_notes_attrs(struct module *mod, const struct load_info *info)
-{
-	return 0;
-}
+static inline void add_notes_attrs(struct module *mod, const struct load_info *info) { }
 static inline void remove_notes_attrs(struct module *mod) { }
 #endif /* CONFIG_KALLSYMS */
 
@@ -397,20 +385,11 @@ int mod_sysfs_setup(struct module *mod,
 	if (err)
 		goto out_unreg_modinfo_attrs;
 
-	err = add_sect_attrs(mod, info);
-	if (err)
-		goto out_del_usage_links;
-
-	err = add_notes_attrs(mod, info);
-	if (err)
-		goto out_unreg_sect_attrs;
+	add_sect_attrs(mod, info);
+	add_notes_attrs(mod, info);
 
 	return 0;
 
-out_unreg_sect_attrs:
-	remove_sect_attrs(mod);
-out_del_usage_links:
-	del_usage_links(mod);
 out_unreg_modinfo_attrs:
 	module_remove_modinfo_attrs(mod, -1);
 out_unreg_param:

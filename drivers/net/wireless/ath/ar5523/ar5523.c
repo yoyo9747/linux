@@ -1061,7 +1061,7 @@ err:
 	return error;
 }
 
-static void ar5523_stop(struct ieee80211_hw *hw, bool suspend)
+static void ar5523_stop(struct ieee80211_hw *hw)
 {
 	struct ar5523 *ar = hw->priv;
 

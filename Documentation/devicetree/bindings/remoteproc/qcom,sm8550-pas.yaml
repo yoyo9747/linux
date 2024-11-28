@@ -16,7 +16,6 @@ description:
 properties:
   compatible:
     enum:
-      - qcom,sdx75-mpss-pas
       - qcom,sm8550-adsp-pas
       - qcom,sm8550-cdsp-pas
       - qcom,sm8550-mpss-pas
@@ -114,7 +113,6 @@ allOf:
       properties:
         compatible:
           enum:
-            - qcom,sdx75-mpss-pas
             - qcom,sm8650-mpss-pas
     then:
       properties:
@@ -148,7 +146,6 @@ allOf:
       properties:
         compatible:
           enum:
-            - qcom,sdx75-mpss-pas
             - qcom,sm8550-mpss-pas
             - qcom,sm8650-mpss-pas
     then:

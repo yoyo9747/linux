@@ -315,6 +315,7 @@ static struct parport_driver butterfly_driver = {
 	.name =		"spi_butterfly",
 	.match_port =	butterfly_attach,
 	.detach =	butterfly_detach,
+	.devmodel = true,
 };
 module_parport_driver(butterfly_driver);
 

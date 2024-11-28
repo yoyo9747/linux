@@ -49,4 +49,3 @@ else:
     import linux.page_owner
     import linux.slab
     import linux.vmalloc
-    import linux.kasan

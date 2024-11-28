@@ -22,7 +22,7 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define QUAD8_EXTENT 32
 

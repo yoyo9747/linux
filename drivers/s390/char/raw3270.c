@@ -1341,7 +1341,6 @@ static void raw3270_exit(void)
 	class_unregister(&class3270);
 }
 
-MODULE_DESCRIPTION("IBM/3270 Driver - core functions");
 MODULE_LICENSE("GPL");
 
 module_init(raw3270_init);

@@ -11,7 +11,6 @@
 #include <os.h>
 #include <skas.h>
 #include <sysdep/tls.h>
-#include <asm/desc.h>
 
 /*
  * If needed we can detect when it's uninitialized.

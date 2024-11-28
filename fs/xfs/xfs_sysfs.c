@@ -432,30 +432,39 @@ log_tail_lsn_show(
 XFS_SYSFS_ATTR_RO(log_tail_lsn);
 
 STATIC ssize_t
-reserve_grant_head_bytes_show(
+reserve_grant_head_show(
 	struct kobject	*kobject,
 	char		*buf)
+
 {
-	return sysfs_emit(buf, "%lld\n",
-			atomic64_read(&to_xlog(kobject)->l_reserve_head.grant));
+	int cycle;
+	int bytes;
+	struct xlog *log = to_xlog(kobject);
+
+	xlog_crack_grant_head(&log->l_reserve_head.grant, &cycle, &bytes);
+	return sysfs_emit(buf, "%d:%d\n", cycle, bytes);
 }
-XFS_SYSFS_ATTR_RO(reserve_grant_head_bytes);
+XFS_SYSFS_ATTR_RO(reserve_grant_head);
 
 STATIC ssize_t
-write_grant_head_bytes_show(
+write_grant_head_show(
 	struct kobject	*kobject,
 	char		*buf)
 {
-	return sysfs_emit(buf, "%lld\n",
-			atomic64_read(&to_xlog(kobject)->l_write_head.grant));
+	int cycle;
+	int bytes;
+	struct xlog *log = to_xlog(kobject);
+
+	xlog_crack_grant_head(&log->l_write_head.grant, &cycle, &bytes);
+	return sysfs_emit(buf, "%d:%d\n", cycle, bytes);
 }
-XFS_SYSFS_ATTR_RO(write_grant_head_bytes);
+XFS_SYSFS_ATTR_RO(write_grant_head);
 
 static struct attribute *xfs_log_attrs[] = {
 	ATTR_LIST(log_head_lsn),
 	ATTR_LIST(log_tail_lsn),
-	ATTR_LIST(reserve_grant_head_bytes),
-	ATTR_LIST(write_grant_head_bytes),
+	ATTR_LIST(reserve_grant_head),
+	ATTR_LIST(write_grant_head),
 	NULL,
 };
 ATTRIBUTE_GROUPS(xfs_log);

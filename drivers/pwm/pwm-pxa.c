@@ -208,5 +208,4 @@ static struct platform_driver pwm_driver = {
 
 module_platform_driver(pwm_driver);
 
-MODULE_DESCRIPTION("PXA Pulse Width Modulator driver");
 MODULE_LICENSE("GPL v2");

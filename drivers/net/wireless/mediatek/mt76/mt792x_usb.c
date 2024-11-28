@@ -285,12 +285,12 @@ int mt792xu_init_reset(struct mt792x_dev *dev)
 }
 EXPORT_SYMBOL_GPL(mt792xu_init_reset);
 
-void mt792xu_stop(struct ieee80211_hw *hw, bool suspend)
+void mt792xu_stop(struct ieee80211_hw *hw)
 {
 	struct mt792x_dev *dev = mt792x_hw_dev(hw);
 
 	mt76u_stop_tx(&dev->mt76);
-	mt792x_stop(hw, false);
+	mt792x_stop(hw);
 }
 EXPORT_SYMBOL_GPL(mt792xu_stop);
 

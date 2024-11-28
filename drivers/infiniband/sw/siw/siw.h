@@ -94,6 +94,8 @@ struct siw_device {
 	atomic_t num_mr;
 	atomic_t num_srq;
 	atomic_t num_ctx;
+
+	struct work_struct netdev_down;
 };
 
 struct siw_ucontext {

@@ -5,7 +5,7 @@
  * Copyright 2022- IBM Inc. All rights reserved
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <asm/simd.h>
 #include <asm/switch_to.h>
 #include <crypto/aes.h>

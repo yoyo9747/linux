@@ -125,52 +125,28 @@ slowwait_for_counter()
 	slowwait "$timeout" until_counter_is ">= $((base + delta))" "$@"
 }
 
-# Check for existence of tools which are built as part of selftests
-# but may also already exist in $PATH
-check_gen_prog()
-{
-	local prog_name=$1; shift
-
-	if ! which $prog_name >/dev/null 2>/dev/null; then
-		PATH=$PWD:$PATH
-		if ! which $prog_name >/dev/null; then
-			echo "'$prog_name' command not found; skipping tests"
-			exit $ksft_skip
-		fi
-	fi
-}
-
-remove_ns_list()
-{
-	local item=$1
-	local ns
-	local ns_list=("${NS_LIST[@]}")
-	NS_LIST=()
-
-	for ns in "${ns_list[@]}"; do
-		if [ "${ns}" != "${item}" ]; then
-			NS_LIST+=("${ns}")
-		fi
-	done
-}
-
 cleanup_ns()
 {
 	local ns=""
+	local errexit=0
 	local ret=0
+
+	# disable errexit temporary
+	if [[ $- =~ "e" ]]; then
+		errexit=1
+		set +e
+	fi
 
 	for ns in "$@"; do
 		[ -z "${ns}" ] && continue
-		ip netns pids "${ns}" 2> /dev/null | xargs -r kill || true
-		ip netns delete "${ns}" &> /dev/null || true
+		ip netns delete "${ns}" &> /dev/null
 		if ! busywait $BUSYWAIT_TIMEOUT ip netns list \| grep -vq "^$ns$" &> /dev/null; then
 			echo "Warn: Failed to remove namespace $ns"
 			ret=1
-		else
-			remove_ns_list "${ns}"
 		fi
 	done
 
+	[ $errexit -eq 1 ] && set -e
 	return $ret
 }
 
@@ -183,30 +159,29 @@ cleanup_all_ns()
 # setup_ns local remote
 setup_ns()
 {
+	local ns=""
 	local ns_name=""
 	local ns_list=()
+	local ns_exist=
 	for ns_name in "$@"; do
-		# avoid conflicts with local var: internal error
-		if [ "${ns_name}" = "ns_name" ]; then
-			echo "Failed to setup namespace '${ns_name}': invalid name"
-			cleanup_ns "${ns_list[@]}"
-			exit $ksft_fail
-		fi
-
 		# Some test may setup/remove same netns multi times
-		if [ -z "${!ns_name}" ]; then
-			eval "${ns_name}=${ns_name,,}-$(mktemp -u XXXXXX)"
+		if unset ${ns_name} 2> /dev/null; then
+			ns="${ns_name,,}-$(mktemp -u XXXXXX)"
+			eval readonly ${ns_name}="$ns"
+			ns_exist=false
 		else
-			cleanup_ns "${!ns_name}"
+			eval ns='$'${ns_name}
+			cleanup_ns "$ns"
+			ns_exist=true
 		fi
 
-		if ! ip netns add "${!ns_name}"; then
+		if ! ip netns add "$ns"; then
 			echo "Failed to create namespace $ns_name"
 			cleanup_ns "${ns_list[@]}"
 			return $ksft_skip
 		fi
-		ip -n "${!ns_name}" link set lo up
-		ns_list+=("${!ns_name}")
+		ip -n "$ns" link set lo up
+		! $ns_exist && ns_list+=("$ns")
 	done
 	NS_LIST+=("${ns_list[@]}")
 }
@@ -215,10 +190,10 @@ tc_rule_stats_get()
 {
 	local dev=$1; shift
 	local pref=$1; shift
-	local dir=${1:-ingress}; shift
+	local dir=$1; shift
 	local selector=${1:-.packets}; shift
 
-	tc -j -s filter show dev $dev $dir pref $pref \
+	tc -j -s filter show dev $dev ${dir:-ingress} pref $pref \
 	    | jq ".[1].options.actions[].stats$selector"
 }
 

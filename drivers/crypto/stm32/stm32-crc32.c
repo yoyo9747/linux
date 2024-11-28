@@ -17,7 +17,7 @@
 
 #include <crypto/internal/hash.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define DRIVER_NAME             "stm32-crc32"
 #define CHKSUM_DIGEST_SIZE      4

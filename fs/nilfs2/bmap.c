@@ -349,7 +349,7 @@ int nilfs_bmap_propagate(struct nilfs_bmap *bmap, struct buffer_head *bh)
 }
 
 /**
- * nilfs_bmap_lookup_dirty_buffers - collect dirty block buffers
+ * nilfs_bmap_lookup_dirty_buffers -
  * @bmap: bmap
  * @listp: pointer to buffer head list
  */
@@ -450,9 +450,15 @@ int nilfs_bmap_test_and_clear_dirty(struct nilfs_bmap *bmap)
 __u64 nilfs_bmap_data_get_key(const struct nilfs_bmap *bmap,
 			      const struct buffer_head *bh)
 {
-	loff_t pos = folio_pos(bh->b_folio) + bh_offset(bh);
+	struct buffer_head *pbh;
+	__u64 key;
 
-	return pos >> bmap->b_inode->i_blkbits;
+	key = page_index(bh->b_page) << (PAGE_SHIFT -
+					 bmap->b_inode->i_blkbits);
+	for (pbh = page_buffers(bh->b_page); pbh != bh; pbh = pbh->b_this_page)
+		key++;
+
+	return key;
 }
 
 __u64 nilfs_bmap_find_target_seq(const struct nilfs_bmap *bmap, __u64 key)

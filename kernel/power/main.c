@@ -115,7 +115,7 @@ int pm_async_enabled = 1;
 static ssize_t pm_async_show(struct kobject *kobj, struct kobj_attribute *attr,
 			     char *buf)
 {
-	return sysfs_emit(buf, "%d\n", pm_async_enabled);
+	return sprintf(buf, "%d\n", pm_async_enabled);
 }
 
 static ssize_t pm_async_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -139,7 +139,7 @@ power_attr(pm_async);
 static ssize_t mem_sleep_show(struct kobject *kobj, struct kobj_attribute *attr,
 			      char *buf)
 {
-	ssize_t count = 0;
+	char *s = buf;
 	suspend_state_t i;
 
 	for (i = PM_SUSPEND_MIN; i < PM_SUSPEND_MAX; i++) {
@@ -149,17 +149,17 @@ static ssize_t mem_sleep_show(struct kobject *kobj, struct kobj_attribute *attr,
 			const char *label = mem_sleep_states[i];
 
 			if (mem_sleep_current == i)
-				count += sysfs_emit_at(buf, count, "[%s] ", label);
+				s += sprintf(s, "[%s] ", label);
 			else
-				count += sysfs_emit_at(buf, count, "%s ", label);
+				s += sprintf(s, "%s ", label);
 		}
 	}
 
 	/* Convert the last space to a newline if needed. */
-	if (count > 0)
-		buf[count - 1] = '\n';
+	if (s != buf)
+		*(s-1) = '\n';
 
-	return count;
+	return (s - buf);
 }
 
 static suspend_state_t decode_suspend_state(const char *buf, size_t n)
@@ -220,7 +220,7 @@ bool sync_on_suspend_enabled = !IS_ENABLED(CONFIG_SUSPEND_SKIP_SYNC);
 static ssize_t sync_on_suspend_show(struct kobject *kobj,
 				   struct kobj_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", sync_on_suspend_enabled);
+	return sprintf(buf, "%d\n", sync_on_suspend_enabled);
 }
 
 static ssize_t sync_on_suspend_store(struct kobject *kobj,
@@ -257,22 +257,22 @@ static const char * const pm_tests[__TEST_AFTER_LAST] = {
 static ssize_t pm_test_show(struct kobject *kobj, struct kobj_attribute *attr,
 				char *buf)
 {
-	ssize_t count = 0;
+	char *s = buf;
 	int level;
 
 	for (level = TEST_FIRST; level <= TEST_MAX; level++)
 		if (pm_tests[level]) {
 			if (level == pm_test_level)
-				count += sysfs_emit_at(buf, count, "[%s] ", pm_tests[level]);
+				s += sprintf(s, "[%s] ", pm_tests[level]);
 			else
-				count += sysfs_emit_at(buf, count, "%s ", pm_tests[level]);
+				s += sprintf(s, "%s ", pm_tests[level]);
 		}
 
-	/* Convert the last space to a newline if needed. */
-	if (count > 0)
-		buf[count - 1] = '\n';
+	if (s != buf)
+		/* convert the last space to a newline */
+		*(s-1) = '\n';
 
-	return count;
+	return (s - buf);
 }
 
 static ssize_t pm_test_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -390,7 +390,7 @@ static const char * const suspend_step_names[] = {
 static ssize_t _name##_show(struct kobject *kobj,		\
 		struct kobj_attribute *attr, char *buf)		\
 {								\
-	return sysfs_emit(buf, format_str, suspend_stats._name);\
+	return sprintf(buf, format_str, suspend_stats._name);	\
 }								\
 static struct kobj_attribute _name = __ATTR_RO(_name)
 
@@ -404,7 +404,7 @@ suspend_attr(max_hw_sleep, "%llu\n");
 static ssize_t _name##_show(struct kobject *kobj,		\
 		struct kobj_attribute *attr, char *buf)		\
 {								\
-	return sysfs_emit(buf, "%u\n",				\
+	return sprintf(buf, "%u\n",				\
 		       suspend_stats.step_failures[step-1]);	\
 }								\
 static struct kobj_attribute _name = __ATTR_RO(_name)
@@ -428,7 +428,7 @@ static ssize_t last_failed_dev_show(struct kobject *kobj,
 	index %= REC_FAILED_NUM;
 	last_failed_dev = suspend_stats.failed_devs[index];
 
-	return sysfs_emit(buf, "%s\n", last_failed_dev);
+	return sprintf(buf, "%s\n", last_failed_dev);
 }
 static struct kobj_attribute last_failed_dev = __ATTR_RO(last_failed_dev);
 
@@ -442,7 +442,7 @@ static ssize_t last_failed_errno_show(struct kobject *kobj,
 	index %= REC_FAILED_NUM;
 	last_failed_errno = suspend_stats.errno[index];
 
-	return sysfs_emit(buf, "%d\n", last_failed_errno);
+	return sprintf(buf, "%d\n", last_failed_errno);
 }
 static struct kobj_attribute last_failed_errno = __ATTR_RO(last_failed_errno);
 
@@ -456,7 +456,7 @@ static ssize_t last_failed_step_show(struct kobject *kobj,
 	index %= REC_FAILED_NUM;
 	step = suspend_stats.failed_steps[index];
 
-	return sysfs_emit(buf, "%s\n", suspend_step_names[step]);
+	return sprintf(buf, "%s\n", suspend_step_names[step]);
 }
 static struct kobj_attribute last_failed_step = __ATTR_RO(last_failed_step);
 
@@ -571,7 +571,7 @@ bool pm_print_times_enabled;
 static ssize_t pm_print_times_show(struct kobject *kobj,
 				   struct kobj_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", pm_print_times_enabled);
+	return sprintf(buf, "%d\n", pm_print_times_enabled);
 }
 
 static ssize_t pm_print_times_store(struct kobject *kobj,
@@ -604,7 +604,7 @@ static ssize_t pm_wakeup_irq_show(struct kobject *kobj,
 	if (!pm_wakeup_irq())
 		return -ENODATA;
 
-	return sysfs_emit(buf, "%u\n", pm_wakeup_irq());
+	return sprintf(buf, "%u\n", pm_wakeup_irq());
 }
 
 power_attr_ro(pm_wakeup_irq);
@@ -620,7 +620,7 @@ EXPORT_SYMBOL_GPL(pm_debug_messages_should_print);
 static ssize_t pm_debug_messages_show(struct kobject *kobj,
 				      struct kobj_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", pm_debug_messages_on);
+	return sprintf(buf, "%d\n", pm_debug_messages_on);
 }
 
 static ssize_t pm_debug_messages_store(struct kobject *kobj,
@@ -668,23 +668,21 @@ struct kobject *power_kobj;
 static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
 			  char *buf)
 {
-	ssize_t count = 0;
+	char *s = buf;
 #ifdef CONFIG_SUSPEND
 	suspend_state_t i;
 
 	for (i = PM_SUSPEND_MIN; i < PM_SUSPEND_MAX; i++)
 		if (pm_states[i])
-			count += sysfs_emit_at(buf, count, "%s ", pm_states[i]);
+			s += sprintf(s,"%s ", pm_states[i]);
 
 #endif
 	if (hibernation_available())
-		count += sysfs_emit_at(buf, count, "disk ");
-
-	/* Convert the last space to a newline if needed. */
-	if (count > 0)
-		buf[count - 1] = '\n';
-
-	return count;
+		s += sprintf(s, "disk ");
+	if (s != buf)
+		/* convert the last space to a newline */
+		*(s-1) = '\n';
+	return (s - buf);
 }
 
 static suspend_state_t decode_state(const char *buf, size_t n)
@@ -784,7 +782,7 @@ static ssize_t wakeup_count_show(struct kobject *kobj,
 	unsigned int val;
 
 	return pm_get_wakeup_count(&val, true) ?
-		sysfs_emit(buf, "%u\n", val) : -EINTR;
+		sprintf(buf, "%u\n", val) : -EINTR;
 }
 
 static ssize_t wakeup_count_store(struct kobject *kobj,
@@ -826,17 +824,17 @@ static ssize_t autosleep_show(struct kobject *kobj,
 	suspend_state_t state = pm_autosleep_state();
 
 	if (state == PM_SUSPEND_ON)
-		return sysfs_emit(buf, "off\n");
+		return sprintf(buf, "off\n");
 
 #ifdef CONFIG_SUSPEND
 	if (state < PM_SUSPEND_MAX)
-		return sysfs_emit(buf, "%s\n", pm_states[state] ?
+		return sprintf(buf, "%s\n", pm_states[state] ?
 					pm_states[state] : "error");
 #endif
 #ifdef CONFIG_HIBERNATION
-	return sysfs_emit(buf, "disk\n");
+	return sprintf(buf, "disk\n");
 #else
-	return sysfs_emit(buf, "error\n");
+	return sprintf(buf, "error");
 #endif
 }
 
@@ -905,7 +903,7 @@ int pm_trace_enabled;
 static ssize_t pm_trace_show(struct kobject *kobj, struct kobj_attribute *attr,
 			     char *buf)
 {
-	return sysfs_emit(buf, "%d\n", pm_trace_enabled);
+	return sprintf(buf, "%d\n", pm_trace_enabled);
 }
 
 static ssize_t
@@ -942,7 +940,7 @@ power_attr_ro(pm_trace_dev_match);
 static ssize_t pm_freeze_timeout_show(struct kobject *kobj,
 				      struct kobj_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%u\n", freeze_timeout_msecs);
+	return sprintf(buf, "%u\n", freeze_timeout_msecs);
 }
 
 static ssize_t pm_freeze_timeout_store(struct kobject *kobj,

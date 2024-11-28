@@ -134,12 +134,18 @@ AD7944_DEFINE_CHIP_INFO(ad7985, ad7944, 16, 0);
 /* fully differential */
 AD7944_DEFINE_CHIP_INFO(ad7986, ad7986, 18, 1);
 
+static void ad7944_unoptimize_msg(void *msg)
+{
+	spi_unoptimize_message(msg);
+}
+
 static int ad7944_3wire_cs_mode_init_msg(struct device *dev, struct ad7944_adc *adc,
 					 const struct iio_chan_spec *chan)
 {
 	unsigned int t_conv_ns = adc->always_turbo ? adc->timing_spec->turbo_conv_ns
 						   : adc->timing_spec->conv_ns;
 	struct spi_transfer *xfers = adc->xfers;
+	int ret;
 
 	/*
 	 * NB: can get better performance from some SPI controllers if we use
@@ -169,7 +175,11 @@ static int ad7944_3wire_cs_mode_init_msg(struct device *dev, struct ad7944_adc *
 
 	spi_message_init_with_transfers(&adc->msg, xfers, 3);
 
-	return devm_spi_optimize_message(dev, adc->spi, &adc->msg);
+	ret = spi_optimize_message(adc->spi, &adc->msg);
+	if (ret)
+		return ret;
+
+	return devm_add_action_or_reset(dev, ad7944_unoptimize_msg, &adc->msg);
 }
 
 static int ad7944_4wire_mode_init_msg(struct device *dev, struct ad7944_adc *adc,
@@ -178,6 +188,7 @@ static int ad7944_4wire_mode_init_msg(struct device *dev, struct ad7944_adc *adc
 	unsigned int t_conv_ns = adc->always_turbo ? adc->timing_spec->turbo_conv_ns
 						   : adc->timing_spec->conv_ns;
 	struct spi_transfer *xfers = adc->xfers;
+	int ret;
 
 	/*
 	 * NB: can get better performance from some SPI controllers if we use
@@ -198,7 +209,11 @@ static int ad7944_4wire_mode_init_msg(struct device *dev, struct ad7944_adc *adc
 
 	spi_message_init_with_transfers(&adc->msg, xfers, 2);
 
-	return devm_spi_optimize_message(dev, adc->spi, &adc->msg);
+	ret = spi_optimize_message(adc->spi, &adc->msg);
+	if (ret)
+		return ret;
+
+	return devm_add_action_or_reset(dev, ad7944_unoptimize_msg, &adc->msg);
 }
 
 static int ad7944_chain_mode_init_msg(struct device *dev, struct ad7944_adc *adc,
@@ -206,6 +221,7 @@ static int ad7944_chain_mode_init_msg(struct device *dev, struct ad7944_adc *adc
 				      u32 n_chain_dev)
 {
 	struct spi_transfer *xfers = adc->xfers;
+	int ret;
 
 	/*
 	 * NB: SCLK has to be low before we toggle CS to avoid triggering the
@@ -233,12 +249,17 @@ static int ad7944_chain_mode_init_msg(struct device *dev, struct ad7944_adc *adc
 
 	spi_message_init_with_transfers(&adc->msg, xfers, 2);
 
-	return devm_spi_optimize_message(dev, adc->spi, &adc->msg);
+	ret = spi_optimize_message(adc->spi, &adc->msg);
+	if (ret)
+		return ret;
+
+	return devm_add_action_or_reset(dev, ad7944_unoptimize_msg, &adc->msg);
 }
 
 /**
  * ad7944_convert_and_acquire - Perform a single conversion and acquisition
  * @adc: The ADC device structure
+ * @chan: The channel specification
  * Return: 0 on success, a negative error code on failure
  *
  * Perform a conversion and acquisition of a single sample using the
@@ -247,7 +268,8 @@ static int ad7944_chain_mode_init_msg(struct device *dev, struct ad7944_adc *adc
  * Upon successful return adc->sample.raw will contain the conversion result
  * (or adc->chain_mode_buf if the device is using chain mode).
  */
-static int ad7944_convert_and_acquire(struct ad7944_adc *adc)
+static int ad7944_convert_and_acquire(struct ad7944_adc *adc,
+				      const struct iio_chan_spec *chan)
 {
 	int ret;
 
@@ -269,7 +291,7 @@ static int ad7944_single_conversion(struct ad7944_adc *adc,
 {
 	int ret;
 
-	ret = ad7944_convert_and_acquire(adc);
+	ret = ad7944_convert_and_acquire(adc, chan);
 	if (ret)
 		return ret;
 
@@ -339,7 +361,7 @@ static irqreturn_t ad7944_trigger_handler(int irq, void *p)
 	struct ad7944_adc *adc = iio_priv(indio_dev);
 	int ret;
 
-	ret = ad7944_convert_and_acquire(adc);
+	ret = ad7944_convert_and_acquire(adc, &indio_dev->channels[0]);
 	if (ret)
 		goto out;
 
@@ -444,17 +466,23 @@ static const char * const ad7944_power_supplies[] = {
 	"avdd",	"dvdd",	"bvdd", "vio"
 };
 
+static void ad7944_ref_disable(void *ref)
+{
+	regulator_disable(ref);
+}
+
 static int ad7944_probe(struct spi_device *spi)
 {
 	const struct ad7944_chip_info *chip_info;
 	struct device *dev = &spi->dev;
 	struct iio_dev *indio_dev;
 	struct ad7944_adc *adc;
-	bool have_refin;
+	bool have_refin = false;
+	struct regulator *ref;
 	struct iio_chan_spec *chain_chan;
 	unsigned long *chain_scan_masks;
 	u32 n_chain_dev;
-	int ret, ref_mv;
+	int ret;
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(*adc));
 	if (!indio_dev)
@@ -505,23 +533,47 @@ static int ad7944_probe(struct spi_device *spi)
 	 * - external reference: REF is connected, REFIN is not connected
 	 */
 
-	ret = devm_regulator_get_enable_read_voltage(dev, "ref");
-	if (ret < 0 && ret != -ENODEV)
-		return dev_err_probe(dev, ret, "failed to get REF voltage\n");
+	ref = devm_regulator_get_optional(dev, "ref");
+	if (IS_ERR(ref)) {
+		if (PTR_ERR(ref) != -ENODEV)
+			return dev_err_probe(dev, PTR_ERR(ref),
+					     "failed to get REF supply\n");
 
-	ref_mv = ret == -ENODEV ? 0 : ret / 1000;
+		ref = NULL;
+	}
 
 	ret = devm_regulator_get_enable_optional(dev, "refin");
-	if (ret < 0 && ret != -ENODEV)
-		return dev_err_probe(dev, ret, "failed to get REFIN voltage\n");
+	if (ret == 0)
+		have_refin = true;
+	else if (ret != -ENODEV)
+		return dev_err_probe(dev, ret,
+				     "failed to get and enable REFIN supply\n");
 
-	have_refin = ret != -ENODEV;
-
-	if (have_refin && ref_mv)
+	if (have_refin && ref)
 		return dev_err_probe(dev, -EINVAL,
 				     "cannot have both refin and ref supplies\n");
 
-	adc->ref_mv = ref_mv ?: AD7944_INTERNAL_REF_MV;
+	if (ref) {
+		ret = regulator_enable(ref);
+		if (ret)
+			return dev_err_probe(dev, ret,
+					     "failed to enable REF supply\n");
+
+		ret = devm_add_action_or_reset(dev, ad7944_ref_disable, ref);
+		if (ret)
+			return ret;
+
+		ret = regulator_get_voltage(ref);
+		if (ret < 0)
+			return dev_err_probe(dev, ret,
+					     "failed to get REF voltage\n");
+
+		/* external reference */
+		adc->ref_mv = ret / 1000;
+	} else {
+		/* internal reference */
+		adc->ref_mv = AD7944_INTERNAL_REF_MV;
+	}
 
 	adc->cnv = devm_gpiod_get_optional(dev, "cnv", GPIOD_OUT_LOW);
 	if (IS_ERR(adc->cnv))

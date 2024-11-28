@@ -25,7 +25,7 @@
 #include <linux/map_to_7segment.h>
 #include <linux/map_to_14segment.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "line-display.h"
 
@@ -483,7 +483,6 @@ static int ht16k33_led_probe(struct device *dev, struct led_classdev *led,
 	led->max_brightness = MAX_BRIGHTNESS;
 
 	err = devm_led_classdev_register_ext(dev, led, &init_data);
-	fwnode_handle_put(init_data.fwnode);
 	if (err)
 		dev_err(dev, "Failed to register LED\n");
 

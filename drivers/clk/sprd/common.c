@@ -109,5 +109,4 @@ int sprd_clk_probe(struct device *dev, struct clk_hw_onecell_data *clkhw)
 }
 EXPORT_SYMBOL_GPL(sprd_clk_probe);
 
-MODULE_DESCRIPTION("Spreadtrum clock infrastructure");
 MODULE_LICENSE("GPL v2");

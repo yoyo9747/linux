@@ -1610,7 +1610,7 @@ static int taprio_parse_clockid(struct Qdisc *sch, struct nlattr **tb,
 
 	if (FULL_OFFLOAD_IS_ENABLED(q->flags)) {
 		const struct ethtool_ops *ops = dev->ethtool_ops;
-		struct kernel_ethtool_ts_info info = {
+		struct ethtool_ts_info info = {
 			.cmd = ETHTOOL_GET_TS_INFO,
 			.phc_index = -1,
 		};
@@ -1952,9 +1952,7 @@ static int taprio_change(struct Qdisc *sch, struct nlattr *opt,
 			goto unlock;
 		}
 
-		/* Not going to race against advance_sched(), but still */
-		admin = rcu_replace_pointer(q->admin_sched, new_admin,
-					    lockdep_rtnl_is_held());
+		rcu_assign_pointer(q->admin_sched, new_admin);
 		if (admin)
 			call_rcu(&admin->rcu, taprio_free_sched_cb);
 	} else {

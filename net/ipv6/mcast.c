@@ -586,8 +586,7 @@ int ip6_mc_msfget(struct sock *sk, struct group_filter *gsf,
 	const struct in6_addr *group;
 	struct ipv6_mc_socklist *pmc;
 	struct ip6_sf_socklist *psl;
-	unsigned int count;
-	int i, copycount;
+	int i, count, copycount;
 
 	group = &((struct sockaddr_in6 *)&gsf->gf_group)->sin6_addr;
 
@@ -611,7 +610,7 @@ int ip6_mc_msfget(struct sock *sk, struct group_filter *gsf,
 	psl = sock_dereference(pmc->sflist, sk);
 	count = psl ? psl->sl_count : 0;
 
-	copycount = min(count, gsf->gf_numsrc);
+	copycount = count < gsf->gf_numsrc ? count : gsf->gf_numsrc;
 	gsf->gf_numsrc = count;
 	for (i = 0; i < copycount; i++) {
 		struct sockaddr_in6 *psin6;

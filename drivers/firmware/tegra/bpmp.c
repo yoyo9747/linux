@@ -3,7 +3,6 @@
  * Copyright (c) 2016, NVIDIA CORPORATION.  All rights reserved.
  */
 
-#include <linux/cleanup.h>
 #include <linux/clk/tegra.h>
 #include <linux/genalloc.h>
 #include <linux/mailbox_client.h>
@@ -25,6 +24,12 @@
 #define MSG_RING	BIT(1)
 #define TAG_SZ		32
 
+static inline struct tegra_bpmp *
+mbox_client_to_bpmp(struct mbox_client *client)
+{
+	return container_of(client, struct tegra_bpmp, mbox.client);
+}
+
 static inline const struct tegra_bpmp_ops *
 channel_to_ops(struct tegra_bpmp_channel *channel)
 {
@@ -35,24 +40,29 @@ channel_to_ops(struct tegra_bpmp_channel *channel)
 
 struct tegra_bpmp *tegra_bpmp_get(struct device *dev)
 {
-	struct device_node *np __free(device_node);
 	struct platform_device *pdev;
 	struct tegra_bpmp *bpmp;
+	struct device_node *np;
 
 	np = of_parse_phandle(dev->of_node, "nvidia,bpmp", 0);
 	if (!np)
 		return ERR_PTR(-ENOENT);
 
 	pdev = of_find_device_by_node(np);
-	if (!pdev)
-		return ERR_PTR(-ENODEV);
+	if (!pdev) {
+		bpmp = ERR_PTR(-ENODEV);
+		goto put;
+	}
 
 	bpmp = platform_get_drvdata(pdev);
 	if (!bpmp) {
+		bpmp = ERR_PTR(-EPROBE_DEFER);
 		put_device(&pdev->dev);
-		return ERR_PTR(-EPROBE_DEFER);
+		goto put;
 	}
 
+put:
+	of_node_put(np);
 	return bpmp;
 }
 EXPORT_SYMBOL_GPL(tegra_bpmp_get);

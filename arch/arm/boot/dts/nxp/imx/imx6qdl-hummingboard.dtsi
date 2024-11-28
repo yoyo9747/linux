@@ -140,17 +140,12 @@
 		};
 	};
 
-	spdif_out: spdif-out {
-		compatible = "linux,spdif-dit";
-		#sound-dai-cells = <0>;
-	};
-
 	sound-spdif {
 		compatible = "fsl,imx-audio-spdif";
 		model = "On-board SPDIF";
 		/* IMX6 doesn't implement this yet */
-		audio-cpu = <&spdif>;
-		audio-codec = <&spdif_out>;
+		spdif-controller = <&spdif>;
+		spdif-out;
 	};
 };
 

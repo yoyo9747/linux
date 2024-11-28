@@ -25,7 +25,7 @@ int BPF_PROG(trigger)
 
 static int check_cookie(__u64 val, __u64 *result)
 {
-	__u64 *cookie;
+	long *cookie;
 
 	if (bpf_get_current_pid_tgid() >> 32 != pid)
 		return 1;

@@ -160,8 +160,7 @@ xrep_newbt_add_blocks(
 	if (args->tp) {
 		ASSERT(xnr->oinfo.oi_offset == 0);
 
-		error = xfs_alloc_schedule_autoreap(args,
-				XFS_FREE_EXTENT_SKIP_DISCARD, &resv->autoreap);
+		error = xfs_alloc_schedule_autoreap(args, true, &resv->autoreap);
 		if (error)
 			goto out_pag;
 	}
@@ -415,7 +414,7 @@ xrep_newbt_free_extent(
 	 */
 	fsbno = XFS_AGB_TO_FSB(sc->mp, resv->pag->pag_agno, free_agbno);
 	error = xfs_free_extent_later(sc->tp, fsbno, free_aglen, &xnr->oinfo,
-			xnr->resv, XFS_FREE_EXTENT_SKIP_DISCARD);
+			xnr->resv, true);
 	if (error)
 		return error;
 

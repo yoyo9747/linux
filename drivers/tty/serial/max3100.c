@@ -32,7 +32,7 @@
 #include <linux/tty.h>
 #include <linux/types.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define MAX3100_C    (1<<14)
 #define MAX3100_D    (0<<14)

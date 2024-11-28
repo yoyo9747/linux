@@ -93,10 +93,10 @@ def add_unit_test_or_update_result_to_fails_if_present(fails_txt, unit_test, fai
 def split_unit_test_from_collate(xfails):
     for job_name in xfails.keys():
         for job_id in xfails[job_name].copy().keys():
-            if "not found" in xfails[job_name][job_id].content_as_str:
+            if "not found" in xfails[job_name][job_id]:
                 del xfails[job_name][job_id]
                 continue
-            xfails[job_name][job_id] = xfails[job_name][job_id].content_as_str.splitlines()
+            xfails[job_name][job_id] = xfails[job_name][job_id].strip().split("\n")
 
 
 def get_xfails_from_pipeline_url(pipeline_url):

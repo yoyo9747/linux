@@ -1095,6 +1095,7 @@ const struct file_operations ubi_vol_cdev_operations = {
 /* UBI character device operations */
 const struct file_operations ubi_cdev_operations = {
 	.owner          = THIS_MODULE,
+	.llseek         = no_llseek,
 	.unlocked_ioctl = ubi_cdev_ioctl,
 	.compat_ioctl   = compat_ptr_ioctl,
 };
@@ -1104,4 +1105,5 @@ const struct file_operations ubi_ctrl_cdev_operations = {
 	.owner          = THIS_MODULE,
 	.unlocked_ioctl = ctrl_cdev_ioctl,
 	.compat_ioctl   = compat_ptr_ioctl,
+	.llseek		= no_llseek,
 };

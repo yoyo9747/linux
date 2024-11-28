@@ -38,7 +38,6 @@
 #include <linux/pci.h>
 #include <linux/poll.h>
 #include <linux/slab.h>
-#include <linux/vga_switcheroo.h>
 
 #include <drm/drm_client.h>
 #include <drm/drm_drv.h>
@@ -61,6 +60,15 @@ bool drm_dev_needs_global_mutex(struct drm_device *dev)
 	 * Similar hilarity holds for the unload callback.
 	 */
 	if (dev->driver->load || dev->driver->unload)
+		return true;
+
+	/*
+	 * Drivers with the lastclose callback assume that it's synchronized
+	 * against concurrent opens, which again needs the BKL. The proper fix
+	 * is to use the drm_client infrastructure with proper locking for each
+	 * client.
+	 */
+	if (dev->driver->lastclose)
 		return true;
 
 	return false;
@@ -103,6 +111,7 @@ bool drm_dev_needs_global_mutex(struct drm_device *dev)
  *             .compat_ioctl = drm_compat_ioctl, // NULL if CONFIG_COMPAT=n
  *             .poll = drm_poll,
  *             .read = drm_read,
+ *             .llseek = no_llseek,
  *             .mmap = drm_gem_mmap,
  *     };
  *
@@ -309,8 +318,6 @@ int drm_open_helper(struct file *filp, struct drm_minor *minor)
 	if (dev->switch_power_state != DRM_SWITCH_POWER_ON &&
 	    dev->switch_power_state != DRM_SWITCH_POWER_DYNAMIC_OFF)
 		return -EINVAL;
-	if (WARN_ON_ONCE(!(filp->f_op->fop_flags & FOP_UNSIGNED_OFFSET)))
-		return -EINVAL;
 
 	drm_dbg_core(dev, "comm=\"%s\", pid=%d, minor=%d\n",
 		     current->comm, task_pid_nr(current), minor->index);
@@ -328,6 +335,7 @@ int drm_open_helper(struct file *filp, struct drm_minor *minor)
 	}
 
 	filp->private_data = priv;
+	filp->f_mode |= FMODE_UNSIGNED_OFFSET;
 	priv->filp = filp;
 
 	mutex_lock(&dev->filelist_mutex);
@@ -347,6 +355,7 @@ int drm_open_helper(struct file *filp, struct drm_minor *minor)
  * resources for it. It also calls the &drm_driver.open driver callback.
  *
  * RETURNS:
+ *
  * 0 on success or negative errno value on failure.
  */
 int drm_open(struct inode *inode, struct file *filp)
@@ -355,7 +364,7 @@ int drm_open(struct inode *inode, struct file *filp)
 	struct drm_minor *minor;
 	int retcode;
 
-	minor = drm_minor_acquire(&drm_minors_xa, iminor(inode));
+	minor = drm_minor_acquire(iminor(inode));
 	if (IS_ERR(minor))
 		return PTR_ERR(minor);
 
@@ -386,12 +395,15 @@ err_undo:
 }
 EXPORT_SYMBOL(drm_open);
 
-static void drm_lastclose(struct drm_device *dev)
+void drm_lastclose(struct drm_device * dev)
 {
-	drm_client_dev_restore(dev);
+	drm_dbg_core(dev, "\n");
 
-	if (dev_is_pci(dev->dev))
-		vga_switcheroo_process_delayed_switch();
+	if (dev->driver->lastclose)
+		dev->driver->lastclose(dev);
+	drm_dbg_core(dev, "driver lastclose completed\n");
+
+	drm_client_dev_restore(dev);
 }
 
 /**
@@ -400,11 +412,12 @@ static void drm_lastclose(struct drm_device *dev)
  * @filp: file pointer.
  *
  * This function must be used by drivers as their &file_operations.release
- * method. It frees any resources associated with the open file. If this
- * is the last open file for the DRM device, it also restores the active
- * in-kernel DRM client.
+ * method. It frees any resources associated with the open file, and calls the
+ * &drm_driver.postclose driver callback. If this is the last open file for the
+ * DRM device also proceeds to call the &drm_driver.lastclose driver callback.
  *
  * RETURNS:
+ *
  * Always succeeds and returns 0.
  */
 int drm_release(struct inode *inode, struct file *filp)
@@ -471,10 +484,12 @@ void drm_file_update_pid(struct drm_file *filp)
  *
  * This function may be used by drivers as their &file_operations.release
  * method. It frees any resources associated with the open file prior to taking
- * the drm_global_mutex. If this is the last open file for the DRM device, it
- * then restores the active in-kernel DRM client.
+ * the drm_global_mutex, which then calls the &drm_driver.postclose driver
+ * callback. If this is the last open file for the DRM device also proceeds to
+ * call the &drm_driver.lastclose driver callback.
  *
  * RETURNS:
+ *
  * Always succeeds and returns 0.
  */
 int drm_release_noglobal(struct inode *inode, struct file *filp)
@@ -517,6 +532,7 @@ EXPORT_SYMBOL(drm_release_noglobal);
  * safety.
  *
  * RETURNS:
+ *
  * Number of bytes read (always aligned to full events, and can be 0) or a
  * negative error code on failure.
  */
@@ -602,6 +618,7 @@ EXPORT_SYMBOL(drm_read);
  * See also drm_read().
  *
  * RETURNS:
+ *
  * Mask of POLL flags indicating the current status of the file.
  */
 __poll_t drm_poll(struct file *filp, struct poll_table_struct *wait)
@@ -639,6 +656,7 @@ EXPORT_SYMBOL(drm_poll);
  * already hold &drm_device.event_lock.
  *
  * RETURNS:
+ *
  * 0 on success or a negative error code on failure.
  */
 int drm_event_reserve_init_locked(struct drm_device *dev,
@@ -680,6 +698,7 @@ EXPORT_SYMBOL(drm_event_reserve_init_locked);
  * drm_event_reserve_init_locked() instead.
  *
  * RETURNS:
+ *
  * 0 on success or a negative error code on failure.
  */
 int drm_event_reserve_init(struct drm_device *dev,

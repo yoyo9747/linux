@@ -92,10 +92,10 @@ struct acpi_table_slit {
 /*******************************************************************************
  *
  * SPCR - Serial Port Console Redirection table
- *        Version 4
+ *        Version 2
  *
  * Conforms to "Serial Port Console Redirection Table",
- * Version 1.10, Jan 5, 2023
+ * Version 1.03, August 10, 2015
  *
  ******************************************************************************/
 
@@ -112,7 +112,7 @@ struct acpi_table_spcr {
 	u8 stop_bits;
 	u8 flow_control;
 	u8 terminal_type;
-	u8 language;
+	u8 reserved1;
 	u16 pci_device_id;
 	u16 pci_vendor_id;
 	u8 pci_bus;
@@ -120,11 +120,7 @@ struct acpi_table_spcr {
 	u8 pci_function;
 	u32 pci_flags;
 	u8 pci_segment;
-	u32 uart_clk_freq;
-	u32 precise_baudrate;
-	u16 name_space_string_length;
-	u16 name_space_string_offset;
-	char name_space_string[];
+	u32 reserved2;
 };
 
 /* Masks for pci_flags field above */

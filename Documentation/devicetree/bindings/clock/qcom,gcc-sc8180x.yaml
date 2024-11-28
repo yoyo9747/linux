@@ -40,7 +40,6 @@ required:
   - clocks
   - clock-names
   - power-domains
-  - '#power-domain-cells'
 
 allOf:
   - $ref: qcom,gcc.yaml#

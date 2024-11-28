@@ -1110,28 +1110,26 @@ EXPORT_SYMBOL(__cfg80211_radar_event);
 
 void cfg80211_cac_event(struct net_device *netdev,
 			const struct cfg80211_chan_def *chandef,
-			enum nl80211_radar_event event, gfp_t gfp,
-			unsigned int link_id)
+			enum nl80211_radar_event event, gfp_t gfp)
 {
 	struct wireless_dev *wdev = netdev->ieee80211_ptr;
 	struct wiphy *wiphy = wdev->wiphy;
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
 	unsigned long timeout;
 
-	if (WARN_ON(wdev->valid_links &&
-		    !(wdev->valid_links & BIT(link_id))))
+	/* not yet supported */
+	if (wdev->valid_links)
 		return;
 
-	trace_cfg80211_cac_event(netdev, event, link_id);
+	trace_cfg80211_cac_event(netdev, event);
 
-	if (WARN_ON(!wdev->links[link_id].cac_started &&
-		    event != NL80211_RADAR_CAC_STARTED))
+	if (WARN_ON(!wdev->cac_started && event != NL80211_RADAR_CAC_STARTED))
 		return;
 
 	switch (event) {
 	case NL80211_RADAR_CAC_FINISHED:
-		timeout = wdev->links[link_id].cac_start_time +
-			  msecs_to_jiffies(wdev->links[link_id].cac_time_ms);
+		timeout = wdev->cac_start_time +
+			  msecs_to_jiffies(wdev->cac_time_ms);
 		WARN_ON(!time_after_eq(jiffies, timeout));
 		cfg80211_set_dfs_state(wiphy, chandef, NL80211_DFS_AVAILABLE);
 		memcpy(&rdev->cac_done_chandef, chandef,
@@ -1140,10 +1138,10 @@ void cfg80211_cac_event(struct net_device *netdev,
 		cfg80211_sched_dfs_chan_update(rdev);
 		fallthrough;
 	case NL80211_RADAR_CAC_ABORTED:
-		wdev->links[link_id].cac_started = false;
+		wdev->cac_started = false;
 		break;
 	case NL80211_RADAR_CAC_STARTED:
-		wdev->links[link_id].cac_started = true;
+		wdev->cac_started = true;
 		break;
 	default:
 		WARN_ON(1);

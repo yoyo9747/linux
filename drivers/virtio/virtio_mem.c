@@ -1146,16 +1146,12 @@ static void virtio_mem_set_fake_offline(unsigned long pfn,
 	for (; nr_pages--; pfn++) {
 		struct page *page = pfn_to_page(pfn);
 
-		if (!onlined)
-			/*
-			 * Pages that have not been onlined yet were initialized
-			 * to PageOffline(). Remember that we have to route them
-			 * through generic_online_page().
-			 */
+		__SetPageOffline(page);
+		if (!onlined) {
 			SetPageDirty(page);
-		else
-			__SetPageOffline(page);
-		VM_WARN_ON_ONCE(!PageOffline(page));
+			/* FIXME: remove after cleanups */
+			ClearPageReserved(page);
+		}
 	}
 	page_offline_end();
 }
@@ -1170,11 +1166,9 @@ static void virtio_mem_clear_fake_offline(unsigned long pfn,
 	for (; nr_pages--; pfn++) {
 		struct page *page = pfn_to_page(pfn);
 
+		__ClearPageOffline(page);
 		if (!onlined)
-			/* generic_online_page() will clear PageOffline(). */
 			ClearPageDirty(page);
-		else
-			__ClearPageOffline(page);
 	}
 }
 
@@ -1269,6 +1263,12 @@ static void virtio_mem_fake_offline_going_offline(unsigned long pfn,
 	struct page *page;
 	unsigned long i;
 
+	/*
+	 * Drop our reference to the pages so the memory can get offlined
+	 * and add the unplugged pages to the managed page counters (so
+	 * offlining code can correctly subtract them again).
+	 */
+	adjust_managed_page_count(pfn_to_page(pfn), nr_pages);
 	/* Drop our reference to the pages so the memory can get offlined. */
 	for (i = 0; i < nr_pages; i++) {
 		page = pfn_to_page(pfn + i);
@@ -1287,9 +1287,10 @@ static void virtio_mem_fake_offline_cancel_offline(unsigned long pfn,
 	unsigned long i;
 
 	/*
-	 * Get the reference again that we dropped via page_ref_dec_and_test()
-	 * when going offline.
+	 * Get the reference we dropped when going offline and subtract the
+	 * unplugged pages from the managed page counters.
 	 */
+	adjust_managed_page_count(pfn_to_page(pfn), -nr_pages);
 	for (i = 0; i < nr_pages; i++)
 		page_ref_inc(pfn_to_page(pfn + i));
 }

@@ -23,7 +23,7 @@
 #include <linux/pci.h>
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 
 

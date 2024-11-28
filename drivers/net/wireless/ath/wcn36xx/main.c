@@ -278,7 +278,7 @@ out_err:
 	return ret;
 }
 
-static void wcn36xx_stop(struct ieee80211_hw *hw, bool suspend)
+static void wcn36xx_stop(struct ieee80211_hw *hw)
 {
 	struct wcn36xx *wcn = hw->priv;
 

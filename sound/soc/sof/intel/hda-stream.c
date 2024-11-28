@@ -216,7 +216,9 @@ hda_dsp_stream_get(struct snd_sof_dev *sdev, int direction, u32 flags)
 
 	/* stream found ? */
 	if (!hext_stream) {
-		dev_err(sdev->dev, "error: no free %s streams\n", snd_pcm_direction_name(direction));
+		dev_err(sdev->dev, "error: no free %s streams\n",
+			direction == SNDRV_PCM_STREAM_PLAYBACK ?
+			"playback" : "capture");
 		return hext_stream;
 	}
 

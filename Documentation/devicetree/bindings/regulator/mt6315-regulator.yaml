@@ -16,11 +16,7 @@ description: |
 
 properties:
   compatible:
-    oneOf:
-      - items:
-          - const: mediatek,mt6319-regulator
-          - const: mediatek,mt6315-regulator
-      - const: mediatek,mt6315-regulator
+    const: mediatek,mt6315-regulator
 
   reg:
     maxItems: 1

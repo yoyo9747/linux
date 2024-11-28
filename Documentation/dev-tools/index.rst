@@ -16,7 +16,6 @@ Documentation/dev-tools/testing-overview.rst
 
    testing-overview
    checkpatch
-   clang-format
    coccinelle
    sparse
    kcov
@@ -33,7 +32,6 @@ Documentation/dev-tools/testing-overview.rst
    kunit/index
    ktap
    checkuapi
-   gpio-sloppy-logic-analyzer
 
 
 .. only::  subproject and html

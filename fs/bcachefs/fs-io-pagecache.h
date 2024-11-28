@@ -99,7 +99,9 @@ static inline void bch2_folio_release(struct folio *folio)
 
 static inline struct bch_folio *__bch2_folio(struct folio *folio)
 {
-	return folio_get_private(folio);
+	return folio_has_private(folio)
+		? (struct bch_folio *) folio_get_private(folio)
+		: NULL;
 }
 
 static inline struct bch_folio *bch2_folio(struct folio *folio)
@@ -151,12 +153,7 @@ int bch2_folio_reservation_get(struct bch_fs *,
 			struct bch_inode_info *,
 			struct folio *,
 			struct bch2_folio_reservation *,
-			size_t, size_t);
-ssize_t bch2_folio_reservation_get_partial(struct bch_fs *,
-			struct bch_inode_info *,
-			struct folio *,
-			struct bch2_folio_reservation *,
-			size_t, size_t);
+			unsigned, unsigned);
 
 void bch2_set_folio_dirty(struct bch_fs *,
 			  struct bch_inode_info *,

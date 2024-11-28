@@ -289,6 +289,10 @@
 	memory-region = <&gfx_memory>;
 };
 
+&pinctrl {
+	aspeed,external-nodes = <&gfx &lhc>;
+};
+
 &pwm_tacho {
 	status = "okay";
 	pinctrl-names = "default";

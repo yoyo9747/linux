@@ -24,7 +24,7 @@
 #include <linux/irq.h>
 #include <linux/regulator/consumer.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define SILEAD_TS_NAME		"silead_ts"
 

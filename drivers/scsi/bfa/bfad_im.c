@@ -766,8 +766,9 @@ bfad_thread_workq(struct bfad_s *bfad)
 	struct bfad_im_s      *im = bfad->im;
 
 	bfa_trc(bfad, 0);
-	im->drv_workq = alloc_ordered_workqueue("bfad_wq_%d", WQ_MEM_RECLAIM,
-						bfad->inst_no);
+	snprintf(im->drv_workq_name, KOBJ_NAME_LEN, "bfad_wq_%d",
+		 bfad->inst_no);
+	im->drv_workq = create_singlethread_workqueue(im->drv_workq_name);
 	if (!im->drv_workq)
 		return BFA_STATUS_FAILED;
 

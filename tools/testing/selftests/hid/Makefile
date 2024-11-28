@@ -17,8 +17,6 @@ TEST_PROGS += hid-tablet.sh
 TEST_PROGS += hid-usb_crash.sh
 TEST_PROGS += hid-wacom.sh
 
-TEST_FILES := run-hid-tools-tests.sh
-
 CXX ?= $(CROSS_COMPILE)g++
 
 HOSTPKG_CONFIG := pkg-config
@@ -34,7 +32,7 @@ CFLAGS += -Wno-unused-command-line-argument
 endif
 
 # Order correspond to 'make run_tests' order
-TEST_GEN_PROGS = hid_bpf hidraw
+TEST_GEN_PROGS = hid_bpf
 
 # Emit succinct information message describing current building step
 # $1 - generic step name (e.g., CC, LINK, etc);

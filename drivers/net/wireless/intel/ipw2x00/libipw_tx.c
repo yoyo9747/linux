@@ -180,10 +180,11 @@ static struct libipw_txb *libipw_alloc_txb(int nr_frags, int txb_size,
 	struct libipw_txb *txb;
 	int i;
 
-	txb = kzalloc(struct_size(txb, fragments, nr_frags), gfp_mask);
+	txb = kmalloc(struct_size(txb, fragments, nr_frags), gfp_mask);
 	if (!txb)
 		return NULL;
 
+	memset(txb, 0, sizeof(struct libipw_txb));
 	txb->nr_frags = nr_frags;
 	txb->frag_size = txb_size;
 

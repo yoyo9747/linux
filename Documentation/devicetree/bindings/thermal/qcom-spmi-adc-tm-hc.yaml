@@ -8,8 +8,6 @@ title: Qualcomm's SPMI PMIC ADC HC Thermal Monitoring
 maintainers:
   - Dmitry Baryshkov <dmitry.baryshkov@linaro.org>
 
-$ref: thermal-sensor.yaml#
-
 properties:
   compatible:
     const: qcom,spmi-adc-tm-hc
@@ -22,6 +20,9 @@ properties:
 
   "#thermal-sensor-cells":
     const: 1
+    description:
+      Number of cells required to uniquely identify the thermal sensors. Since
+      we have multiple sensors this is set to 1
 
   "#address-cells":
     const: 1
@@ -105,8 +106,9 @@ required:
   - interrupts
   - "#address-cells"
   - "#size-cells"
+  - "#thermal-sensor-cells"
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

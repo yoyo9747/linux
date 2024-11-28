@@ -383,7 +383,8 @@ static irqreturn_t tcs3472_trigger_handler(int irq, void *p)
 	if (ret < 0)
 		goto done;
 
-	iio_for_each_active_channel(indio_dev, i) {
+	for_each_set_bit(i, indio_dev->active_scan_mask,
+		indio_dev->masklength) {
 		ret = i2c_smbus_read_word_data(data->client,
 			TCS3472_CDATA + 2*i);
 		if (ret < 0)
@@ -598,7 +599,7 @@ static DEFINE_SIMPLE_DEV_PM_OPS(tcs3472_pm_ops, tcs3472_suspend,
 				tcs3472_resume);
 
 static const struct i2c_device_id tcs3472_id[] = {
-	{ "tcs3472" },
+	{ "tcs3472", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tcs3472_id);

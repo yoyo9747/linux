@@ -49,7 +49,7 @@ static const unsigned int ad7616_oversampling_avail[8] = {
 	1, 2, 4, 8, 16, 32, 64, 128,
 };
 
-int ad7606_reset(struct ad7606_state *st)
+static int ad7606_reset(struct ad7606_state *st)
 {
 	if (st->gpio_reset) {
 		gpiod_set_value(st->gpio_reset, 1);
@@ -60,7 +60,6 @@ int ad7606_reset(struct ad7606_state *st)
 
 	return -ENODEV;
 }
-EXPORT_SYMBOL_NS_GPL(ad7606_reset, IIO_AD7606);
 
 static int ad7606_reg_access(struct iio_dev *indio_dev,
 			     unsigned int reg,
@@ -70,23 +69,50 @@ static int ad7606_reg_access(struct iio_dev *indio_dev,
 	struct ad7606_state *st = iio_priv(indio_dev);
 	int ret;
 
-	guard(mutex)(&st->lock);
-
+	mutex_lock(&st->lock);
 	if (readval) {
 		ret = st->bops->reg_read(st, reg);
 		if (ret < 0)
-			return ret;
+			goto err_unlock;
 		*readval = ret;
-		return 0;
+		ret = 0;
 	} else {
-		return st->bops->reg_write(st, reg, writeval);
+		ret = st->bops->reg_write(st, reg, writeval);
 	}
+err_unlock:
+	mutex_unlock(&st->lock);
+	return ret;
 }
 
 static int ad7606_read_samples(struct ad7606_state *st)
 {
 	unsigned int num = st->chip_info->num_channels - 1;
 	u16 *data = st->data;
+	int ret;
+
+	/*
+	 * The frstdata signal is set to high while and after reading the sample
+	 * of the first channel and low for all other channels. This can be used
+	 * to check that the incoming data is correctly aligned. During normal
+	 * operation the data should never become unaligned, but some glitch or
+	 * electrostatic discharge might cause an extra read or clock cycle.
+	 * Monitoring the frstdata signal allows to recover from such failure
+	 * situations.
+	 */
+
+	if (st->gpio_frstdata) {
+		ret = st->bops->read_block(st->dev, 1, data);
+		if (ret)
+			return ret;
+
+		if (!gpiod_get_value(st->gpio_frstdata)) {
+			ad7606_reset(st);
+			return -EIO;
+		}
+
+		data++;
+		num--;
+	}
 
 	return st->bops->read_block(st->dev, num, data);
 }
@@ -98,18 +124,18 @@ static irqreturn_t ad7606_trigger_handler(int irq, void *p)
 	struct ad7606_state *st = iio_priv(indio_dev);
 	int ret;
 
-	guard(mutex)(&st->lock);
+	mutex_lock(&st->lock);
 
 	ret = ad7606_read_samples(st);
-	if (ret)
-		goto error_ret;
+	if (ret == 0)
+		iio_push_to_buffers_with_timestamp(indio_dev, st->data,
+						   iio_get_time_ns(indio_dev));
 
-	iio_push_to_buffers_with_timestamp(indio_dev, st->data,
-					   iio_get_time_ns(indio_dev));
-error_ret:
 	iio_trigger_notify_done(indio_dev->trig);
 	/* The rising edge of the CONVST signal starts a new conversion. */
 	gpiod_set_value(st->gpio_convst, 1);
+
+	mutex_unlock(&st->lock);
 
 	return IRQ_HANDLED;
 }
@@ -148,14 +174,17 @@ static int ad7606_read_raw(struct iio_dev *indio_dev,
 
 	switch (m) {
 	case IIO_CHAN_INFO_RAW:
-		iio_device_claim_direct_scoped(return -EBUSY, indio_dev) {
-			ret = ad7606_scan_direct(indio_dev, chan->address);
-			if (ret < 0)
-				return ret;
-			*val = (short) ret;
-			return IIO_VAL_INT;
-		}
-		unreachable();
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
+
+		ret = ad7606_scan_direct(indio_dev, chan->address);
+		iio_device_release_direct_mode(indio_dev);
+
+		if (ret < 0)
+			return ret;
+		*val = (short)ret;
+		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
 		if (st->sw_mode_en)
 			ch = chan->address;
@@ -210,9 +239,9 @@ static int ad7606_write_os_hw(struct iio_dev *indio_dev, int val)
 	struct ad7606_state *st = iio_priv(indio_dev);
 	DECLARE_BITMAP(values, 3);
 
-	values[0] = val & GENMASK(2, 0);
+	values[0] = val;
 
-	gpiod_set_array_value(st->gpio_os->ndescs, st->gpio_os->desc,
+	gpiod_set_array_value(ARRAY_SIZE(values), st->gpio_os->desc,
 			      st->gpio_os->info, values);
 
 	/* AD7616 requires a reset to update value */
@@ -231,17 +260,19 @@ static int ad7606_write_raw(struct iio_dev *indio_dev,
 	struct ad7606_state *st = iio_priv(indio_dev);
 	int i, ret, ch = 0;
 
-	guard(mutex)(&st->lock);
-
 	switch (mask) {
 	case IIO_CHAN_INFO_SCALE:
+		mutex_lock(&st->lock);
 		i = find_closest(val2, st->scale_avail, st->num_scales);
 		if (st->sw_mode_en)
 			ch = chan->address;
 		ret = st->write_scale(indio_dev, ch, i);
-		if (ret < 0)
+		if (ret < 0) {
+			mutex_unlock(&st->lock);
 			return ret;
+		}
 		st->range[ch] = i;
+		mutex_unlock(&st->lock);
 
 		return 0;
 	case IIO_CHAN_INFO_OVERSAMPLING_RATIO:
@@ -249,9 +280,14 @@ static int ad7606_write_raw(struct iio_dev *indio_dev,
 			return -EINVAL;
 		i = find_closest(val, st->oversampling_avail,
 				 st->num_os_ratios);
+		mutex_lock(&st->lock);
 		ret = st->write_os(indio_dev, i);
-		if (ret < 0)
+		if (ret < 0) {
+			mutex_unlock(&st->lock);
 			return ret;
+		}
+		st->oversampling = st->oversampling_avail[i];
+		mutex_unlock(&st->lock);
 
 		return 0;
 	default:
@@ -410,7 +446,7 @@ static int ad7606_request_gpios(struct ad7606_state *st)
 		return PTR_ERR(st->gpio_range);
 
 	st->gpio_standby = devm_gpiod_get_optional(dev, "standby",
-						   GPIOD_OUT_LOW);
+						   GPIOD_OUT_HIGH);
 	if (IS_ERR(st->gpio_standby))
 		return PTR_ERR(st->gpio_standby);
 
@@ -653,7 +689,7 @@ static int ad7606_suspend(struct device *dev)
 
 	if (st->gpio_standby) {
 		gpiod_set_value(st->gpio_range, 1);
-		gpiod_set_value(st->gpio_standby, 1);
+		gpiod_set_value(st->gpio_standby, 0);
 	}
 
 	return 0;

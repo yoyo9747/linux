@@ -42,7 +42,7 @@
 		default-brightness-level = <576>;
 	};
 
-	bt-sco {
+	bt-sco-codec {
 		compatible = "linux,bt-sco";
 		#sound-dai-cells = <0>;
 	};
@@ -169,7 +169,7 @@
 
 		adsp_mem: memory@60000000 {
 			compatible = "shared-dma-pool";
-			reg = <0 0x60000000 0 0x1000000>;
+			reg = <0 0x60000000 0 0xA00000>;
 			no-map;
 		};
 
@@ -223,44 +223,12 @@
 		mediatek,adsp = <&adsp>;
 		mediatek,platform = <&afe>;
 
-		audio-routing =
-			"Headphone", "HPOL",
-			"Headphone", "HPOR",
-			"IN1P", "Headset Mic",
-			"Speakers", "Speaker",
-			"HDMI1", "TX";
-
-		hs-playback-dai-link {
-			link-name = "I2S0";
-			dai-format = "i2s";
-			mediatek,clk-provider = "cpu";
-			codec {
-				sound-dai = <&rt5682s 0>;
-			};
+		playback-codecs {
+			sound-dai = <&it6505dptx>, <&rt1019p>;
 		};
 
-		hs-capture-dai-link {
-			link-name = "I2S1";
-			dai-format = "i2s";
-			mediatek,clk-provider = "cpu";
-			codec {
-				sound-dai = <&rt5682s 0>;
-			};
-		};
-
-		spk-share-dai-link {
-			link-name = "I2S2";
-			mediatek,clk-provider = "cpu";
-		};
-
-		spk-hdmi-playback-dai-link {
-			link-name = "I2S3";
-			dai-format = "i2s";
-			mediatek,clk-provider = "cpu";
-			/* RT1019P and IT6505 connected to the same I2S line */
-			codec {
-				sound-dai = <&it6505dptx>, <&rt1019p>;
-			};
+		headset-codec {
+			sound-dai = <&rt5682s 0>;
 		};
 	};
 
@@ -353,8 +321,7 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&dpi_pins_default>;
 	pinctrl-1 = <&dpi_pins_sleep>;
-	/* TODO Re-enable after DP to Type-C port muxing can be described */
-	status = "disabled";
+	status = "okay";
 };
 
 &dpi_out {

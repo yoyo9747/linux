@@ -258,6 +258,7 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 	} else {
 		clear_buffer_uptodate(bh);
 		buffer_io_error(bh, ", async page read");
+		folio_set_error(folio);
 	}
 
 	/*
@@ -390,6 +391,7 @@ static void end_buffer_async_write(struct buffer_head *bh, int uptodate)
 		buffer_io_error(bh, ", lost async page write");
 		mark_buffer_write_io_error(bh);
 		clear_buffer_uptodate(bh);
+		folio_set_error(folio);
 	}
 
 	first = folio_buffers(folio);
@@ -774,11 +776,12 @@ EXPORT_SYMBOL(block_dirty_folio);
 static int fsync_buffers_list(spinlock_t *lock, struct list_head *list)
 {
 	struct buffer_head *bh;
+	struct list_head tmp;
 	struct address_space *mapping;
 	int err = 0, err2;
 	struct blk_plug plug;
-	LIST_HEAD(tmp);
 
+	INIT_LIST_HEAD(&tmp);
 	blk_start_plug(&plug);
 
 	spin_lock(lock);
@@ -957,9 +960,12 @@ no_grow:
 }
 EXPORT_SYMBOL_GPL(folio_alloc_buffers);
 
-struct buffer_head *alloc_page_buffers(struct page *page, unsigned long size)
+struct buffer_head *alloc_page_buffers(struct page *page, unsigned long size,
+				       bool retry)
 {
 	gfp_t gfp = GFP_NOFS | __GFP_ACCOUNT;
+	if (retry)
+		gfp |= __GFP_NOFAIL;
 
 	return folio_alloc_buffers(page_folio(page), size, gfp);
 }
@@ -1954,6 +1960,7 @@ recover:
 			clear_buffer_dirty(bh);
 		}
 	} while ((bh = bh->b_this_page) != head);
+	folio_set_error(folio);
 	BUG_ON(folio_test_writeback(folio));
 	mapping_set_error(folio->mapping, err);
 	folio_start_writeback(folio);
@@ -2164,10 +2171,11 @@ int __block_write_begin_int(struct folio *folio, loff_t pos, unsigned len,
 	return err;
 }
 
-int __block_write_begin(struct folio *folio, loff_t pos, unsigned len,
+int __block_write_begin(struct page *page, loff_t pos, unsigned len,
 		get_block_t *get_block)
 {
-	return __block_write_begin_int(folio, pos, len, get_block, NULL);
+	return __block_write_begin_int(page_folio(page), pos, len, get_block,
+				       NULL);
 }
 EXPORT_SYMBOL(__block_write_begin);
 
@@ -2179,8 +2187,6 @@ static void __block_commit_write(struct folio *folio, size_t from, size_t to)
 	struct buffer_head *bh, *head;
 
 	bh = head = folio_buffers(folio);
-	if (!bh)
-		return;
 	blocksize = bh->b_size;
 
 	block_start = 0;
@@ -2217,33 +2223,33 @@ static void __block_commit_write(struct folio *folio, size_t from, size_t to)
  * The filesystem needs to handle block truncation upon failure.
  */
 int block_write_begin(struct address_space *mapping, loff_t pos, unsigned len,
-		struct folio **foliop, get_block_t *get_block)
+		struct page **pagep, get_block_t *get_block)
 {
 	pgoff_t index = pos >> PAGE_SHIFT;
-	struct folio *folio;
+	struct page *page;
 	int status;
 
-	folio = __filemap_get_folio(mapping, index, FGP_WRITEBEGIN,
-			mapping_gfp_mask(mapping));
-	if (IS_ERR(folio))
-		return PTR_ERR(folio);
+	page = grab_cache_page_write_begin(mapping, index);
+	if (!page)
+		return -ENOMEM;
 
-	status = __block_write_begin_int(folio, pos, len, get_block, NULL);
+	status = __block_write_begin(page, pos, len, get_block);
 	if (unlikely(status)) {
-		folio_unlock(folio);
-		folio_put(folio);
-		folio = NULL;
+		unlock_page(page);
+		put_page(page);
+		page = NULL;
 	}
 
-	*foliop = folio;
+	*pagep = page;
 	return status;
 }
 EXPORT_SYMBOL(block_write_begin);
 
 int block_write_end(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned copied,
-			struct folio *folio, void *fsdata)
+			struct page *page, void *fsdata)
 {
+	struct folio *folio = page_folio(page);
 	size_t start = pos - folio_pos(folio);
 
 	if (unlikely(copied < len)) {
@@ -2275,19 +2281,19 @@ EXPORT_SYMBOL(block_write_end);
 
 int generic_write_end(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned copied,
-			struct folio *folio, void *fsdata)
+			struct page *page, void *fsdata)
 {
 	struct inode *inode = mapping->host;
 	loff_t old_size = inode->i_size;
 	bool i_size_changed = false;
 
-	copied = block_write_end(file, mapping, pos, len, copied, folio, fsdata);
+	copied = block_write_end(file, mapping, pos, len, copied, page, fsdata);
 
 	/*
 	 * No need to use i_size_read() here, the i_size cannot change under us
 	 * because we hold i_rwsem.
 	 *
-	 * But it's important to update i_size while still holding folio lock:
+	 * But it's important to update i_size while still holding page lock:
 	 * page writeout could otherwise come in and zero beyond i_size.
 	 */
 	if (pos + copied > inode->i_size) {
@@ -2295,8 +2301,8 @@ int generic_write_end(struct file *file, struct address_space *mapping,
 		i_size_changed = true;
 	}
 
-	folio_unlock(folio);
-	folio_put(folio);
+	unlock_page(page);
+	put_page(page);
 
 	if (old_size < pos)
 		pagecache_isize_extended(inode, old_size, pos);
@@ -2399,8 +2405,10 @@ int block_read_full_folio(struct folio *folio, get_block_t *get_block)
 			if (iblock < lblock) {
 				WARN_ON(bh->b_size != blocksize);
 				err = get_block(inode, iblock, bh, 0);
-				if (err)
+				if (err) {
+					folio_set_error(folio);
 					page_error = true;
+				}
 			}
 			if (!buffer_mapped(bh)) {
 				folio_zero_range(folio, i * blocksize,
@@ -2462,7 +2470,7 @@ int generic_cont_expand_simple(struct inode *inode, loff_t size)
 {
 	struct address_space *mapping = inode->i_mapping;
 	const struct address_space_operations *aops = mapping->a_ops;
-	struct folio *folio;
+	struct page *page;
 	void *fsdata = NULL;
 	int err;
 
@@ -2470,11 +2478,11 @@ int generic_cont_expand_simple(struct inode *inode, loff_t size)
 	if (err)
 		goto out;
 
-	err = aops->write_begin(NULL, mapping, size, 0, &folio, &fsdata);
+	err = aops->write_begin(NULL, mapping, size, 0, &page, &fsdata);
 	if (err)
 		goto out;
 
-	err = aops->write_end(NULL, mapping, size, 0, 0, folio, fsdata);
+	err = aops->write_end(NULL, mapping, size, 0, 0, page, fsdata);
 	BUG_ON(err > 0);
 
 out:
@@ -2488,7 +2496,7 @@ static int cont_expand_zero(struct file *file, struct address_space *mapping,
 	struct inode *inode = mapping->host;
 	const struct address_space_operations *aops = mapping->a_ops;
 	unsigned int blocksize = i_blocksize(inode);
-	struct folio *folio;
+	struct page *page;
 	void *fsdata = NULL;
 	pgoff_t index, curidx;
 	loff_t curpos;
@@ -2507,12 +2515,12 @@ static int cont_expand_zero(struct file *file, struct address_space *mapping,
 		len = PAGE_SIZE - zerofrom;
 
 		err = aops->write_begin(file, mapping, curpos, len,
-					    &folio, &fsdata);
+					    &page, &fsdata);
 		if (err)
 			goto out;
-		folio_zero_range(folio, offset_in_folio(folio, curpos), len);
+		zero_user(page, zerofrom, len);
 		err = aops->write_end(file, mapping, curpos, len, len,
-						folio, fsdata);
+						page, fsdata);
 		if (err < 0)
 			goto out;
 		BUG_ON(err != len);
@@ -2540,12 +2548,12 @@ static int cont_expand_zero(struct file *file, struct address_space *mapping,
 		len = offset - zerofrom;
 
 		err = aops->write_begin(file, mapping, curpos, len,
-					    &folio, &fsdata);
+					    &page, &fsdata);
 		if (err)
 			goto out;
-		folio_zero_range(folio, offset_in_folio(folio, curpos), len);
+		zero_user(page, zerofrom, len);
 		err = aops->write_end(file, mapping, curpos, len, len,
-						folio, fsdata);
+						page, fsdata);
 		if (err < 0)
 			goto out;
 		BUG_ON(err != len);
@@ -2561,7 +2569,7 @@ out:
  */
 int cont_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len,
-			struct folio **foliop, void **fsdata,
+			struct page **pagep, void **fsdata,
 			get_block_t *get_block, loff_t *bytes)
 {
 	struct inode *inode = mapping->host;
@@ -2579,7 +2587,7 @@ int cont_write_begin(struct file *file, struct address_space *mapping,
 		(*bytes)++;
 	}
 
-	return block_write_begin(mapping, pos, len, foliop, get_block);
+	return block_write_begin(mapping, pos, len, pagep, get_block);
 }
 EXPORT_SYMBOL(cont_write_begin);
 

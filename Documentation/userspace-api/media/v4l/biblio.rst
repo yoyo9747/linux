@@ -334,17 +334,6 @@ VESA DMT
 
 :author:    Video Electronics Standards Association (http://www.vesa.org)
 
-.. _vesaeddc:
-
-E-DDC
-=====
-
-
-:title:     VESA Enhanced Display Data Channel (E-DDC) Standard
-:subtitle:  Version 1.3
-
-:author:    Video Electronics Standards Association (http://www.vesa.org)
-
 .. _vesaedid:
 
 EDID

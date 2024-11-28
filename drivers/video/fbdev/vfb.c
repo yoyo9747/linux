@@ -546,6 +546,5 @@ static void __exit vfb_exit(void)
 
 module_exit(vfb_exit);
 
-MODULE_DESCRIPTION("Virtual Frame Buffer driver");
 MODULE_LICENSE("GPL");
 #endif				/* MODULE */

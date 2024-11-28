@@ -20,4 +20,3 @@ lan966x-switch-$(CONFIG_DEBUG_FS) += lan966x_vcap_debugfs.o
 
 # Provide include files
 ccflags-y += -I$(srctree)/drivers/net/ethernet/microchip/vcap
-ccflags-y += -I$(srctree)/drivers/net/ethernet/microchip/fdma

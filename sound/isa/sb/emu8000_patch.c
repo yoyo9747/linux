@@ -157,6 +157,7 @@ snd_emu8000_sample_new(struct snd_emux *rec, struct snd_sf_sample *sp,
 
 	sp->block = snd_util_mem_alloc(hdr, truesize * 2);
 	if (sp->block == NULL) {
+		/*snd_printd("EMU8000: out of memory\n");*/
 		/* not ENOMEM (for compatibility) */
 		return -ENOSPC;
 	}

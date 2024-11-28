@@ -1639,8 +1639,10 @@ static int gaudi_late_init(struct hl_device *hdev)
 	}
 
 	rc = hl_fw_send_pci_access_msg(hdev, CPUCP_PACKET_ENABLE_PCI_ACCESS, 0x0);
-	if (rc)
+	if (rc) {
+		dev_err(hdev->dev, "Failed to enable PCI access from CPU\n");
 		return rc;
+	}
 
 	/* Scrub both SRAM and DRAM */
 	rc = hdev->asic_funcs->scrub_device_mem(hdev);
@@ -4152,7 +4154,13 @@ skip_reset:
 
 static int gaudi_suspend(struct hl_device *hdev)
 {
-	return hl_fw_send_pci_access_msg(hdev, CPUCP_PACKET_DISABLE_PCI_ACCESS, 0x0);
+	int rc;
+
+	rc = hl_fw_send_pci_access_msg(hdev, CPUCP_PACKET_DISABLE_PCI_ACCESS, 0x0);
+	if (rc)
+		dev_err(hdev->dev, "Failed to disable PCI access from CPU\n");
+
+	return rc;
 }
 
 static int gaudi_resume(struct hl_device *hdev)

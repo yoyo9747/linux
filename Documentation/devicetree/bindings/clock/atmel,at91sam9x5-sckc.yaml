@@ -18,9 +18,7 @@ properties:
           - atmel,sama5d4-sckc
           - microchip,sam9x60-sckc
       - items:
-          - enum:
-              - microchip,sam9x7-sckc
-              - microchip,sama7g5-sckc
+          - const: microchip,sama7g5-sckc
           - const: microchip,sam9x60-sckc
 
   reg:

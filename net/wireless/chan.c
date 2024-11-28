@@ -263,37 +263,6 @@ static int cfg80211_chandef_get_width(const struct cfg80211_chan_def *c)
 	return nl80211_chan_width_to_mhz(c->width);
 }
 
-static bool cfg80211_valid_center_freq(u32 center,
-				       enum nl80211_chan_width width)
-{
-	int bw;
-	int step;
-
-	/* We only do strict verification on 6 GHz */
-	if (center < 5955 || center > 7115)
-		return true;
-
-	bw = nl80211_chan_width_to_mhz(width);
-	if (bw < 0)
-		return false;
-
-	/* Validate that the channels bw is entirely within the 6 GHz band */
-	if (center - bw / 2 < 5945 || center + bw / 2 > 7125)
-		return false;
-
-	/* With 320 MHz the permitted channels overlap */
-	if (bw == 320)
-		step = 160;
-	else
-		step = bw;
-
-	/*
-	 * Valid channels are packed from lowest frequency towards higher ones.
-	 * So test that the lower frequency alignes with one of these steps.
-	 */
-	return (center - bw / 2 - 5945) % step == 0;
-}
-
 bool cfg80211_chandef_valid(const struct cfg80211_chan_def *chandef)
 {
 	u32 control_freq, oper_freq;
@@ -404,13 +373,6 @@ bool cfg80211_chandef_valid(const struct cfg80211_chan_def *chandef)
 	default:
 		return false;
 	}
-
-	if (!cfg80211_valid_center_freq(chandef->center_freq1, chandef->width))
-		return false;
-
-	if (chandef->width == NL80211_CHAN_WIDTH_80P80 &&
-	    !cfg80211_valid_center_freq(chandef->center_freq2, chandef->width))
-		return false;
 
 	/* channel 14 is only for IEEE 802.11b */
 	if (chandef->center_freq1 == 2484 &&
@@ -1183,8 +1145,7 @@ EXPORT_SYMBOL(cfg80211_chandef_dfs_cac_time);
 
 static bool cfg80211_secondary_chans_ok(struct wiphy *wiphy,
 					u32 center_freq, u32 bandwidth,
-					u32 prohibited_flags,
-					u32 permitting_flags)
+					u32 prohibited_flags, bool monitor)
 {
 	struct ieee80211_channel *c;
 	u32 freq, start_freq, end_freq;
@@ -1196,7 +1157,7 @@ static bool cfg80211_secondary_chans_ok(struct wiphy *wiphy,
 		c = ieee80211_get_channel_khz(wiphy, freq);
 		if (!c)
 			return false;
-		if (c->flags & permitting_flags)
+		if (monitor && c->flags & IEEE80211_CHAN_CAN_MONITOR)
 			continue;
 		if (c->flags & prohibited_flags)
 			return false;
@@ -1260,8 +1221,7 @@ static bool cfg80211_edmg_usable(struct wiphy *wiphy, u8 edmg_channels,
 
 bool _cfg80211_chandef_usable(struct wiphy *wiphy,
 			      const struct cfg80211_chan_def *chandef,
-			      u32 prohibited_flags,
-			      u32 permitting_flags)
+			      u32 prohibited_flags, bool monitor)
 {
 	struct ieee80211_sta_ht_cap *ht_cap;
 	struct ieee80211_sta_vht_cap *vht_cap;
@@ -1423,23 +1383,22 @@ bool _cfg80211_chandef_usable(struct wiphy *wiphy,
 
 	if (!cfg80211_secondary_chans_ok(wiphy,
 					 ieee80211_chandef_to_khz(chandef),
-					 width, prohibited_flags,
-					 permitting_flags))
+					 width, prohibited_flags, monitor))
 		return false;
 
 	if (!chandef->center_freq2)
 		return true;
 	return cfg80211_secondary_chans_ok(wiphy,
 					   MHZ_TO_KHZ(chandef->center_freq2),
-					   width, prohibited_flags,
-					   permitting_flags);
+					   width, prohibited_flags, monitor);
 }
 
 bool cfg80211_chandef_usable(struct wiphy *wiphy,
 			     const struct cfg80211_chan_def *chandef,
 			     u32 prohibited_flags)
 {
-	return _cfg80211_chandef_usable(wiphy, chandef, prohibited_flags, 0);
+	return _cfg80211_chandef_usable(wiphy, chandef, prohibited_flags,
+					false);
 }
 EXPORT_SYMBOL(cfg80211_chandef_usable);
 
@@ -1561,50 +1520,49 @@ static bool cfg80211_ir_permissive_chan(struct wiphy *wiphy,
 static bool _cfg80211_reg_can_beacon(struct wiphy *wiphy,
 				     struct cfg80211_chan_def *chandef,
 				     enum nl80211_iftype iftype,
-				     u32 prohibited_flags,
-				     u32 permitting_flags)
+				     bool check_no_ir)
 {
-	bool res, check_radar;
+	bool res;
+	u32 prohibited_flags = IEEE80211_CHAN_DISABLED;
 	int dfs_required;
 
-	trace_cfg80211_reg_can_beacon(wiphy, chandef, iftype,
-				      prohibited_flags,
-				      permitting_flags);
+	trace_cfg80211_reg_can_beacon(wiphy, chandef, iftype, check_no_ir);
 
-	if (!_cfg80211_chandef_usable(wiphy, chandef,
-				      IEEE80211_CHAN_DISABLED, 0))
-		return false;
+	if (check_no_ir)
+		prohibited_flags |= IEEE80211_CHAN_NO_IR;
 
 	dfs_required = cfg80211_chandef_dfs_required(wiphy, chandef, iftype);
-	check_radar = dfs_required != 0;
+	if (dfs_required != 0)
+		prohibited_flags |= IEEE80211_CHAN_RADAR;
 
 	if (dfs_required > 0 &&
 	    cfg80211_chandef_dfs_available(wiphy, chandef)) {
 		/* We can skip IEEE80211_CHAN_NO_IR if chandef dfs available */
-		prohibited_flags &= ~IEEE80211_CHAN_NO_IR;
-		check_radar = false;
+		prohibited_flags = IEEE80211_CHAN_DISABLED;
 	}
 
-	if (check_radar &&
-	    !_cfg80211_chandef_usable(wiphy, chandef,
-				      IEEE80211_CHAN_RADAR, 0))
-		return false;
-
-	res = _cfg80211_chandef_usable(wiphy, chandef,
-				       prohibited_flags,
-				       permitting_flags);
+	res = cfg80211_chandef_usable(wiphy, chandef, prohibited_flags);
 
 	trace_cfg80211_return_bool(res);
 	return res;
 }
 
-bool cfg80211_reg_check_beaconing(struct wiphy *wiphy,
-				  struct cfg80211_chan_def *chandef,
-				  struct cfg80211_beaconing_check_config *cfg)
+bool cfg80211_reg_can_beacon(struct wiphy *wiphy,
+			     struct cfg80211_chan_def *chandef,
+			     enum nl80211_iftype iftype)
+{
+	return _cfg80211_reg_can_beacon(wiphy, chandef, iftype, true);
+}
+EXPORT_SYMBOL(cfg80211_reg_can_beacon);
+
+bool cfg80211_reg_can_beacon_relax(struct wiphy *wiphy,
+				   struct cfg80211_chan_def *chandef,
+				   enum nl80211_iftype iftype)
 {
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
-	u32 permitting_flags = 0;
-	bool check_no_ir = true;
+	bool check_no_ir;
+
+	lockdep_assert_held(&rdev->wiphy.mtx);
 
 	/*
 	 * Under certain conditions suggested by some regulatory bodies a
@@ -1612,20 +1570,12 @@ bool cfg80211_reg_check_beaconing(struct wiphy *wiphy,
 	 * only if such relaxations are not enabled and the conditions are not
 	 * met.
 	 */
-	if (cfg->relax) {
-		lockdep_assert_held(&rdev->wiphy.mtx);
-		check_no_ir = !cfg80211_ir_permissive_chan(wiphy, cfg->iftype,
-							   chandef->chan);
-	}
+	check_no_ir = !cfg80211_ir_permissive_chan(wiphy, iftype,
+						   chandef->chan);
 
-	if (cfg->reg_power == IEEE80211_REG_VLP_AP)
-		permitting_flags |= IEEE80211_CHAN_ALLOW_6GHZ_VLP_AP;
-
-	return _cfg80211_reg_can_beacon(wiphy, chandef, cfg->iftype,
-					check_no_ir ? IEEE80211_CHAN_NO_IR : 0,
-					permitting_flags);
+	return _cfg80211_reg_can_beacon(wiphy, chandef, iftype, check_no_ir);
 }
-EXPORT_SYMBOL(cfg80211_reg_check_beaconing);
+EXPORT_SYMBOL(cfg80211_reg_can_beacon_relax);
 
 int cfg80211_set_monitor_channel(struct cfg80211_registered_device *rdev,
 				 struct cfg80211_chan_def *chandef)

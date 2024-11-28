@@ -1,4 +1,4 @@
-perf-kwork(1)
+perf-kowrk(1)
 =============
 
 NAME
@@ -35,7 +35,7 @@ There are several variants of 'perf kwork':
         perf kwork top
         perf kwork top -b
 
-   By default it shows the individual work events such as irq, workqueue,
+   By default it shows the individual work events such as irq, workqeueu,
    including the run time and delay (time between raise and actually entry):
 
       Runtime start      Runtime end        Cpu     Kwork name                 Runtime     Delaytime

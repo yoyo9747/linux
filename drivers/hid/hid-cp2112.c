@@ -1094,6 +1094,7 @@ static void cp2112_gpio_poll_callback(struct work_struct *work)
 {
 	struct cp2112_device *dev = container_of(work, struct cp2112_device,
 						 gpio_poll_worker.work);
+	struct irq_data *d;
 	u8 gpio_mask;
 	u32 irq_type;
 	int irq, virq, ret;
@@ -1110,9 +1111,11 @@ static void cp2112_gpio_poll_callback(struct work_struct *work)
 		if (!irq)
 			continue;
 
-		irq_type = irq_get_trigger_type(irq);
-		if (!irq_type)
+		d = irq_get_irq_data(irq);
+		if (!d)
 			continue;
+
+		irq_type = irqd_get_trigger_type(d);
 
 		if (gpio_mask & BIT(virq)) {
 			/* Level High */

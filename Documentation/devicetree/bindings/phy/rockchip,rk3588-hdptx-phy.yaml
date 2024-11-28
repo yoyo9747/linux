@@ -27,9 +27,6 @@ properties:
       - const: ref
       - const: apb
 
-  "#clock-cells":
-    const: 0
-
   "#phy-cells":
     const: 0
 

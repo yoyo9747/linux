@@ -69,7 +69,7 @@ static int mlx5_MAD_IFC(struct mlx5_ib_dev *dev, int ignore_mkey,
 	if (ignore_bkey || !in_wc)
 		op_modifier |= 0x2;
 
-	return mlx5_cmd_mad_ifc(dev, in_mad, response_mad, op_modifier,
+	return mlx5_cmd_mad_ifc(dev->mdev, in_mad, response_mad, op_modifier,
 				port);
 }
 
@@ -147,39 +147,8 @@ static void pma_cnt_assign(struct ib_pma_portcounters *pma_cnt,
 			     vl_15_dropped);
 }
 
-static void pma_cnt_ext_assign_ppcnt(struct ib_pma_portcounters_ext *cnt_ext,
-				     void *out)
-{
-	void *out_pma = MLX5_ADDR_OF(ppcnt_reg, out,
-				     counter_set);
-
-#define MLX5_GET_EXT_CNTR(counter_name)			\
-	MLX5_GET64(ib_ext_port_cntrs_grp_data_layout,	\
-		   out_pma, counter_name##_high)
-
-	cnt_ext->port_xmit_data =
-		cpu_to_be64(MLX5_GET_EXT_CNTR(port_xmit_data) >> 2);
-	cnt_ext->port_rcv_data =
-		cpu_to_be64(MLX5_GET_EXT_CNTR(port_rcv_data) >> 2);
-
-	cnt_ext->port_xmit_packets =
-		cpu_to_be64(MLX5_GET_EXT_CNTR(port_xmit_pkts));
-	cnt_ext->port_rcv_packets =
-		cpu_to_be64(MLX5_GET_EXT_CNTR(port_rcv_pkts));
-
-	cnt_ext->port_unicast_xmit_packets =
-		cpu_to_be64(MLX5_GET_EXT_CNTR(port_unicast_xmit_pkts));
-	cnt_ext->port_unicast_rcv_packets =
-		cpu_to_be64(MLX5_GET_EXT_CNTR(port_unicast_rcv_pkts));
-
-	cnt_ext->port_multicast_xmit_packets =
-		cpu_to_be64(MLX5_GET_EXT_CNTR(port_multicast_xmit_pkts));
-	cnt_ext->port_multicast_rcv_packets =
-		cpu_to_be64(MLX5_GET_EXT_CNTR(port_multicast_rcv_pkts));
-}
-
-static int query_ib_ppcnt(struct mlx5_core_dev *dev, u8 port_num, u8 plane_num,
-			  void *out, size_t sz, bool ext)
+static int query_ib_ppcnt(struct mlx5_core_dev *dev, u8 port_num, void *out,
+			  size_t sz)
 {
 	u32 *in;
 	int err;
@@ -191,14 +160,8 @@ static int query_ib_ppcnt(struct mlx5_core_dev *dev, u8 port_num, u8 plane_num,
 	}
 
 	MLX5_SET(ppcnt_reg, in, local_port, port_num);
-	MLX5_SET(ppcnt_reg, in, plane_ind, plane_num);
 
-	if (ext)
-		MLX5_SET(ppcnt_reg, in, grp,
-			 MLX5_INFINIBAND_EXTENDED_PORT_COUNTERS_GROUP);
-	else
-		MLX5_SET(ppcnt_reg, in, grp,
-			 MLX5_INFINIBAND_PORT_COUNTERS_GROUP);
+	MLX5_SET(ppcnt_reg, in, grp, MLX5_INFINIBAND_PORT_COUNTERS_GROUP);
 	err = mlx5_core_access_reg(dev, in, sz, out,
 				   sz, MLX5_REG_PPCNT, 0, 0);
 
@@ -226,8 +189,7 @@ static int process_pma_cmd(struct mlx5_ib_dev *dev, u32 port_num,
 		mdev_port_num = 1;
 	}
 	if (MLX5_CAP_GEN(dev->mdev, num_ports) == 1 &&
-	    !mlx5_core_mp_enabled(mdev) &&
-	    dev->ib_dev.type != RDMA_DEVICE_TYPE_SMI) {
+	    !mlx5_core_mp_enabled(mdev)) {
 		/* set local port to one for Function-Per-Port HCA. */
 		mdev = dev->mdev;
 		mdev_port_num = 1;
@@ -246,8 +208,7 @@ static int process_pma_cmd(struct mlx5_ib_dev *dev, u32 port_num,
 	if (in_mad->mad_hdr.attr_id == IB_PMA_PORT_COUNTERS_EXT) {
 		struct ib_pma_portcounters_ext *pma_cnt_ext =
 			(struct ib_pma_portcounters_ext *)(out_mad->data + 40);
-		int sz = max(MLX5_ST_SZ_BYTES(query_vport_counter_out),
-			     MLX5_ST_SZ_BYTES(ppcnt_reg));
+		int sz = MLX5_ST_SZ_BYTES(query_vport_counter_out);
 
 		out_cnt = kvzalloc(sz, GFP_KERNEL);
 		if (!out_cnt) {
@@ -255,18 +216,10 @@ static int process_pma_cmd(struct mlx5_ib_dev *dev, u32 port_num,
 			goto done;
 		}
 
-		if (dev->ib_dev.type == RDMA_DEVICE_TYPE_SMI) {
-			err = query_ib_ppcnt(mdev, mdev_port_num,
-					     port_num, out_cnt, sz, 1);
-			if (!err)
-				pma_cnt_ext_assign_ppcnt(pma_cnt_ext, out_cnt);
-		} else {
-			err = mlx5_core_query_vport_counter(mdev, 0, 0,
-							    mdev_port_num,
-							    out_cnt);
-			if (!err)
-				pma_cnt_ext_assign(pma_cnt_ext, out_cnt);
-		}
+		err = mlx5_core_query_vport_counter(mdev, 0, 0, mdev_port_num,
+						    out_cnt);
+		if (!err)
+			pma_cnt_ext_assign(pma_cnt_ext, out_cnt);
 	} else {
 		struct ib_pma_portcounters *pma_cnt =
 			(struct ib_pma_portcounters *)(out_mad->data + 40);
@@ -278,7 +231,7 @@ static int process_pma_cmd(struct mlx5_ib_dev *dev, u32 port_num,
 			goto done;
 		}
 
-		err = query_ib_ppcnt(mdev, mdev_port_num, 0, out_cnt, sz, 0);
+		err = query_ib_ppcnt(mdev, mdev_port_num, out_cnt, sz);
 		if (!err)
 			pma_cnt_assign(pma_cnt, out_cnt);
 	}

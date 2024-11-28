@@ -107,6 +107,7 @@ static int gx_card_add_link(struct snd_soc_card *card, struct device_node *np,
 		dai_link->num_c2c_params = 1;
 	} else {
 		dai_link->no_pcm = 1;
+		snd_soc_dai_link_set_capabilities(dai_link);
 		/* Check if the cpu is the i2s encoder and parse i2s data */
 		if (gx_card_cpu_identify(dai_link->cpus, "I2S Encoder"))
 			ret = gx_card_parse_i2s(card, np, index);
@@ -129,7 +130,7 @@ MODULE_DEVICE_TABLE(of, gx_card_of_match);
 
 static struct platform_driver gx_card_pdrv = {
 	.probe = meson_card_probe,
-	.remove = meson_card_remove,
+	.remove_new = meson_card_remove,
 	.driver = {
 		.name = "gx-sound-card",
 		.of_match_table = gx_card_of_match,

@@ -60,6 +60,8 @@ static inline void nfs_netfs_get(struct nfs_netfs_io_data *netfs)
 
 static inline void nfs_netfs_put(struct nfs_netfs_io_data *netfs)
 {
+	ssize_t final_len;
+
 	/* Only the last RPC completion should call netfs_subreq_terminated() */
 	if (!refcount_dec_and_test(&netfs->refcount))
 		return;
@@ -72,14 +74,15 @@ static inline void nfs_netfs_put(struct nfs_netfs_io_data *netfs)
 	 * Correct the final length here to be no larger than the netfs subrequest
 	 * length, and thus avoid netfs's "Subreq overread" warning message.
 	 */
-	netfs->sreq->transferred = min_t(s64, netfs->sreq->len,
-					 atomic64_read(&netfs->transferred));
-	netfs_read_subreq_terminated(netfs->sreq, netfs->error, false);
+	final_len = min_t(s64, netfs->sreq->len, atomic64_read(&netfs->transferred));
+	netfs_subreq_terminated(netfs->sreq, netfs->error ?: final_len, false);
 	kfree(netfs);
 }
 static inline void nfs_netfs_inode_init(struct nfs_inode *nfsi)
 {
 	netfs_inode_init(&nfsi->netfs, &nfs_netfs_ops, false);
+	/* [DEPRECATED] Use PG_private_2 to mark folio being written to the cache. */
+	__set_bit(NETFS_ICTX_USE_PGPRIV2, &nfsi->netfs.flags);
 }
 extern void nfs_netfs_initiate_read(struct nfs_pgio_header *hdr);
 extern void nfs_netfs_read_completion(struct nfs_pgio_header *hdr);

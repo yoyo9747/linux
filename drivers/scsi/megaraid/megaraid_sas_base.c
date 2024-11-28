@@ -29,7 +29,7 @@
 #include <linux/uio.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/fs.h>
 #include <linux/compat.h>
 #include <linux/blkdev.h>
@@ -1981,6 +1981,8 @@ megasas_set_nvme_device_properties(struct scsi_device *sdev,
 
 	lim->max_hw_sectors = max_io_size / 512;
 	lim->virt_boundary_mask = mr_nvme_pg_size - 1;
+
+	blk_queue_flag_set(QUEUE_FLAG_NOMERGES, sdev->request_queue);
 }
 
 /*
@@ -6380,7 +6382,7 @@ static int megasas_init_fw(struct megasas_instance *instance)
 				GFP_KERNEL);
 			if (!fusion->stream_detect_by_ld[i]) {
 				dev_err(&instance->pdev->dev,
-					"unable to allocate stream detect by LD\n");
+					"unable to allocate stream detect by LD\n ");
 				for (j = 0; j < i; ++j)
 					kfree(fusion->stream_detect_by_ld[j]);
 				kfree(fusion->stream_detect_by_ld);

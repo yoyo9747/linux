@@ -455,5 +455,4 @@ module_init(esp32s3_acm_init);
 module_exit(esp32s3_acm_exit);
 
 MODULE_AUTHOR("Max Filippov <jcmvbkbc@gmail.com>");
-MODULE_DESCRIPTION("Espressif ESP32 USB ACM gadget support");
 MODULE_LICENSE("GPL");

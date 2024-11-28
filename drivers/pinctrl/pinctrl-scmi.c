@@ -11,7 +11,6 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
-#include <linux/of.h>
 #include <linux/scmi_protocol.h>
 #include <linux/slab.h>
 #include <linux/types.h>
@@ -505,11 +504,6 @@ static int pinctrl_scmi_get_pins(struct scmi_pinctrl *pmx,
 	return 0;
 }
 
-static const char * const scmi_pinctrl_blocklist[] = {
-	"fsl,imx95",
-	NULL
-};
-
 static int scmi_pinctrl_probe(struct scmi_device *sdev)
 {
 	int ret;
@@ -520,9 +514,6 @@ static int scmi_pinctrl_probe(struct scmi_device *sdev)
 
 	if (!sdev->handle)
 		return -EINVAL;
-
-	if (of_machine_compatible_match(scmi_pinctrl_blocklist))
-		return -ENODEV;
 
 	handle = sdev->handle;
 

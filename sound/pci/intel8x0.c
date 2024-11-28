@@ -703,6 +703,7 @@ static inline void snd_intel8x0_update(struct intel8x0 *chip, struct ichdev *ich
 	if (!(status & ICH_BCIS)) {
 		step = 0;
 	} else if (civ == ichdev->civ) {
+		// snd_printd("civ same %d\n", civ);
 		step = 1;
 		ichdev->civ++;
 		ichdev->civ &= ICH_REG_LVI_MASK;
@@ -710,6 +711,8 @@ static inline void snd_intel8x0_update(struct intel8x0 *chip, struct ichdev *ich
 		step = civ - ichdev->civ;
 		if (step < 0)
 			step += ICH_REG_LVI_MASK + 1;
+		// if (step != 1)
+		//	snd_printd("step = %d, %d -> %d\n", step, ichdev->civ, civ);
 		ichdev->civ = civ;
 	}
 

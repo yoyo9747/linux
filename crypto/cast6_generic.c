@@ -10,7 +10,7 @@
  */
 
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <crypto/algapi.h>
 #include <linux/init.h>
 #include <linux/module.h>

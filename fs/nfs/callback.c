@@ -76,8 +76,6 @@ nfs4_callback_svc(void *vrqstp)
 {
 	struct svc_rqst *rqstp = vrqstp;
 
-	svc_thread_init_status(rqstp, 0);
-
 	set_freezable();
 
 	while (!svc_thread_should_stop(rqstp))

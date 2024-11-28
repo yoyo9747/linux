@@ -422,14 +422,8 @@ static int avs_pci_probe(struct pci_dev *pci, const struct pci_device_id *id)
 	int ret;
 
 	ret = snd_intel_dsp_driver_probe(pci);
-	switch (ret) {
-	case SND_INTEL_DSP_DRIVER_ANY:
-	case SND_INTEL_DSP_DRIVER_SST:
-	case SND_INTEL_DSP_DRIVER_AVS:
-		break;
-	default:
+	if (ret != SND_INTEL_DSP_DRIVER_ANY && ret != SND_INTEL_DSP_DRIVER_AVS)
 		return -ENODEV;
-	}
 
 	ret = pcim_enable_device(pci);
 	if (ret < 0)

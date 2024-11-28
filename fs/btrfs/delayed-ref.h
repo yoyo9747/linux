@@ -108,6 +108,7 @@ struct btrfs_delayed_ref_node {
 
 struct btrfs_delayed_extent_op {
 	struct btrfs_disk_key key;
+	u8 level;
 	bool update_key;
 	bool update_flags;
 	u64 flags_to_set;
@@ -171,9 +172,6 @@ struct btrfs_delayed_ref_head {
 	 */
 	u64 reserved_bytes;
 
-	/* Tree block level, for metadata only. */
-	u8 level;
-
 	/*
 	 * when a new extent is allocated, it is just reserved in memory
 	 * The actual extent isn't inserted into the extent allocation tree
@@ -202,8 +200,8 @@ struct btrfs_delayed_ref_root {
 	/* head ref rbtree */
 	struct rb_root_cached href_root;
 
-	/* Track dirty extent records. */
-	struct xarray dirty_extents;
+	/* dirty extent records */
+	struct rb_root dirty_extent_root;
 
 	/* this spin lock protects the rbtree and the entries inside */
 	spinlock_t lock;
@@ -357,7 +355,7 @@ int btrfs_add_delayed_data_ref(struct btrfs_trans_handle *trans,
 			       struct btrfs_ref *generic_ref,
 			       u64 reserved);
 int btrfs_add_delayed_extent_op(struct btrfs_trans_handle *trans,
-				u64 bytenr, u64 num_bytes, u8 level,
+				u64 bytenr, u64 num_bytes,
 				struct btrfs_delayed_extent_op *extent_op);
 void btrfs_merge_delayed_refs(struct btrfs_fs_info *fs_info,
 			      struct btrfs_delayed_ref_root *delayed_refs,
@@ -388,9 +386,9 @@ void btrfs_inc_delayed_refs_rsv_bg_updates(struct btrfs_fs_info *fs_info);
 void btrfs_dec_delayed_refs_rsv_bg_updates(struct btrfs_fs_info *fs_info);
 int btrfs_delayed_refs_rsv_refill(struct btrfs_fs_info *fs_info,
 				  enum btrfs_reserve_flush_enum flush);
+void btrfs_migrate_to_delayed_refs_rsv(struct btrfs_fs_info *fs_info,
+				       u64 num_bytes);
 bool btrfs_check_space_for_delayed_refs(struct btrfs_fs_info *fs_info);
-bool btrfs_find_delayed_tree_ref(struct btrfs_delayed_ref_head *head,
-				 u64 root, u64 parent);
 
 static inline u64 btrfs_delayed_ref_owner(struct btrfs_delayed_ref_node *node)
 {

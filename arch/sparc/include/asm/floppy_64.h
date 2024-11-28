@@ -197,7 +197,7 @@ static void sun_fd_enable_dma(void)
 	pdma_areasize = pdma_size;
 }
 
-static irqreturn_t sparc_floppy_irq(int irq, void *dev_cookie)
+irqreturn_t sparc_floppy_irq(int irq, void *dev_cookie)
 {
 	if (likely(doing_pdma)) {
 		void __iomem *stat = (void __iomem *) fdc_status;
@@ -434,8 +434,7 @@ static int sun_pci_fd_eject(int drive)
 	return -EINVAL;
 }
 
-static void sun_pci_fd_dma_callback(struct ebus_dma_info *p, int event,
-				    void *cookie)
+void sun_pci_fd_dma_callback(struct ebus_dma_info *p, int event, void *cookie)
 {
 	floppy_interrupt(0, NULL);
 }

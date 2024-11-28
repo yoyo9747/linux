@@ -158,5 +158,4 @@ int of_mpc8xxx_spi_probe(struct platform_device *ofdev)
 }
 EXPORT_SYMBOL_GPL(of_mpc8xxx_spi_probe);
 
-MODULE_DESCRIPTION("Freescale SPI/eSPI controller driver library");
 MODULE_LICENSE("GPL");

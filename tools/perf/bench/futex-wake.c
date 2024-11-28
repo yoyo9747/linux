@@ -100,7 +100,7 @@ static void block_threads(pthread_t *w, struct perf_cpu_map *cpu)
 	cpu_set_t *cpuset;
 	unsigned int i;
 	size_t size;
-	int nrcpus = cpu__max_cpu().cpu;
+	int nrcpus = perf_cpu_map__nr(cpu);
 	threads_starting = params.nthreads;
 
 	cpuset = CPU_ALLOC(nrcpus);

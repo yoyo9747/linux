@@ -125,7 +125,8 @@ static irqreturn_t adjd_s311_trigger_handler(int irq, void *p)
 	if (ret < 0)
 		goto done;
 
-	iio_for_each_active_channel(indio_dev, i) {
+	for_each_set_bit(i, indio_dev->active_scan_mask,
+		indio_dev->masklength) {
 		ret = i2c_smbus_read_word_data(data->client,
 			ADJD_S311_DATA_REG(i));
 		if (ret < 0)
@@ -260,7 +261,7 @@ static int adjd_s311_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id adjd_s311_id[] = {
-	{ "adjd_s311" },
+	{ "adjd_s311", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, adjd_s311_id);

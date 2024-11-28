@@ -350,9 +350,6 @@ static int cifs_debug_data_proc_show(struct seq_file *m, void *v)
 #ifdef CONFIG_CIFS_SWN_UPCALL
 	seq_puts(m, ",WITNESS");
 #endif
-#ifdef CONFIG_CIFS_COMPRESSION
-	seq_puts(m, ",COMPRESSION");
-#endif
 	seq_putc(m, '\n');
 	seq_printf(m, "CIFSMaxBufSize: %d\n", CIFSMaxBufSize);
 	seq_printf(m, "Active VFS Requests: %d\n", GlobalTotalActiveXid);
@@ -478,9 +475,7 @@ skip_rdma:
 		}
 
 		seq_puts(m, "\nCompression: ");
-		if (!IS_ENABLED(CONFIG_CIFS_COMPRESSION))
-			seq_puts(m, "no built-in support");
-		else if (!server->compression.requested)
+		if (!server->compression.requested)
 			seq_puts(m, "disabled on mount");
 		else if (server->compression.enabled)
 			seq_printf(m, "enabled (%s)", compression_alg_str(server->compression.alg));
@@ -1077,7 +1072,7 @@ static int cifs_security_flags_proc_open(struct inode *inode, struct file *file)
 static void
 cifs_security_flags_handle_must_flags(unsigned int *flags)
 {
-	unsigned int signflags = *flags & (CIFSSEC_MUST_SIGN | CIFSSEC_MUST_SEAL);
+	unsigned int signflags = *flags & CIFSSEC_MUST_SIGN;
 
 	if ((*flags & CIFSSEC_MUST_KRB5) == CIFSSEC_MUST_KRB5)
 		*flags = CIFSSEC_MUST_KRB5;

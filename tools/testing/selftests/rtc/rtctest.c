@@ -410,10 +410,15 @@ TEST_F_TIMEOUT(rtc, alarm_wkalm_set_minute, 65) {
 	ASSERT_EQ(new, secs);
 }
 
+static void __attribute__((constructor))
+__constructor_order_last(void)
+{
+	if (!__constructor_order)
+		__constructor_order = _CONSTRUCTOR_ORDER_BACKWARD;
+}
+
 int main(int argc, char **argv)
 {
-	int ret = -1;
-
 	switch (argc) {
 	case 2:
 		rtc_file = argv[1];
@@ -425,12 +430,5 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	/* Run the test if rtc_file is accessible */
-	if (access(rtc_file, R_OK) == 0)
-		ret = test_harness_run(argc, argv);
-	else
-		ksft_exit_skip("[SKIP]: Cannot access rtc file %s - Exiting\n",
-						rtc_file);
-
-	return ret;
+	return test_harness_run(argc, argv);
 }

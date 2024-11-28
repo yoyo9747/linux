@@ -78,7 +78,6 @@ static struct blogic_drvr_options blogic_drvr_options[BLOGIC_MAX_ADAPTERS];
   BusLogic can be assigned a string by insmod.
 */
 
-MODULE_DESCRIPTION("BusLogic MultiMaster and FlashPoint SCSI Host Adapter driver");
 MODULE_LICENSE("GPL");
 #ifdef MODULE
 static char *BusLogic;

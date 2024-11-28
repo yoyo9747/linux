@@ -191,7 +191,8 @@ static int rcar_i2c_get_scl(struct i2c_adapter *adap)
 	struct rcar_i2c_priv *priv = i2c_get_adapdata(adap);
 
 	return !!(rcar_i2c_read(priv, ICMCR) & FSCL);
-}
+
+};
 
 static void rcar_i2c_set_scl(struct i2c_adapter *adap, int val)
 {
@@ -203,7 +204,7 @@ static void rcar_i2c_set_scl(struct i2c_adapter *adap, int val)
 		priv->recovery_icmcr &= ~FSCL;
 
 	rcar_i2c_write(priv, ICMCR, priv->recovery_icmcr);
-}
+};
 
 static void rcar_i2c_set_sda(struct i2c_adapter *adap, int val)
 {
@@ -215,14 +216,15 @@ static void rcar_i2c_set_sda(struct i2c_adapter *adap, int val)
 		priv->recovery_icmcr &= ~FSDA;
 
 	rcar_i2c_write(priv, ICMCR, priv->recovery_icmcr);
-}
+};
 
 static int rcar_i2c_get_bus_free(struct i2c_adapter *adap)
 {
 	struct rcar_i2c_priv *priv = i2c_get_adapdata(adap);
 
 	return !(rcar_i2c_read(priv, ICMCR) & FSDA);
-}
+
+};
 
 static struct i2c_bus_recovery_info rcar_i2c_bri = {
 	.get_scl = rcar_i2c_get_scl,
@@ -231,7 +233,6 @@ static struct i2c_bus_recovery_info rcar_i2c_bri = {
 	.get_bus_free = rcar_i2c_get_bus_free,
 	.recover_bus = i2c_generic_scl_recovery,
 };
-
 static void rcar_i2c_init(struct rcar_i2c_priv *priv)
 {
 	/* reset master mode */
@@ -552,7 +553,7 @@ static void rcar_i2c_irq_send(struct rcar_i2c_priv *priv, u32 msr)
 	u32 irqs_to_clear = MDE;
 
 	/* FIXME: sometimes, unknown interrupt happened. Do nothing */
-	if (WARN(!(msr & MDE), "spurious irq"))
+	if (!(msr & MDE))
 		return;
 
 	if (msr & MAT)
@@ -1164,6 +1165,11 @@ static int rcar_i2c_probe(struct platform_device *pdev)
 	rcar_i2c_init(priv);
 	rcar_i2c_reset_slave(priv);
 
+	if (priv->devtype < I2C_RCAR_GEN3) {
+		irqflags |= IRQF_NO_THREAD;
+		irqhandler = rcar_i2c_gen2_irq;
+	}
+
 	/* Stay always active when multi-master to keep arbitration working */
 	if (of_property_read_bool(dev->of_node, "multi-master"))
 		priv->flags |= ID_P_PM_BLOCKED;
@@ -1173,11 +1179,8 @@ static int rcar_i2c_probe(struct platform_device *pdev)
 	if (of_property_read_bool(dev->of_node, "smbus"))
 		priv->flags |= ID_P_HOST_NOTIFY;
 
-	if (priv->devtype < I2C_RCAR_GEN3) {
-		irqflags |= IRQF_NO_THREAD;
-		irqhandler = rcar_i2c_gen2_irq;
-	} else {
-		/* R-Car Gen3+ needs a reset before every transfer */
+	/* R-Car Gen3+ needs a reset before every transfer */
+	if (priv->devtype >= I2C_RCAR_GEN3) {
 		priv->rstc = devm_reset_control_get_exclusive(&pdev->dev, NULL);
 		if (IS_ERR(priv->rstc)) {
 			ret = PTR_ERR(priv->rstc);

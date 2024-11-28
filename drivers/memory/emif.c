@@ -7,7 +7,6 @@
  * Aneesh V <aneesh@ti.com>
  * Santosh Shilimkar <santosh.shilimkar@ti.com>
  */
-#include <linux/cleanup.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/reboot.h>
@@ -58,6 +57,7 @@ struct emif_data {
 	u8				temperature_level;
 	u8				lpmode;
 	struct list_head		node;
+	unsigned long			irq_state;
 	void __iomem			*base;
 	struct device			*dev;
 	struct emif_regs		*regs_cache[EMIF_MAX_NUM_FREQUENCIES];
@@ -69,6 +69,7 @@ struct emif_data {
 
 static struct emif_data *emif1;
 static DEFINE_SPINLOCK(emif_lock);
+static unsigned long	irq_state;
 static LIST_HEAD(device_list);
 
 static void do_emif_regdump_show(struct seq_file *s, struct emif_data *emif,
@@ -522,18 +523,18 @@ out:
 static irqreturn_t handle_temp_alert(void __iomem *base, struct emif_data *emif)
 {
 	u32		old_temp_level;
-	irqreturn_t	ret;
+	irqreturn_t	ret = IRQ_HANDLED;
 	struct emif_custom_configs *custom_configs;
 
-	guard(spinlock_irqsave)(&emif_lock);
+	spin_lock_irqsave(&emif_lock, irq_state);
 	old_temp_level = emif->temperature_level;
 	get_temperature_level(emif);
 
 	if (unlikely(emif->temperature_level == old_temp_level)) {
-		return IRQ_HANDLED;
+		goto out;
 	} else if (!emif->curr_regs) {
 		dev_err(emif->dev, "temperature alert before registers are calculated, not de-rating timings\n");
-		return IRQ_HANDLED;
+		goto out;
 	}
 
 	custom_configs = emif->plat_data->custom_configs;
@@ -553,7 +554,8 @@ static irqreturn_t handle_temp_alert(void __iomem *base, struct emif_data *emif)
 			 * from thread context
 			 */
 			emif->temperature_level = SDRAM_TEMP_VERY_HIGH_SHUTDOWN;
-			return IRQ_WAKE_THREAD;
+			ret = IRQ_WAKE_THREAD;
+			goto out;
 		}
 	}
 
@@ -569,9 +571,10 @@ static irqreturn_t handle_temp_alert(void __iomem *base, struct emif_data *emif)
 		/* Temperature is going up - handle immediately */
 		setup_temperature_sensitive_regs(emif, emif->curr_regs);
 		do_freq_update();
-		ret = IRQ_HANDLED;
 	}
 
+out:
+	spin_unlock_irqrestore(&emif_lock, irq_state);
 	return ret;
 }
 
@@ -614,7 +617,6 @@ static irqreturn_t emif_interrupt_handler(int irq, void *dev_id)
 static irqreturn_t emif_threaded_isr(int irq, void *dev_id)
 {
 	struct emif_data	*emif = dev_id;
-	unsigned long		irq_state;
 
 	if (emif->temperature_level == SDRAM_TEMP_VERY_HIGH_SHUTDOWN) {
 		dev_emerg(emif->dev, "SDRAM temperature exceeds operating limit.. Needs shut down!!!\n");
@@ -862,7 +864,7 @@ static void of_get_custom_configs(struct device_node *np_emif,
 						be32_to_cpup(poll_intvl);
 	}
 
-	if (of_property_read_bool(np_emif, "extended-temp-part"))
+	if (of_find_property(np_emif, "extended-temp-part", &len))
 		cust_cfgs->mask |= EMIF_CUSTOM_CONFIG_EXTENDED_TEMP_PART;
 
 	if (!is_custom_config_valid(cust_cfgs, emif->dev)) {
@@ -878,9 +880,13 @@ static void of_get_ddr_info(struct device_node *np_emif,
 		struct ddr_device_info *dev_info)
 {
 	u32 density = 0, io_width = 0;
+	int len;
 
-	dev_info->cs1_used = of_property_read_bool(np_emif, "cs1-used");
-	dev_info->cal_resistors_per_cs = of_property_read_bool(np_emif, "cal-resistor-per-cs");
+	if (of_find_property(np_emif, "cs1-used", &len))
+		dev_info->cs1_used = true;
+
+	if (of_find_property(np_emif, "cal-resistor-per-cs", &len))
+		dev_info->cal_resistors_per_cs = true;
 
 	if (of_device_is_compatible(np_ddr, "jedec,lpddr2-s4"))
 		dev_info->type = DDR_TYPE_LPDDR2_S4;
@@ -910,6 +916,7 @@ static struct emif_data *of_get_memory_device_details(
 	struct ddr_device_info		*dev_info = NULL;
 	struct emif_platform_data	*pd = NULL;
 	struct device_node		*np_ddr;
+	int				len;
 
 	np_ddr = of_parse_phandle(np_emif, "device-handle", 0);
 	if (!np_ddr)
@@ -937,7 +944,7 @@ static struct emif_data *of_get_memory_device_details(
 
 	of_property_read_u32(np_emif, "phy-type", &pd->phy_type);
 
-	if (of_property_read_bool(np_emif, "hw-caps-ll-interface"))
+	if (of_find_property(np_emif, "hw-caps-ll-interface", &len))
 		pd->hw_caps |= EMIF_HW_CAPS_LL_INTERFACE;
 
 	of_get_ddr_info(np_emif, np_ddr, dev_info);

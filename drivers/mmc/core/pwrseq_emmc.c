@@ -115,5 +115,4 @@ static struct platform_driver mmc_pwrseq_emmc_driver = {
 };
 
 module_platform_driver(mmc_pwrseq_emmc_driver);
-MODULE_DESCRIPTION("Hardware reset support for eMMC");
 MODULE_LICENSE("GPL v2");

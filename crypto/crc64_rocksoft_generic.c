@@ -3,7 +3,7 @@
 #include <linux/crc64.h>
 #include <linux/module.h>
 #include <crypto/internal/hash.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 static int chksum_init(struct shash_desc *desc)
 {

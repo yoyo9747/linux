@@ -31,7 +31,7 @@ struct kmsan_context_state {
 struct kmsan_ctx {
 	struct kmsan_context_state cstate;
 	int kmsan_in_runtime;
-	unsigned int depth;
+	bool allow_reporting;
 };
 
 #endif /* _LINUX_KMSAN_TYPES_H */

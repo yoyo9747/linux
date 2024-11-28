@@ -40,13 +40,13 @@
 	leds {
 		compatible = "gpio-leds";
 
-		led-ds1 {
+		ds1 {
 			label = "ds1";
 			gpios = <&pioB 9 GPIO_ACTIVE_HIGH>;
 			linux,default-trigger = "heartbeat";
 		};
 
-		led-ds5 {
+		ds5 {
 			label = "ds5";
 			gpios = <&pioB 8 GPIO_ACTIVE_LOW>;
 		};

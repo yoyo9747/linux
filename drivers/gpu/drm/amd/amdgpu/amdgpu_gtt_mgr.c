@@ -200,6 +200,8 @@ void amdgpu_gtt_mgr_recover(struct amdgpu_gtt_mgr *mgr)
 		amdgpu_ttm_recover_gart(node->base.bo);
 	}
 	spin_unlock(&mgr->lock);
+
+	amdgpu_gart_invalidate_tlb(adev);
 }
 
 /**

@@ -216,7 +216,6 @@ static void __exit exit_bm(void)
 	textsearch_unregister(&bm_ops);
 }
 
-MODULE_DESCRIPTION("Boyer-Moore text search implementation");
 MODULE_LICENSE("GPL");
 
 module_init(init_bm);

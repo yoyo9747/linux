@@ -11,7 +11,6 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
-#include <linux/ioremap.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/mmiotrace.h>
@@ -458,7 +457,7 @@ void iounmap(volatile void __iomem *addr)
 {
 	struct vm_struct *p, *o;
 
-	if (WARN_ON_ONCE(!is_ioremap_addr((void __force *)addr)))
+	if ((void __force *)addr <= high_memory)
 		return;
 
 	/*

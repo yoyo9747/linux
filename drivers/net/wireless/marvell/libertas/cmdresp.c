@@ -8,7 +8,7 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <net/cfg80211.h>
 
 #include "cfg.h"

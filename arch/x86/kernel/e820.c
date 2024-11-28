@@ -828,7 +828,7 @@ u64 __init e820__memblock_alloc_reserved(u64 size, u64 align)
 /*
  * Find the highest page frame number we have available
  */
-static unsigned long __init e820__end_ram_pfn(unsigned long limit_pfn)
+static unsigned long __init e820_end_pfn(unsigned long limit_pfn, enum e820_type type)
 {
 	int i;
 	unsigned long last_pfn = 0;
@@ -839,8 +839,7 @@ static unsigned long __init e820__end_ram_pfn(unsigned long limit_pfn)
 		unsigned long start_pfn;
 		unsigned long end_pfn;
 
-		if (entry->type != E820_TYPE_RAM &&
-		    entry->type != E820_TYPE_ACPI)
+		if (entry->type != type)
 			continue;
 
 		start_pfn = entry->addr >> PAGE_SHIFT;
@@ -866,12 +865,12 @@ static unsigned long __init e820__end_ram_pfn(unsigned long limit_pfn)
 
 unsigned long __init e820__end_of_ram_pfn(void)
 {
-	return e820__end_ram_pfn(MAX_ARCH_PFN);
+	return e820_end_pfn(MAX_ARCH_PFN, E820_TYPE_RAM);
 }
 
 unsigned long __init e820__end_of_low_ram_pfn(void)
 {
-	return e820__end_ram_pfn(1UL << (32 - PAGE_SHIFT));
+	return e820_end_pfn(1UL << (32 - PAGE_SHIFT), E820_TYPE_RAM);
 }
 
 static void __init early_panic(char *msg)

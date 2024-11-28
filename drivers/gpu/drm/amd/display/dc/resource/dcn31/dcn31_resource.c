@@ -1864,7 +1864,6 @@ static struct clock_source *dcn30_clock_source_create(
 		return &clk_src->base;
 	}
 
-	kfree(clk_src);
 	BREAK_TO_DEBUGGER();
 	return NULL;
 }
@@ -1948,7 +1947,6 @@ static bool dcn31_resource_construct(
 
 	/* Use pipe context based otg sync logic */
 	dc->config.use_pipe_ctx_sync_logic = true;
-	dc->config.disable_hbr_audio_dp2 = true;
 
 	/* read VBIOS LTTPR caps */
 	{

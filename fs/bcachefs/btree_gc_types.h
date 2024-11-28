@@ -4,16 +4,11 @@
 
 #include <linux/generic-radix-tree.h>
 
-#define GC_PHASES()		\
-	x(not_running)		\
-	x(start)		\
-	x(sb)			\
-	x(btree)
-
 enum gc_phase {
-#define x(n)	GC_PHASE_##n,
-	GC_PHASES()
-#undef x
+	GC_PHASE_not_running,
+	GC_PHASE_start,
+	GC_PHASE_sb,
+	GC_PHASE_btree,
 };
 
 struct gc_pos {

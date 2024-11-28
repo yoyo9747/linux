@@ -21,7 +21,7 @@
 #include "hif-ops.h"
 #include "trace.h"
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define CALC_TXRX_PADDED_LEN(dev, len)  (__ALIGN_MASK((len), (dev)->block_mask))
 

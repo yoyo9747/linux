@@ -390,8 +390,7 @@ int ubiblock_create(struct ubi_volume_info *vi)
 
 	ret = blk_mq_alloc_tag_set(&dev->tag_set);
 	if (ret) {
-		pr_err("ubiblock%d_%d: blk_mq_alloc_tag_set failed\n",
-			dev->ubi_num, dev->vol_id);
+		dev_err(disk_to_dev(dev->gd), "blk_mq_alloc_tag_set failed");
 		goto out_free_dev;
 	}
 
@@ -408,8 +407,8 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	gd->minors = 1;
 	gd->first_minor = idr_alloc(&ubiblock_minor_idr, dev, 0, 0, GFP_KERNEL);
 	if (gd->first_minor < 0) {
-		pr_err("ubiblock%d_%d: block: dynamic minor allocation failed\n",
-			dev->ubi_num, dev->vol_id);
+		dev_err(disk_to_dev(gd),
+			"block: dynamic minor allocation failed");
 		ret = -ENODEV;
 		goto out_cleanup_disk;
 	}
@@ -670,7 +669,7 @@ err_unreg:
 	return ret;
 }
 
-void ubiblock_exit(void)
+void __exit ubiblock_exit(void)
 {
 	ubi_unregister_volume_notifier(&ubiblock_notifier);
 	ubiblock_remove_all();

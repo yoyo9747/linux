@@ -717,5 +717,4 @@ static void __exit offb_exit(void)
 }
 module_exit(offb_exit);
 
-MODULE_DESCRIPTION("Open Firmware frame buffer device driver");
 MODULE_LICENSE("GPL");

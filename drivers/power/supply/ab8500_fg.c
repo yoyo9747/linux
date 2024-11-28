@@ -149,6 +149,11 @@ struct ab8500_fg_flags {
 	bool batt_id_received;
 };
 
+struct inst_curr_result_list {
+	struct list_head list;
+	int *result;
+};
+
 /**
  * struct ab8500_fg - ab8500 FG device information
  * @dev:		Pointer to the structure device
@@ -2531,7 +2536,7 @@ static struct attribute *ab8500_fg_attrs[] = {
 };
 ATTRIBUTE_GROUPS(ab8500_fg);
 
-static const struct kobj_type ab8500_fg_ktype = {
+static struct kobj_type ab8500_fg_ktype = {
 	.sysfs_ops = &ab8500_fg_sysfs_ops,
 	.default_groups = ab8500_fg_groups,
 };

@@ -6,7 +6,6 @@
  */
 
 #include <linux/acpi.h>
-#include <linux/cleanup.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/io.h>
@@ -74,11 +73,12 @@ static int intel_reg_show(struct seq_file *s_file, void *data)
 	struct sdw_intel *sdw = s_file->private;
 	void __iomem *s = sdw->link_res->shim;
 	void __iomem *a = sdw->link_res->alh;
+	char *buf;
 	ssize_t ret;
 	int i, j;
 	unsigned int links, reg;
 
-	char *buf __free(kfree) = kzalloc(RD_BUF, GFP_KERNEL);
+	buf = kzalloc(RD_BUF, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -129,6 +129,7 @@ static int intel_reg_show(struct seq_file *s_file, void *data)
 		ret += intel_sprintf(a, true, buf, ret, SDW_ALH_STRMZCFG(i));
 
 	seq_printf(s_file, "%s", buf);
+	kfree(buf);
 
 	return 0;
 }
@@ -726,6 +727,7 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 	struct sdw_cdns_dai_runtime *dai_runtime;
 	struct sdw_cdns_pdi *pdi;
 	struct sdw_stream_config sconfig;
+	struct sdw_port_config *pconfig;
 	int ch, dir;
 	int ret;
 
@@ -741,8 +743,10 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 
 	pdi = sdw_cdns_alloc_pdi(cdns, &cdns->pcm, ch, dir, dai->id);
 
-	if (!pdi)
-		return -EINVAL;
+	if (!pdi) {
+		ret = -EINVAL;
+		goto error;
+	}
 
 	/* do run-time configurations for SHIM, ALH and PDI/PORT */
 	intel_pdi_shim_configure(sdw, pdi);
@@ -759,7 +763,7 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 				  sdw->instance,
 				  pdi->intel_alh_id);
 	if (ret)
-		return ret;
+		goto error;
 
 	sconfig.direction = dir;
 	sconfig.ch_count = ch;
@@ -769,10 +773,11 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 	sconfig.bps = snd_pcm_format_width(params_format(params));
 
 	/* Port configuration */
-	struct sdw_port_config *pconfig __free(kfree) = kzalloc(sizeof(*pconfig),
-								GFP_KERNEL);
-	if (!pconfig)
-		return -ENOMEM;
+	pconfig = kzalloc(sizeof(*pconfig), GFP_KERNEL);
+	if (!pconfig) {
+		ret =  -ENOMEM;
+		goto error;
+	}
 
 	pconfig->num = pdi->num;
 	pconfig->ch_mask = (1 << ch) - 1;
@@ -782,6 +787,8 @@ static int intel_hw_params(struct snd_pcm_substream *substream,
 	if (ret)
 		dev_err(cdns->dev, "add master to stream failed:%d\n", ret);
 
+	kfree(pconfig);
+error:
 	return ret;
 }
 

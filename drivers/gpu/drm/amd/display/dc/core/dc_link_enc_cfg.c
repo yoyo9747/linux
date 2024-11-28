@@ -248,8 +248,6 @@ static struct link_encoder *get_link_enc_used_by_link(
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		struct link_enc_assignment assignment = state->res_ctx.link_enc_cfg_ctx.link_enc_assignments[i];
-		if (assignment.eng_id == ENGINE_ID_UNKNOWN)
-			continue;
 
 		if (assignment.valid == true && are_ep_ids_equal(&assignment.ep_id, &ep_id))
 			link_enc = link->dc->res_pool->link_encoders[assignment.eng_id - ENGINE_ID_DIGA];
@@ -519,8 +517,6 @@ struct link_encoder *link_enc_cfg_get_link_enc_used_by_link(
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		struct link_enc_assignment assignment = get_assignment(dc, i);
-		if (assignment.eng_id == ENGINE_ID_UNKNOWN)
-			continue;
 
 		if (assignment.valid == true && are_ep_ids_equal(&assignment.ep_id, &ep_id)) {
 			link_enc = link->dc->res_pool->link_encoders[assignment.eng_id - ENGINE_ID_DIGA];
@@ -544,7 +540,7 @@ struct link_encoder *link_enc_cfg_get_next_avail_link_enc(struct dc *dc)
 	for (i = 0; i < MAX_PIPES; i++) {
 		struct link_enc_assignment assignment = get_assignment(dc, i);
 
-		if (assignment.valid && assignment.eng_id != ENGINE_ID_UNKNOWN)
+		if (assignment.valid)
 			encs_assigned[assignment.eng_id - ENGINE_ID_DIGA] = assignment.eng_id;
 	}
 
@@ -605,9 +601,6 @@ struct link_encoder *link_enc_cfg_get_link_enc_used_by_stream_current(
 	for (i = 0; i < MAX_PIPES; i++) {
 		struct link_enc_assignment assignment =
 			dc->current_state->res_ctx.link_enc_cfg_ctx.link_enc_assignments[i];
-
-		if (assignment.eng_id == ENGINE_ID_UNKNOWN)
-			continue;
 
 		if (assignment.valid == true && are_ep_ids_equal(&assignment.ep_id, &ep_id)) {
 			link_enc = stream->link->dc->res_pool->link_encoders[assignment.eng_id - ENGINE_ID_DIGA];

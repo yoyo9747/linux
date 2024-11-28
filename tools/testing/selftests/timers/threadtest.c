@@ -38,10 +38,10 @@ struct timespec global_list[LISTSIZE];
 int listcount = 0;
 
 
-void checklist(const struct timespec *list, int size)
+void checklist(struct timespec *list, int size)
 {
 	int i, j;
-	const struct timespec *a, *b;
+	struct timespec *a, *b;
 
 	/* scan the list */
 	for (i = 0; i < size-1; i++) {

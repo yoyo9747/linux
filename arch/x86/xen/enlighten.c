@@ -20,6 +20,8 @@
 #include <asm/setup.h>
 
 #include "xen-ops.h"
+#include "smp.h"
+#include "pmu.h"
 
 EXPORT_SYMBOL_GPL(hypercall_page);
 

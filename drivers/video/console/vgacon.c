@@ -1222,5 +1222,4 @@ void vgacon_register_screen(struct screen_info *si)
 	vga_si = si;
 }
 
-MODULE_DESCRIPTION("VGA based console driver");
 MODULE_LICENSE("GPL");

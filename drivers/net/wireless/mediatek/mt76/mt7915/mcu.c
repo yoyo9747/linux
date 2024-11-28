@@ -157,21 +157,12 @@ static int
 mt7915_mcu_parse_response(struct mt76_dev *mdev, int cmd,
 			  struct sk_buff *skb, int seq)
 {
-	struct mt7915_dev *dev = container_of(mdev, struct mt7915_dev, mt76);
 	struct mt76_connac2_mcu_rxd *rxd;
 	int ret = 0;
 
 	if (!skb) {
 		dev_err(mdev->dev, "Message %08x (seq %d) timeout\n",
 			cmd, seq);
-
-		if (!test_and_set_bit(MT76_MCU_RESET, &dev->mphy.state)) {
-			dev->recovery.restart = true;
-			wake_up(&dev->mt76.mcu.wait);
-			queue_work(dev->mt76.wq, &dev->reset_work);
-			wake_up(&dev->reset_wait);
-		}
-
 		return -ETIMEDOUT;
 	}
 
@@ -200,6 +191,11 @@ mt7915_mcu_send_message(struct mt76_dev *mdev, struct sk_buff *skb,
 {
 	struct mt7915_dev *dev = container_of(mdev, struct mt7915_dev, mt76);
 	enum mt76_mcuq_id qid;
+	int ret;
+
+	ret = mt76_connac2_mcu_fill_message(mdev, skb, cmd, wait_seq);
+	if (ret)
+		return ret;
 
 	if (cmd == MCU_CMD(FW_SCATTER))
 		qid = MT_MCUQ_FWDL;
@@ -297,7 +293,7 @@ mt7915_mcu_rx_radar_detected(struct mt7915_dev *dev, struct sk_buff *skb)
 						&dev->rdd2_chandef,
 						GFP_ATOMIC);
 	else
-		ieee80211_radar_detected(mphy->hw, NULL);
+		ieee80211_radar_detected(mphy->hw);
 	dev->hw_pattern++;
 }
 
@@ -694,17 +690,13 @@ int mt7915_mcu_add_tx_ba(struct mt7915_dev *dev,
 {
 	struct mt7915_sta *msta = (struct mt7915_sta *)params->sta->drv_priv;
 	struct mt7915_vif *mvif = msta->vif;
-	int ret;
 
-	mt76_worker_disable(&dev->mt76.tx_worker);
 	if (enable && !params->amsdu)
 		msta->wcid.amsdu = false;
-	ret = mt76_connac_mcu_sta_ba(&dev->mt76, &mvif->mt76, params,
-				     MCU_EXT_CMD(STA_REC_UPDATE),
-				     enable, true);
-	mt76_worker_enable(&dev->mt76.tx_worker);
 
-	return ret;
+	return mt76_connac_mcu_sta_ba(&dev->mt76, &mvif->mt76, params,
+				      MCU_EXT_CMD(STA_REC_UPDATE),
+				      enable, true);
 }
 
 int mt7915_mcu_add_rx_ba(struct mt7915_dev *dev,
@@ -1511,7 +1503,7 @@ mt7915_mcu_sta_rate_ctrl_tlv(struct sk_buff *skb, struct mt7915_dev *dev,
 
 	ra->valid = true;
 	ra->auto_rate = true;
-	ra->phy_mode = mt76_connac_get_phy_mode(mphy, vif, band, &sta->deflink);
+	ra->phy_mode = mt76_connac_get_phy_mode(mphy, vif, band, sta);
 	ra->channel = chandef->chan->hw_value;
 	ra->bw = sta->deflink.bandwidth;
 	ra->phy.bw = sta->deflink.bandwidth;
@@ -1661,16 +1653,14 @@ mt7915_mcu_add_group(struct mt7915_dev *dev, struct ieee80211_vif *vif,
 }
 
 int mt7915_mcu_add_sta(struct mt7915_dev *dev, struct ieee80211_vif *vif,
-		       struct ieee80211_sta *sta, int conn_state, bool newly)
+		       struct ieee80211_sta *sta, bool enable)
 {
 	struct mt7915_vif *mvif = (struct mt7915_vif *)vif->drv_priv;
-	struct ieee80211_link_sta *link_sta;
 	struct mt7915_sta *msta;
 	struct sk_buff *skb;
 	int ret;
 
 	msta = sta ? (struct mt7915_sta *)sta->drv_priv : &mvif->sta;
-	link_sta = sta ? &sta->deflink : NULL;
 
 	skb = mt76_connac_mcu_alloc_sta_req(&dev->mt76, &mvif->mt76,
 					    &msta->wcid);
@@ -1678,10 +1668,13 @@ int mt7915_mcu_add_sta(struct mt7915_dev *dev, struct ieee80211_vif *vif,
 		return PTR_ERR(skb);
 
 	/* starec basic */
-	mt76_connac_mcu_sta_basic_tlv(&dev->mt76, skb, vif, link_sta,
-				      conn_state, newly);
+	mt76_connac_mcu_sta_basic_tlv(&dev->mt76, skb, vif, sta, enable,
+				      !rcu_access_pointer(dev->mt76.wcid[msta->wcid.idx]));
+	if (!enable)
+		goto out;
+
 	/* tag order is in accordance with firmware dependency. */
-	if (sta && conn_state != CONN_STATE_DISCONNECT) {
+	if (sta) {
 		/* starec bfer */
 		mt7915_mcu_sta_bfer_tlv(dev, skb, vif, sta);
 		/* starec ht */
@@ -1692,16 +1685,11 @@ int mt7915_mcu_add_sta(struct mt7915_dev *dev, struct ieee80211_vif *vif,
 		mt76_connac_mcu_sta_uapsd(skb, vif, sta);
 	}
 
-	if (newly || conn_state != CONN_STATE_DISCONNECT) {
-		ret = mt7915_mcu_sta_wtbl_tlv(dev, skb, vif, sta);
-		if (ret) {
-			dev_kfree_skb(skb);
-			return ret;
-		}
+	ret = mt7915_mcu_sta_wtbl_tlv(dev, skb, vif, sta);
+	if (ret) {
+		dev_kfree_skb(skb);
+		return ret;
 	}
-
-	if (conn_state == CONN_STATE_DISCONNECT)
-		goto out;
 
 	if (sta) {
 		/* starec amsdu */
@@ -2362,8 +2350,6 @@ int mt7915_mcu_init_firmware(struct mt7915_dev *dev)
 	if (ret)
 		return ret;
 
-	mt76_connac_mcu_del_wtbl_all(&dev->mt76);
-
 	if ((mtk_wed_device_active(&dev->mt76.mmio.wed) &&
 	     is_mt7915(&dev->mt76)) ||
 	    !mtk_wed_get_rx_capa(&dev->mt76.mmio.wed))
@@ -2388,9 +2374,7 @@ int mt7915_mcu_init_firmware(struct mt7915_dev *dev)
 int mt7915_mcu_init(struct mt7915_dev *dev)
 {
 	static const struct mt76_mcu_ops mt7915_mcu_ops = {
-		.max_retry = 3,
 		.headroom = sizeof(struct mt76_connac2_mcu_txd),
-		.mcu_skb_prepare_msg = mt76_connac2_mcu_fill_message,
 		.mcu_skb_send_msg = mt7915_mcu_send_message,
 		.mcu_parse_response = mt7915_mcu_parse_response,
 	};
@@ -2761,7 +2745,7 @@ int mt7915_mcu_set_chan_info(struct mt7915_phy *phy, int cmd)
 
 	if (phy->mt76->hw->conf.flags & IEEE80211_CONF_MONITOR)
 		req.switch_reason = CH_SWITCH_NORMAL;
-	else if (phy->mt76->offchannel ||
+	else if (phy->mt76->hw->conf.flags & IEEE80211_CONF_OFFCHANNEL ||
 		 phy->mt76->hw->conf.flags & IEEE80211_CONF_IDLE)
 		req.switch_reason = CH_SWITCH_SCAN_BYPASS_DPD;
 	else if (!cfg80211_reg_can_beacon(phy->mt76->hw->wiphy, chandef,

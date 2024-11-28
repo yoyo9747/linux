@@ -11,7 +11,7 @@
 #include <linux/module.h>
 #include <linux/string.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "c2p.h"
 #include "c2p_core.h"

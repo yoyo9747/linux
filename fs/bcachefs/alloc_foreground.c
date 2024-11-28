@@ -496,6 +496,12 @@ again:
 		for (alloc_cursor = max(alloc_cursor, bkey_start_offset(k.k));
 		     alloc_cursor < k.k->p.offset;
 		     alloc_cursor++) {
+			ret = btree_trans_too_many_iters(trans);
+			if (ret) {
+				ob = ERR_PTR(ret);
+				break;
+			}
+
 			s->buckets_seen++;
 
 			u64 bucket = alloc_cursor & ~(~0ULL << 56);
@@ -600,7 +606,6 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 				      enum bch_watermark watermark,
 				      enum bch_data_type data_type,
 				      struct closure *cl,
-				      bool nowait,
 				      struct bch_dev_usage *usage)
 {
 	struct bch_fs *c = trans->c;
@@ -610,7 +615,7 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 	struct bucket_alloc_state s = {
 		.btree_bitmap = data_type == BCH_DATA_btree,
 	};
-	bool waiting = nowait;
+	bool waiting = false;
 again:
 	bch2_dev_usage_read_fast(ca, usage);
 	avail = dev_buckets_free(ca, *usage, watermark);
@@ -686,7 +691,7 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 
 	bch2_trans_do(c, NULL, NULL, 0,
 		      PTR_ERR_OR_ZERO(ob = bch2_bucket_alloc_trans(trans, ca, watermark,
-							data_type, cl, false, &usage)));
+							data_type, cl, &usage)));
 	return ob;
 }
 
@@ -749,6 +754,7 @@ static int add_new_bucket(struct bch_fs *c,
 			   unsigned nr_replicas,
 			   unsigned *nr_effective,
 			   bool *have_cache,
+			   unsigned flags,
 			   struct open_bucket *ob)
 {
 	unsigned durability = ob_dev(c, ob)->mi.durability;
@@ -775,7 +781,7 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 		      unsigned nr_replicas,
 		      unsigned *nr_effective,
 		      bool *have_cache,
-		      enum bch_write_flags flags,
+		      unsigned flags,
 		      enum bch_data_type data_type,
 		      enum bch_watermark watermark,
 		      struct closure *cl)
@@ -801,8 +807,7 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 			continue;
 		}
 
-		ob = bch2_bucket_alloc_trans(trans, ca, watermark, data_type,
-					     cl, flags & BCH_WRITE_ALLOC_NOWAIT, &usage);
+		ob = bch2_bucket_alloc_trans(trans, ca, watermark, data_type, cl, &usage);
 		if (!IS_ERR(ob))
 			bch2_dev_stripe_increment_inlined(ca, stripe, &usage);
 		bch2_dev_put(ca);
@@ -816,7 +821,7 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 
 		if (add_new_bucket(c, ptrs, devs_may_alloc,
 				   nr_replicas, nr_effective,
-				   have_cache, ob)) {
+				   have_cache, flags, ob)) {
 			ret = 0;
 			break;
 		}
@@ -842,7 +847,7 @@ static int bucket_alloc_from_stripe(struct btree_trans *trans,
 			 unsigned *nr_effective,
 			 bool *have_cache,
 			 enum bch_watermark watermark,
-			 enum bch_write_flags flags,
+			 unsigned flags,
 			 struct closure *cl)
 {
 	struct bch_fs *c = trans->c;
@@ -884,7 +889,7 @@ got_bucket:
 
 	ret = add_new_bucket(c, ptrs, devs_may_alloc,
 			     nr_replicas, nr_effective,
-			     have_cache, ob);
+			     have_cache, flags, ob);
 out_put_head:
 	bch2_ec_stripe_head_put(c, h);
 	return ret;
@@ -923,7 +928,7 @@ static int bucket_alloc_set_writepoint(struct bch_fs *c,
 				       unsigned nr_replicas,
 				       unsigned *nr_effective,
 				       bool *have_cache,
-				       bool ec)
+				       bool ec, unsigned flags)
 {
 	struct open_buckets ptrs_skip = { .nr = 0 };
 	struct open_bucket *ob;
@@ -935,7 +940,7 @@ static int bucket_alloc_set_writepoint(struct bch_fs *c,
 					have_cache, ec, ob))
 			ret = add_new_bucket(c, ptrs, devs_may_alloc,
 				       nr_replicas, nr_effective,
-				       have_cache, ob);
+				       have_cache, flags, ob);
 		else
 			ob_push(c, &ptrs_skip, ob);
 	}
@@ -951,7 +956,8 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
 				    unsigned nr_replicas,
 				    unsigned *nr_effective,
 				    bool *have_cache, bool ec,
-				    enum bch_watermark watermark)
+				    enum bch_watermark watermark,
+				    unsigned flags)
 {
 	int i, ret = 0;
 
@@ -983,7 +989,7 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
 
 			ret = add_new_bucket(c, ptrs, devs_may_alloc,
 					     nr_replicas, nr_effective,
-					     have_cache, ob);
+					     have_cache, flags, ob);
 			if (ret)
 				break;
 		}
@@ -1003,7 +1009,7 @@ static int __open_bucket_add_buckets(struct btree_trans *trans,
 			unsigned *nr_effective,
 			bool *have_cache,
 			enum bch_watermark watermark,
-			enum bch_write_flags flags,
+			unsigned flags,
 			struct closure *_cl)
 {
 	struct bch_fs *c = trans->c;
@@ -1022,15 +1028,18 @@ static int __open_bucket_add_buckets(struct btree_trans *trans,
 	open_bucket_for_each(c, ptrs, ob, i)
 		__clear_bit(ob->dev, devs.d);
 
+	if (erasure_code && ec_open_bucket(c, ptrs))
+		return 0;
+
 	ret = bucket_alloc_set_writepoint(c, ptrs, wp, &devs,
 				 nr_replicas, nr_effective,
-				 have_cache, erasure_code);
+				 have_cache, erasure_code, flags);
 	if (ret)
 		return ret;
 
 	ret = bucket_alloc_set_partial(c, ptrs, wp, &devs,
 				 nr_replicas, nr_effective,
-				 have_cache, erasure_code, watermark);
+				 have_cache, erasure_code, watermark, flags);
 	if (ret)
 		return ret;
 
@@ -1071,12 +1080,12 @@ static int open_bucket_add_buckets(struct btree_trans *trans,
 			unsigned *nr_effective,
 			bool *have_cache,
 			enum bch_watermark watermark,
-			enum bch_write_flags flags,
+			unsigned flags,
 			struct closure *cl)
 {
 	int ret;
 
-	if (erasure_code && !ec_open_bucket(trans->c, ptrs)) {
+	if (erasure_code) {
 		ret = __open_bucket_add_buckets(trans, ptrs, wp,
 				devs_have, target, erasure_code,
 				nr_replicas, nr_effective, have_cache,
@@ -1373,7 +1382,7 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 			     unsigned nr_replicas,
 			     unsigned nr_replicas_required,
 			     enum bch_watermark watermark,
-			     enum bch_write_flags flags,
+			     unsigned flags,
 			     struct closure *cl,
 			     struct write_point **wp_ret)
 {
@@ -1388,6 +1397,8 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 
 	if (!IS_ENABLED(CONFIG_BCACHEFS_ERASURE_CODING))
 		erasure_code = false;
+
+	BUG_ON(flags & BCH_WRITE_ONLY_SPECIFIED_DEVS);
 
 	BUG_ON(!nr_replicas || !nr_replicas_required);
 retry:
@@ -1493,12 +1504,11 @@ err:
 	    try_decrease_writepoints(trans, write_points_nr))
 		goto retry;
 
-	if (cl && bch2_err_matches(ret, BCH_ERR_open_buckets_empty))
-		ret = -BCH_ERR_bucket_alloc_blocked;
-
-	if (cl && !(flags & BCH_WRITE_ALLOC_NOWAIT) &&
+	if (bch2_err_matches(ret, BCH_ERR_open_buckets_empty) ||
 	    bch2_err_matches(ret, BCH_ERR_freelist_empty))
-		ret = -BCH_ERR_bucket_alloc_blocked;
+		return cl
+			? -BCH_ERR_bucket_alloc_blocked
+			: -BCH_ERR_ENOSPC_bucket_alloc;
 
 	return ret;
 }
@@ -1579,7 +1589,7 @@ void bch2_fs_allocator_foreground_init(struct bch_fs *c)
 	}
 }
 
-void bch2_open_bucket_to_text(struct printbuf *out, struct bch_fs *c, struct open_bucket *ob)
+static void bch2_open_bucket_to_text(struct printbuf *out, struct bch_fs *c, struct open_bucket *ob)
 {
 	struct bch_dev *ca = ob_dev(c, ob);
 	unsigned data_type = ob->data_type;
@@ -1599,8 +1609,7 @@ void bch2_open_bucket_to_text(struct printbuf *out, struct bch_fs *c, struct ope
 	prt_newline(out);
 }
 
-void bch2_open_buckets_to_text(struct printbuf *out, struct bch_fs *c,
-			       struct bch_dev *ca)
+void bch2_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	struct open_bucket *ob;
 
@@ -1610,8 +1619,7 @@ void bch2_open_buckets_to_text(struct printbuf *out, struct bch_fs *c,
 	     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
 	     ob++) {
 		spin_lock(&ob->lock);
-		if (ob->valid && !ob->on_partial_list &&
-		    (!ca || ob->dev == ca->dev_idx))
+		if (ob->valid && !ob->on_partial_list)
 			bch2_open_bucket_to_text(out, c, ob);
 		spin_unlock(&ob->lock);
 	}
@@ -1698,15 +1706,15 @@ void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 	printbuf_tabstops_reset(out);
 	printbuf_tabstop_push(out, 24);
 
-	prt_printf(out, "capacity\t%llu\n",		c->capacity);
-	prt_printf(out, "reserved\t%llu\n",		c->reserved);
-	prt_printf(out, "hidden\t%llu\n",		percpu_u64_get(&c->usage->hidden));
-	prt_printf(out, "btree\t%llu\n",		percpu_u64_get(&c->usage->btree));
-	prt_printf(out, "data\t%llu\n",			percpu_u64_get(&c->usage->data));
-	prt_printf(out, "cached\t%llu\n",		percpu_u64_get(&c->usage->cached));
-	prt_printf(out, "reserved\t%llu\n",		percpu_u64_get(&c->usage->reserved));
-	prt_printf(out, "online_reserved\t%llu\n",	percpu_u64_get(c->online_reserved));
-	prt_printf(out, "nr_inodes\t%llu\n",		percpu_u64_get(&c->usage->nr_inodes));
+	percpu_down_read(&c->mark_lock);
+	prt_printf(out, "hidden\t%llu\n",			bch2_fs_usage_read_one(c, &c->usage_base->b.hidden));
+	prt_printf(out, "btree\t%llu\n",			bch2_fs_usage_read_one(c, &c->usage_base->b.btree));
+	prt_printf(out, "data\t%llu\n",				bch2_fs_usage_read_one(c, &c->usage_base->b.data));
+	prt_printf(out, "cached\t%llu\n",			bch2_fs_usage_read_one(c, &c->usage_base->b.cached));
+	prt_printf(out, "reserved\t%llu\n",			bch2_fs_usage_read_one(c, &c->usage_base->b.reserved));
+	prt_printf(out, "online_reserved\t%llu\n",		percpu_u64_get(c->online_reserved));
+	prt_printf(out, "nr_inodes\t%llu\n",			bch2_fs_usage_read_one(c, &c->usage_base->b.nr_inodes));
+	percpu_up_read(&c->mark_lock);
 
 	prt_newline(out);
 	prt_printf(out, "freelist_wait\t%s\n",			c->freelist_wait.list.first ? "waiting" : "empty");
@@ -1729,7 +1737,14 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	for (unsigned i = 0; i < ARRAY_SIZE(c->open_buckets); i++)
 		nr[c->open_buckets[i].data_type]++;
 
-	bch2_dev_usage_to_text(out, ca, &stats);
+	printbuf_tabstops_reset(out);
+	printbuf_tabstop_push(out, 12);
+	printbuf_tabstop_push(out, 16);
+	printbuf_tabstop_push(out, 16);
+	printbuf_tabstop_push(out, 16);
+	printbuf_tabstop_push(out, 16);
+
+	bch2_dev_usage_to_text(out, &stats);
 
 	prt_newline(out);
 
@@ -1747,12 +1762,11 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	prt_printf(out, "buckets to invalidate\t%llu\r\n",	should_invalidate_buckets(ca, stats));
 }
 
-static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
+void bch2_print_allocator_stuck(struct bch_fs *c)
 {
 	struct printbuf buf = PRINTBUF;
 
-	prt_printf(&buf, "Allocator stuck? Waited for %u seconds\n",
-		   c->opts.allocator_stuck_timeout);
+	prt_printf(&buf, "Allocator stuck? Waited for 10 seconds\n");
 
 	prt_printf(&buf, "Allocator debug:\n");
 	printbuf_indent_add(&buf, 2);
@@ -1781,25 +1795,4 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
 
 	bch2_print_string_as_lines(KERN_ERR, buf.buf);
 	printbuf_exit(&buf);
-}
-
-static inline unsigned allocator_wait_timeout(struct bch_fs *c)
-{
-	if (c->allocator_last_stuck &&
-	    time_after(c->allocator_last_stuck + HZ * 60 * 2, jiffies))
-		return 0;
-
-	return c->opts.allocator_stuck_timeout * HZ;
-}
-
-void __bch2_wait_on_allocator(struct bch_fs *c, struct closure *cl)
-{
-	unsigned t = allocator_wait_timeout(c);
-
-	if (t && closure_sync_timeout(cl, t)) {
-		c->allocator_last_stuck = jiffies;
-		bch2_print_allocator_stuck(c);
-	}
-
-	closure_sync(cl);
 }

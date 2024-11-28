@@ -15,7 +15,7 @@
 #include <linux/mutex.h>
 #include <linux/regmap.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #define I8254_COUNTER_REG(_counter) (_counter)
 #define I8254_CONTROL_REG 0x3

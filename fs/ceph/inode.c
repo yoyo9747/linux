@@ -577,6 +577,8 @@ struct inode *ceph_alloc_inode(struct super_block *sb)
 
 	/* Set parameters for the netfs library */
 	netfs_inode_init(&ci->netfs, &ceph_netfs_ops, false);
+	/* [DEPRECATED] Use PG_private_2 to mark folio being written to the cache. */
+	__set_bit(NETFS_ICTX_USE_PGPRIV2, &ci->netfs.flags);
 
 	spin_lock_init(&ci->i_ceph_lock);
 
@@ -695,7 +697,6 @@ void ceph_evict_inode(struct inode *inode)
 
 	percpu_counter_dec(&mdsc->metric.total_inodes);
 
-	netfs_wait_for_outstanding_io(inode);
 	truncate_inode_pages_final(&inode->i_data);
 	if (inode->i_state & I_PINNING_NETFS_WB)
 		ceph_fscache_unuse_cookie(inode, true);
@@ -1779,7 +1780,7 @@ retry_lookup:
 		if (err < 0)
 			goto done;
 	} else if (rinfo->head->is_dentry && req->r_dentry) {
-		/* parent inode is not locked, be careful */
+		/* parent inode is not locked, be carefull */
 		struct ceph_vino *ptvino = NULL;
 		dvino.ino = le64_to_cpu(rinfo->diri.in->ino);
 		dvino.snap = le64_to_cpu(rinfo->diri.in->snapid);
@@ -1862,7 +1863,7 @@ static int fill_readdir_cache(struct inode *dir, struct dentry *dn,
 	unsigned idx = ctl->index % nsize;
 	pgoff_t pgoff = ctl->index / nsize;
 
-	if (!ctl->page || pgoff != ctl->page->index) {
+	if (!ctl->page || pgoff != page_index(ctl->page)) {
 		ceph_readdir_cache_release(ctl);
 		if (idx == 0)
 			ctl->page = grab_cache_page(&dir->i_data, pgoff);

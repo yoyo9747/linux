@@ -207,7 +207,7 @@ static void __init cpg_mstp_clocks_init(struct device_node *np)
 	for (i = 0; i < MSTP_MAX_CLOCKS; ++i)
 		clks[i] = ERR_PTR(-ENOENT);
 
-	if (of_property_present(np, "clock-indices"))
+	if (of_find_property(np, "clock-indices", &i))
 		idxname = "clock-indices";
 	else
 		idxname = "renesas,clock-indices";

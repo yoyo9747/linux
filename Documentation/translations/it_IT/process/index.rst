@@ -107,7 +107,7 @@ perché non si è trovato un posto migliore.
 
    magic-number
    clang-format
-   ../arch/riscv/patch-acceptance
+   ../riscv/patch-acceptance
 
 .. only::  subproject and html
 

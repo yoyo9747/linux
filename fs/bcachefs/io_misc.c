@@ -126,7 +126,7 @@ err_noprint:
 
 	if (closure_nr_remaining(&cl) != 1) {
 		bch2_trans_unlock_long(trans);
-		bch2_wait_on_allocator(c, &cl);
+		closure_sync(&cl);
 	}
 
 	return ret;
@@ -224,14 +224,13 @@ void bch2_logged_op_truncate_to_text(struct printbuf *out, struct bch_fs *c, str
 
 static int truncate_set_isize(struct btree_trans *trans,
 			      subvol_inum inum,
-			      u64 new_i_size,
-			      bool warn)
+			      u64 new_i_size)
 {
 	struct btree_iter iter = { NULL };
 	struct bch_inode_unpacked inode_u;
 	int ret;
 
-	ret   = __bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent, warn) ?:
+	ret   = bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent) ?:
 		(inode_u.bi_size = new_i_size, 0) ?:
 		bch2_inode_write(trans, &iter, &inode_u);
 
@@ -248,11 +247,10 @@ static int __bch2_resume_logged_op_truncate(struct btree_trans *trans,
 	struct bkey_i_logged_op_truncate *op = bkey_i_to_logged_op_truncate(op_k);
 	subvol_inum inum = { le32_to_cpu(op->v.subvol), le64_to_cpu(op->v.inum) };
 	u64 new_i_size = le64_to_cpu(op->v.new_i_size);
-	bool warn_errors = i_sectors_delta != NULL;
 	int ret;
 
 	ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			truncate_set_isize(trans, inum, new_i_size, i_sectors_delta != NULL));
+			truncate_set_isize(trans, inum, new_i_size));
 	if (ret)
 		goto err;
 
@@ -265,8 +263,8 @@ static int __bch2_resume_logged_op_truncate(struct btree_trans *trans,
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		ret = 0;
 err:
-	if (warn_errors)
-		bch_err_fn(c, ret);
+	bch2_logged_op_finish(trans, op_k);
+	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -290,14 +288,9 @@ int bch2_truncate(struct bch_fs *c, subvol_inum inum, u64 new_i_size, u64 *i_sec
 	 * resume only proceeding in one of the snapshots
 	 */
 	down_read(&c->snapshot_create_lock);
-	struct btree_trans *trans = bch2_trans_get(c);
-	int ret = bch2_logged_op_start(trans, &op.k_i);
-	if (ret)
-		goto out;
-	ret = __bch2_resume_logged_op_truncate(trans, &op.k_i, i_sectors_delta);
-	ret = bch2_logged_op_finish(trans, &op.k_i) ?: ret;
-out:
-	bch2_trans_put(trans);
+	int ret = bch2_trans_run(c,
+		bch2_logged_op_start(trans, &op.k_i) ?:
+		__bch2_resume_logged_op_truncate(trans, &op.k_i, i_sectors_delta));
 	up_read(&c->snapshot_create_lock);
 
 	return ret;
@@ -315,8 +308,7 @@ void bch2_logged_op_finsert_to_text(struct printbuf *out, struct bch_fs *c, stru
 	prt_printf(out, " src_offset=%llu",	le64_to_cpu(op.v->src_offset));
 }
 
-static int adjust_i_size(struct btree_trans *trans, subvol_inum inum,
-			 u64 offset, s64 len, bool warn)
+static int adjust_i_size(struct btree_trans *trans, subvol_inum inum, u64 offset, s64 len)
 {
 	struct btree_iter iter;
 	struct bch_inode_unpacked inode_u;
@@ -325,7 +317,7 @@ static int adjust_i_size(struct btree_trans *trans, subvol_inum inum,
 	offset	<<= 9;
 	len	<<= 9;
 
-	ret = __bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent, warn);
+	ret = bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent);
 	if (ret)
 		return ret;
 
@@ -365,19 +357,9 @@ static int __bch2_resume_logged_op_finsert(struct btree_trans *trans,
 	u64 len = abs(shift);
 	u64 pos = le64_to_cpu(op->v.pos);
 	bool insert = shift > 0;
-	u32 snapshot;
-	bool warn_errors = i_sectors_delta != NULL;
 	int ret = 0;
 
 	ret = bch2_inum_opts_get(trans, inum, &opts);
-	if (ret)
-		return ret;
-
-	/*
-	 * check for missing subvolume before fpunch, as in resume we don't want
-	 * it to be a fatal error
-	 */
-	ret = __bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot, warn_errors);
 	if (ret)
 		return ret;
 
@@ -391,7 +373,7 @@ case LOGGED_OP_FINSERT_start:
 
 	if (insert) {
 		ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-				adjust_i_size(trans, inum, src_offset, len, warn_errors) ?:
+				adjust_i_size(trans, inum, src_offset, len) ?:
 				bch2_logged_op_update(trans, &op->k_i));
 		if (ret)
 			goto err;
@@ -414,11 +396,11 @@ case LOGGED_OP_FINSERT_shift_extents:
 		struct bkey_i delete, *copy;
 		struct bkey_s_c k;
 		struct bpos src_pos = POS(inum.inum, src_offset);
+		u32 snapshot;
 
 		bch2_trans_begin(trans);
 
-		ret = __bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot,
-						    warn_errors);
+		ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
 		if (ret)
 			goto btree_err;
 
@@ -481,12 +463,12 @@ btree_err:
 
 	if (!insert) {
 		ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-				adjust_i_size(trans, inum, src_offset, shift, warn_errors) ?:
+				adjust_i_size(trans, inum, src_offset, shift) ?:
 				bch2_logged_op_update(trans, &op->k_i));
 	} else {
 		/* We need an inode update to update bi_journal_seq for fsync: */
 		ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-				adjust_i_size(trans, inum, 0, 0, warn_errors) ?:
+				adjust_i_size(trans, inum, 0, 0) ?:
 				bch2_logged_op_update(trans, &op->k_i));
 	}
 
@@ -495,9 +477,9 @@ case LOGGED_OP_FINSERT_finish:
 	break;
 	}
 err:
+	bch_err_fn(c, ret);
+	bch2_logged_op_finish(trans, op_k);
 	bch2_trans_iter_exit(trans, &iter);
-	if (warn_errors)
-		bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -526,14 +508,9 @@ int bch2_fcollapse_finsert(struct bch_fs *c, subvol_inum inum,
 	 * resume only proceeding in one of the snapshots
 	 */
 	down_read(&c->snapshot_create_lock);
-	struct btree_trans *trans = bch2_trans_get(c);
-	int ret = bch2_logged_op_start(trans, &op.k_i);
-	if (ret)
-		goto out;
-	ret = __bch2_resume_logged_op_finsert(trans, &op.k_i, i_sectors_delta);
-	ret = bch2_logged_op_finish(trans, &op.k_i) ?: ret;
-out:
-	bch2_trans_put(trans);
+	int ret = bch2_trans_run(c,
+		bch2_logged_op_start(trans, &op.k_i) ?:
+		__bch2_resume_logged_op_finsert(trans, &op.k_i, i_sectors_delta));
 	up_read(&c->snapshot_create_lock);
 
 	return ret;

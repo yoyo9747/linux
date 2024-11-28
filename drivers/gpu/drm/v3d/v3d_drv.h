@@ -11,8 +11,6 @@
 #include <drm/drm_gem_shmem_helper.h>
 #include <drm/gpu_scheduler.h>
 
-#include "v3d_performance_counters.h"
-
 #include "uapi/drm/v3d_drm.h"
 
 struct clk;
@@ -98,15 +96,11 @@ struct v3d_perfmon {
 struct v3d_dev {
 	struct drm_device drm;
 
-	/* Short representation (e.g. 33, 41) of the V3D tech version */
+	/* Short representation (e.g. 33, 41) of the V3D tech version
+	 * and revision.
+	 */
 	int ver;
-
-	/* Short representation (e.g. 5, 6) of the V3D tech revision */
-	int rev;
-
 	bool single_irq_line;
-
-	struct v3d_perfmon_info perfmon_info;
 
 	void __iomem *hub_regs;
 	void __iomem *core_regs[3];
@@ -350,9 +344,13 @@ struct v3d_timestamp_query {
 	struct drm_syncobj *syncobj;
 };
 
+/* Number of perfmons required to handle all supported performance counters */
+#define V3D_MAX_PERFMONS DIV_ROUND_UP(V3D_PERFCNT_NUM, \
+				      DRM_V3D_MAX_PERF_COUNTERS)
+
 struct v3d_performance_query {
 	/* Performance monitor IDs for this query */
-	u32 *kperfmon_ids;
+	u32 kperfmon_ids[V3D_MAX_PERFMONS];
 
 	/* Syncobj that indicates the query availability */
 	struct drm_syncobj *syncobj;
@@ -558,16 +556,11 @@ void v3d_mmu_insert_ptes(struct v3d_bo *bo);
 void v3d_mmu_remove_ptes(struct v3d_bo *bo);
 
 /* v3d_sched.c */
-void v3d_timestamp_query_info_free(struct v3d_timestamp_query_info *query_info,
-				   unsigned int count);
-void v3d_performance_query_info_free(struct v3d_performance_query_info *query_info,
-				     unsigned int count);
 void v3d_job_update_stats(struct v3d_job *job, enum v3d_queue queue);
 int v3d_sched_init(struct v3d_dev *v3d);
 void v3d_sched_fini(struct v3d_dev *v3d);
 
 /* v3d_perfmon.c */
-void v3d_perfmon_init(struct v3d_dev *v3d);
 void v3d_perfmon_get(struct v3d_perfmon *perfmon);
 void v3d_perfmon_put(struct v3d_perfmon *perfmon);
 void v3d_perfmon_start(struct v3d_dev *v3d, struct v3d_perfmon *perfmon);
@@ -582,8 +575,6 @@ int v3d_perfmon_destroy_ioctl(struct drm_device *dev, void *data,
 			      struct drm_file *file_priv);
 int v3d_perfmon_get_values_ioctl(struct drm_device *dev, void *data,
 				 struct drm_file *file_priv);
-int v3d_perfmon_get_counter_ioctl(struct drm_device *dev, void *data,
-				  struct drm_file *file_priv);
 
 /* v3d_sysfs.c */
 int v3d_sysfs_init(struct device *dev);

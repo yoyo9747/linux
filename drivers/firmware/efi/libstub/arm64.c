@@ -39,7 +39,8 @@ static bool system_needs_vamap(void)
 		static char const emag[] = "eMAG";
 
 	default:
-		version = efi_get_smbios_string(record, processor_version);
+		version = efi_get_smbios_string(&record->header, 4,
+						processor_version);
 		if (!version || (strncmp(version, altra, sizeof(altra) - 1) &&
 				 strncmp(version, emag, sizeof(emag) - 1)))
 			break;

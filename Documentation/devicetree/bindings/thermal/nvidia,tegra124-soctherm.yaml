@@ -197,6 +197,7 @@ required:
   - clock-names
   - resets
   - reset-names
+  - "#thermal-sensor-cells"
 
 allOf:
   - $ref: thermal-sensor.yaml

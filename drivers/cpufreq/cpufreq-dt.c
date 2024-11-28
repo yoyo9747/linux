@@ -69,6 +69,7 @@ static int set_target(struct cpufreq_policy *policy, unsigned int index)
 static const char *find_supply_name(struct device *dev)
 {
 	struct device_node *np __free(device_node) = of_node_get(dev->of_node);
+	struct property *pp;
 	int cpu = dev->id;
 
 	/* This must be valid for sure */
@@ -76,10 +77,14 @@ static const char *find_supply_name(struct device *dev)
 		return NULL;
 
 	/* Try "cpu0" for older DTs */
-	if (!cpu && of_property_present(np, "cpu0-supply"))
-		return "cpu0";
+	if (!cpu) {
+		pp = of_find_property(np, "cpu0-supply", NULL);
+		if (pp)
+			return "cpu0";
+	}
 
-	if (of_property_present(np, "cpu-supply"))
+	pp = of_find_property(np, "cpu-supply", NULL);
+	if (pp)
 		return "cpu";
 
 	dev_dbg(dev, "no regulator for cpu%d\n", cpu);
@@ -152,9 +157,10 @@ static int cpufreq_offline(struct cpufreq_policy *policy)
 	return 0;
 }
 
-static void cpufreq_exit(struct cpufreq_policy *policy)
+static int cpufreq_exit(struct cpufreq_policy *policy)
 {
 	clk_put(policy->clk);
+	return 0;
 }
 
 static struct cpufreq_driver dt_cpufreq_driver = {

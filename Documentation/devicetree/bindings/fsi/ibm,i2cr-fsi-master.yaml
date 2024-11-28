@@ -26,10 +26,7 @@ required:
   - compatible
   - reg
 
-allOf:
-  - $ref: fsi-controller.yaml#
-
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

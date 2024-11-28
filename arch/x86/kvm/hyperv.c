@@ -1417,7 +1417,7 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 		}
 
 		/* vmcall/vmmcall */
-		kvm_x86_call(patch_hypercall)(vcpu, instructions + i);
+		static_call(kvm_x86_patch_hypercall)(vcpu, instructions + i);
 		i += 3;
 
 		/* ret */
@@ -1737,8 +1737,7 @@ static int kvm_hv_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 		data = (u64)vcpu->arch.virtual_tsc_khz * 1000;
 		break;
 	case HV_X64_MSR_APIC_FREQUENCY:
-		data = div64_u64(1000000000ULL,
-				 vcpu->kvm->arch.apic_bus_cycle_ns);
+		data = APIC_BUS_FREQUENCY;
 		break;
 	default:
 		kvm_pr_unimpl_rdmsr(vcpu, msr);
@@ -1986,7 +1985,7 @@ int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu)
 		 */
 		gva = entries[i] & PAGE_MASK;
 		for (j = 0; j < (entries[i] & ~PAGE_MASK) + 1; j++)
-			kvm_x86_call(flush_tlb_gva)(vcpu, gva + j * PAGE_SIZE);
+			static_call(kvm_x86_flush_tlb_gva)(vcpu, gva + j * PAGE_SIZE);
 
 		++vcpu->stat.tlb_flush;
 	}
@@ -2527,7 +2526,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	 * hypercall generates UD from non zero cpl and real mode
 	 * per HYPER-V spec
 	 */
-	if (kvm_x86_call(get_cpl)(vcpu) != 0 || !is_protmode(vcpu)) {
+	if (static_call(kvm_x86_get_cpl)(vcpu) != 0 || !is_protmode(vcpu)) {
 		kvm_queue_exception(vcpu, UD_VECTOR);
 		return 1;
 	}
