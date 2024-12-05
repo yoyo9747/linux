@@ -1007,9 +1007,8 @@ static bool blk_zone_wplug_prepare_bio(struct blk_zone_wplug *zwplug,
 		 */
 		//printk("blk_zone_wplug_parepare_bio - ??\n");
 		bio->bi_opf &= ~REQ_OP_MASK;
-		bio->bi_opf |= REQ_NOMERGE;
-		//bio->bi_opf |= REQ_OP_WRITE | REQ_NOMERGE;
-		//bio->bi_iter.bi_sector += zwplug->wp_offset;
+		bio->bi_opf |= REQ_OP_WRITE | REQ_NOMERGE;
+		bio->bi_iter.bi_sector += zwplug->wp_offset;
 
 		/*
 		 * Remember that this BIO is in fact a zone append operation
@@ -1059,9 +1058,6 @@ static bool blk_zone_wplug_handle_write(struct bio *bio, unsigned int nr_segs)
 		return true;
 	}
 
-	//if (bio_op(bio) == REQ_OP_ZONE_APPEND) {
-	//	printk("blk_zone_wplug_handloe_write - ZA??\n");
-	//}
 	/* Conventional zones do not need write plugging. */
 	if (disk_zone_is_conv(disk, sector)) {
 		/* Zone append to conventional zones is not allowed. */
@@ -1173,8 +1169,6 @@ bool blk_zone_plug_bio(struct bio *bio, unsigned int nr_segs)
 			return false;
 		fallthrough;
 	case REQ_OP_WRITE:
-		bio->bi_opf=REQ_OP_ZONE_APPEND;
-		bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
 	case REQ_OP_WRITE_ZEROES:
 		return blk_zone_wplug_handle_write(bio, nr_segs);
 	case REQ_OP_ZONE_RESET:
