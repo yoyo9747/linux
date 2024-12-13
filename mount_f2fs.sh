@@ -3,8 +3,8 @@ sudo mkdir /mnt/f2fs
 
 sudo insmod fs/f2fs/f2fs.ko
 
-#sudo mkfs.f2fs -m -f /dev/nvme0n1 -c /dev/nvme1n2 -d2
-sudo mkfs.f2fs -m -f /dev/nvme1n1 -c /dev/nvme0n2 -d2
+sudo mkfs.f2fs -m -f /dev/nvme0n1 -c /dev/nvme1n2 -d2
+#sudo mkfs.f2fs -m -f /dev/nvme1n1 -c /dev/nvme0n2 -d2
 
-#sudo mount -t f2fs -o zone_append=$1 /dev/nvme0n1 /mnt/f2fs
-sudo mount -t f2fs -o zone_append=$1 /dev/nvme1n1 /mnt/f2fs
+sudo mount -t f2fs -o zone_append=$1 /dev/nvme0n1 /mnt/f2fs
+#sudo mount -t f2fs -o zone_append=$1 /dev/nvme1n1 /mnt/f2fs
