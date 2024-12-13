@@ -332,11 +332,13 @@ static void f2fs_write_end_io(struct bio *bio)
 	sbi = bio->bi_private;
 	if (F2FS_OPTION(sbi).append_mode >= APPEND_WITH_LOCK){
 		if (bio_op(bio)==REQ_OP_ZONE_APPEND){
+				printk("before %llu zslba: %llu ZONE: %llu after: %llu,ZONE: %llu",bio->bi_iter.before_append,bio->bi_iter.before_append-bio->bi_iter.before_append%4194304,SECTOR_TO_ZONE(bio->bi_iter.before_append),bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
 			if(bio->bi_iter.bi_sector!=bio->bi_iter.before_append){
 				printk("RANDOM ORDERING HAPPENED");
-				//printk("before %llu zslba: %llu ZONE: %llu after: %llu,ZONE: %llu",bio->bi_iter.before_append,bio->bi_iter.before_append-bio->bi_iter.before_append%4194304,SECTOR_TO_ZONE(bio->bi_iter.before_append),bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+				printk("before %llu zslba: %llu ZONE: %llu after: %llu,ZONE: %llu",bio->bi_iter.before_append,bio->bi_iter.before_append-bio->bi_iter.before_append%4194304,SECTOR_TO_ZONE(bio->bi_iter.before_append),bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
 			}
 			if (F2FS_OPTION(sbi).append_mode == APPEND_WITH_LOCK){
+		//printk("no check definitely %d",F2FS_OPTION(sbi).append_mode);
 			atomic_set(&bio->bi_iter.append_lock, 1);
 			}
 		}
@@ -534,10 +536,9 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	unsigned int temp;
 	if (F2FS_OPTION(sbi).append_mode >= APPEND_WITH_LOCK){	
 		if (PAGE_TYPE_ON_MAIN(type)){
-			//printk("before- bio: %llu,ZONE: %llu",bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
+			printk("before- bio: %llu,ZONE: %llu",bio->bi_iter.bi_sector,SECTOR_TO_ZONE(bio->bi_iter.bi_sector));
 			bio->bi_opf=REQ_OP_ZONE_APPEND;
 			bio->bi_iter.before_append=bio->bi_iter.bi_sector;
-			//bio->bi_private->before_append=bio->bi_iter.bi_sector;
 			bio->bi_iter.bi_sector-=bio->bi_iter.bi_sector%4194304;
 			if (F2FS_OPTION(sbi).append_mode == APPEND_WITH_LOCK)
 				atomic_set(&bio->bi_iter.append_lock, 0);
@@ -550,7 +551,7 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	if (F2FS_OPTION(sbi).append_mode == APPEND_WITH_LOCK){
 		if (PAGE_TYPE_ON_MAIN(type)){
 			while(atomic_read(&bio->bi_iter.append_lock) == 0){
-				;//printk("waiting,, nefore: %u / bio: %llu\n",temp,bio->bi_iter.bi_sector);
+				printk("waiting,, nefore: %u / bio: %llu\n",temp,bio->bi_iter.bi_sector);
 			}
 		}
 	}
@@ -1028,8 +1029,6 @@ next:
 			      fio->new_blkaddr) ||
 	     !f2fs_crypt_mergeable_bio(io->bio, fio->page->mapping->host,
 				       bio_page->index, fio))){
-		//if (PAGE_TYPE_ON_MAIN(fio->type))
-		//	printk("next: %llu, last: %llu, ZONE: %llu",(unsigned long long)io->bio->bi_iter.bi_sector,(unsigned long long)io->last_block_in_bio,SECTOR_TO_ZONE(io->bio->bi_iter.bi_sector));
 		__submit_merged_bio(io);
 	}
 alloc_new:
@@ -1041,8 +1040,6 @@ alloc_new:
 	}
 
 	if (bio_add_page(io->bio, bio_page, PAGE_SIZE, 0) < PAGE_SIZE) {
-		//if (PAGE_TYPE_ON_MAIN(fio->type))
-		//	printk("alloc new: %llu, ZONE: %llu",(unsigned long long)io->bio->bi_iter.bi_sector,SECTOR_TO_ZONE(io->bio->bi_iter.bi_sector));
 		__submit_merged_bio(io);
 		goto alloc_new;
 	}
@@ -1056,8 +1053,6 @@ alloc_new:
 #ifdef CONFIG_BLK_DEV_ZONED
 	if (f2fs_sb_has_blkzoned(sbi) && btype < META &&
 			is_end_zone_blkaddr(sbi, fio->new_blkaddr)) {
-		//if (PAGE_TYPE_ON_MAIN(fio->type))
-		//	printk("zone end: %llu, ZONE: %llu",(unsigned long long)io->bio->bi_iter.bi_sector,SECTOR_TO_ZONE(io->bio->bi_iter.bi_sector));
 		bio_get(io->bio);
 		reinit_completion(&io->zone_wait);
 		io->bi_private = io->bio->bi_private;
